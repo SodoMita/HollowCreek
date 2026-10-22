@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { DoorOpen, Flame, ScrollText } from "lucide-react";
 import { Renderer } from "@/game/render";
 import { AudioDirector } from "@/game/audio";
 import { BELL_X } from "@/game/types";
@@ -411,8 +412,8 @@ export default function GameClient({ code }: { code: string }) {
           {s.phase === "lobby" && (
             <div className="absolute inset-0 flex items-center justify-center bg-[#0b0710]/70 backdrop-blur-sm">
               <div className="hc-rise max-h-[88dvh] w-[min(92vw,440px)] overflow-y-auto rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-4 text-center sm:p-6">
-                <h2 className="font-display text-4xl text-[#e9dfcf]">Gathering at dusk</h2>
-                <p className="mt-1 text-sm text-[#9c8b7a]">Share the town code with your fellow townsfolk</p>
+                <h2 className="font-display text-4xl text-[#e9dfcf]">{s.round > 0 ? `Night ${s.round + 1} approaches` : "Gathering at dusk"}</h2>
+                <p className="mt-1 text-sm text-[#9c8b7a]">{s.round > 0 ? "The same souls, the same street — new roles when darkness falls" : "Share the town code with your fellow townsfolk"}</p>
                 <div className="mt-3 font-mono text-5xl tracking-[0.4em] text-[#d99a3d]">{s.code}</div>
                 <div className="mt-5 grid grid-cols-2 gap-2 text-left text-sm">
                   {s.players.map((p) => (
@@ -466,9 +467,21 @@ export default function GameClient({ code }: { code: string }) {
                   {s.winner === "hollow" ? "The Hollow wins" : "The town survives"}
                 </p>
                 <p className="mt-4 text-lg italic text-[#c9b8a4]">{s.winReason}</p>
-                <div className="mt-6 flex justify-center gap-3">
-                  <button onClick={() => router.push("/")} className="rounded bg-[#8f3b1f] px-6 py-2.5 font-display text-xl text-[#f3e6d0] hover:bg-[#a84a26]">New town</button>
-                  <a href={`/chronicle/${s.code}`} target="_blank" className="rounded border border-[#3a2733] px-6 py-2.5 font-display text-xl text-[#d99a3d] hover:bg-[#2a1a26]">Read the chronicle</a>
+                {s.self.id === s.hostId ? (
+                  <button
+                    onClick={() => send({ action: "restart" })}
+                    className="mt-6 flex w-full items-center justify-center gap-2 rounded bg-[#8f3b1f] py-3 font-display text-2xl text-[#f3e6d0] transition hover:bg-[#a84a26]"
+                  >
+                    <Flame className="h-5 w-5" /> Gather the same souls again
+                  </button>
+                ) : (
+                  <p className="mt-6 rounded border border-[#3a2733] bg-[#0d0810]/60 py-3 text-sm text-[#9c8b7a]">
+                    The lantern-bearer may gather this town for another night…
+                  </p>
+                )}
+                <div className="mt-3 flex justify-center gap-3">
+                  <button onClick={() => router.push("/")} className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#c9b8a4] hover:bg-[#2a1a26]"><DoorOpen className="h-4 w-4" /> Other towns</button>
+                  <a href={`/chronicle/${s.code}`} target="_blank" className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#d99a3d] hover:bg-[#2a1a26]"><ScrollText className="h-4 w-4" /> Chronicle</a>
                 </div>
               </div>
             </div>

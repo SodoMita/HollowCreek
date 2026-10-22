@@ -1,7 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Bell, DoorOpen, Flame, Moon, Plus, RefreshCw, Skull, Users } from "lucide-react";
+import type { RoomListing } from "@/game/types";
 
 function getPid(): string {
   let pid = localStorage.getItem("hc_pid");
@@ -18,10 +20,27 @@ export default function Home() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rooms, setRooms] = useState<RoomListing[]>([]);
+  const [roomsLoaded, setRoomsLoaded] = useState(false);
 
   useEffect(() => {
     setName(localStorage.getItem("hc_name") ?? "");
   }, []);
+
+  const refreshRooms = useCallback(async () => {
+    try {
+      const r = await fetch("/api/game/rooms");
+      const d = await r.json();
+      setRooms(d.rooms ?? []);
+    } catch { /* keep last list */ }
+    setRoomsLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    void refreshRooms();
+    const t = setInterval(refreshRooms, 3000);
+    return () => clearInterval(t);
+  }, [refreshRooms]);
 
   const saveName = () => localStorage.setItem("hc_name", name.trim() || "Stranger");
 
@@ -43,20 +62,21 @@ export default function Home() {
     }
   };
 
-  const join = async () => {
-    if (code.trim().length < 4) { setError("Enter the 4-letter town code."); return; }
+  const join = async (target?: string) => {
+    const c = (target ?? code).trim().toUpperCase();
+    if (c.length < 4) { setError("Enter the 4-letter town code."); return; }
     setBusy(true); setError(null);
     saveName();
     try {
       const res = await fetch("/api/game/join", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code: code.trim().toUpperCase(), playerId: getPid(), name: name.trim() || "Stranger" }),
+        body: JSON.stringify({ code: c, playerId: getPid(), name: name.trim() || "Stranger" }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to join");
       if (data.playerId) localStorage.setItem("hc_pid", data.playerId);
-      router.push(`/room/${code.trim().toUpperCase()}`);
+      router.push(`/room/${c}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");
       setBusy(false);
@@ -144,9 +164,9 @@ export default function Home() {
           <button
             onClick={create}
             disabled={busy}
-            className="mt-4 w-full rounded bg-[#8f3b1f] px-4 py-3 font-display text-xl tracking-wide text-[#f3e6d0] transition hover:bg-[#a84a26] disabled:opacity-50"
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded bg-[#8f3b1f] px-4 py-3 font-display text-xl tracking-wide text-[#f3e6d0] transition hover:bg-[#a84a26] disabled:opacity-50"
           >
-            Found a new town
+            <Plus className="h-5 w-5" strokeWidth={2.5} /> Found a new town
           </button>
           <div className="my-5 flex items-center gap-3 text-xs text-[#5a4a50]">
             <div className="h-px flex-1 bg-[#3a2733]" /> or travel to one <div className="h-px flex-1 bg-[#3a2733]" />
@@ -161,17 +181,85 @@ export default function Home() {
               onKeyDown={(e) => e.key === "Enter" && join()}
             />
             <button
-              onClick={join}
+              onClick={() => join()}
               disabled={busy}
-              className="shrink-0 rounded border border-[#c9762f]/50 px-5 font-display text-xl text-[#d99a3d] transition hover:bg-[#c9762f]/10 disabled:opacity-50"
+              className="flex shrink-0 items-center gap-1.5 rounded border border-[#c9762f]/50 px-4 font-display text-xl text-[#d99a3d] transition hover:bg-[#c9762f]/10 disabled:opacity-50"
             >
-              Join
+              <DoorOpen className="h-4 w-4" /> Join
             </button>
           </div>
           {error && <p className="mt-3 text-sm text-[#e06a5a]">{error}</p>}
-          <p className="mt-5 text-xs leading-relaxed text-[#6b5a55]">
-            4–10 townsfolk. One or two among you are Hollow. Every step, word,
-            vote and kill is written into the town chronicle.
+
+          {/* ---- open towns browser ---- */}
+          <div className="mt-6 border-t border-[#3a2733] pt-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-display text-2xl text-[#e9dfcf]">Open towns</h3>
+              <button
+                onClick={() => void refreshRooms()}
+                className="flex items-center gap-1.5 text-xs text-[#9c8b7a] transition hover:text-[#d99a3d]"
+                title="Refresh"
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> live
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute h-2 w-2 animate-ping rounded-full bg-[#6b8e23] opacity-60" />
+                  <span className="h-2 w-2 rounded-full bg-[#6b8e23]" />
+                </span>
+              </button>
+            </div>
+            <div className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
+              {!roomsLoaded && <p className="text-sm text-[#6b5a55]">Reading the map…</p>}
+              {roomsLoaded && rooms.length === 0 && (
+                <p className="text-sm italic text-[#6b5a55]">No towns on the map yet. Found one, and others will find you.</p>
+              )}
+              {rooms.map((r) => (
+                <div
+                  key={r.code}
+                  className="group flex items-center gap-3 rounded border border-[#2a1c28] bg-[#0d0810]/80 px-3 py-2.5 transition hover:border-[#c9762f]/40"
+                >
+                  <span className={`shrink-0 ${r.phase === "lobby" ? "text-[#d99a3d]" : r.phase === "ended" ? "text-[#6b5a55]" : "text-[#8f7d9b]"}`}>
+                    {r.phase === "lobby" ? <Flame className="h-4 w-4" /> : r.phase === "meeting" ? <Bell className="h-4 w-4" /> : r.phase === "ended" ? <Skull className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className="font-mono text-sm tracking-[0.25em] text-[#e9dfcf]">{r.code}</span>
+                      <span className="truncate text-xs text-[#9c8b7a]">
+                        {r.phase === "lobby" ? "gathering at dusk" : r.phase === "meeting" ? "the bell tolls" : r.phase === "ended" ? "the tale ended" : `night ${r.round || 1} has fallen`}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-[#6b5a55]">
+                      <Users className="h-3 w-3 shrink-0" />
+                      <span>{r.playerCount}/10</span>
+                      <span className="truncate">· {r.names.slice(0, 4).join(", ")}{r.names.length > 4 ? "…" : ""}</span>
+                    </div>
+                  </div>
+                  {r.phase === "lobby" ? (
+                    <button
+                      onClick={() => join(r.code)}
+                      disabled={busy || r.playerCount >= 10}
+                      className="shrink-0 rounded bg-[#8f3b1f]/80 px-3 py-1.5 font-display text-base text-[#f3e6d0] transition hover:bg-[#a84a26] disabled:opacity-40"
+                    >
+                      {r.playerCount >= 10 ? "Full" : "Join"}
+                    </button>
+                  ) : r.phase === "ended" ? (
+                    <button
+                      onClick={() => join(r.code)}
+                      disabled={busy}
+                      title="Only the town's own souls may return"
+                      className="shrink-0 rounded border border-[#3a2733] px-3 py-1.5 font-display text-base text-[#9c8b7a] transition hover:border-[#c9762f]/40 hover:text-[#d99a3d] disabled:opacity-40"
+                    >
+                      Return
+                    </button>
+                  ) : (
+                    <span className="shrink-0 text-xs italic text-[#5a4a50]">in progress</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <p className="mt-4 text-xs leading-relaxed text-[#6b5a55]">
+            4–10 townsfolk. One or two among you are Hollow. Survive the night and the
+            same souls can gather in the same town again — every deed is written into the chronicle.
           </p>
         </div>
       </div>

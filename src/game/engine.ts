@@ -6,7 +6,7 @@ import {
   PLAYER_COLORS, SPEED, STATIONS, TASKS_PER_CREW, TASK_HOLD_MS, TICK_MS,
   VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW, WORLD_W,
 } from "./types";
-import type { FeedItem, InputBody, Phase, Role, Snapshot } from "./types";
+import type { FeedItem, InputBody, Phase, Role, RoomListing, Snapshot } from "./types";
 
 // ---------------------------------------------------------------------------
 // Internal state
@@ -57,6 +57,7 @@ interface Room {
   totalTasks: number;
   blackoutUntil: number;
   blackoutReadyAt: number;
+  round: number;
 }
 
 const g = globalThis as typeof globalThis & {
@@ -119,6 +120,7 @@ export function createRoom(playerId: string, name: string) {
     totalTasks: 0,
     blackoutUntil: 0,
     blackoutReadyAt: 0,
+    round: 0,
   };
   rooms.set(room.code, room);
   record(room, null, "room_created", {});
@@ -136,10 +138,13 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
     existing.lastSeen = now;
     return { ok: true, playerId };
   }
-  if (room.phase !== "lobby") return { ok: false, error: "This tale has already begun." };
+  if (room.phase !== "lobby" && room.phase !== "ended") {
+    return { ok: false, error: "This tale has already begun." };
+  }
   const name = (rawName || "Stranger").trim().slice(0, 14) || "Stranger";
   // Re-adoption: someone returning under the same name takes over their old
   // (stale) seat instead of spawning a duplicate "name-2" stranger.
+  // Allowed in lobby AND after the tale ended, so the same souls can regather.
   const staleSeat = [...room.players.values()].find(
     (q) => q.name.toLowerCase() === name.toLowerCase() && now - q.lastSeen > 8000
   );
@@ -153,6 +158,9 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
     record(room, staleSeat, "rejoin", { oldId });
     feed(room, `${staleSeat.name} returned to town.`);
     return { ok: true, playerId };
+  }
+  if (room.phase === "ended") {
+    return { ok: false, error: "This town's night is over — only its own souls may return." };
   }
   if (room.players.size >= 10) return { ok: false, error: "The town is full (10 souls)." };
   const used = new Set([...room.players.values()].map((p) => p.color));
@@ -247,6 +255,7 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
     }
   }
   room.totalTasks = total;
+  room.round += 1;
   // The cage key hides somewhere on the outskirts.
   room.keyX = Math.random() < 0.5 ? 150 + Math.random() * 1400 : 2700 + Math.random() * 1350;
   room.phase = "playing";
@@ -259,6 +268,76 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
 
 export function getRoom(code: string): Room | undefined {
   return rooms.get(code.toUpperCase());
+}
+
+/** Live room browser — open towns on the map. */
+export function listRooms(): RoomListing[] {
+  return [...rooms.values()]
+    .filter((r) => r.players.size > 0)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 24)
+    .map((r) => {
+      const ps = [...r.players.values()];
+      return {
+        code: r.code,
+        phase: r.phase,
+        playerCount: ps.length,
+        hostName: ps.find((p) => p.isHost)?.name ?? "—",
+        names: ps.map((p) => p.name),
+        createdAt: r.createdAt,
+        round: r.round,
+      };
+    });
+}
+
+/** The same souls gather in the same town for another night. */
+export function restartGame(room: Room, playerId: string): { ok: boolean; error?: string } {
+  const p = room.players.get(playerId);
+  if (!p) return { ok: false, error: "Unknown soul." };
+  if (!p.isHost) {
+    // if the lantern-bearer never came back, a present soul may claim it
+    const host = [...room.players.values()].find((q) => q.isHost);
+    if (host && Date.now() - host.lastSeen > 12000) {
+      host.isHost = false;
+      p.isHost = true;
+      feed(room, `${p.name} picked up the fallen lantern (host).`);
+    } else {
+      return { ok: false, error: "Only the lantern-bearer may gather the town." };
+    }
+  }
+  if (room.phase !== "ended") return { ok: false, error: "The night is not over yet." };
+  let i = 0;
+  for (const q of room.players.values()) {
+    q.x = BELL_X + (i++ - 2) * 60;
+    q.dir = 0;
+    q.facing = 1;
+    q.moving = false;
+    q.alive = true;
+    q.caged = false;
+    q.cageIndex = -1;
+    q.role = "crew";
+    q.tasks = [];
+    q.killAt = 0;
+    q.bellUsed = false;
+    q.hasKey = false;
+    q.bubbleText = "";
+    q.bubbleUntil = 0;
+    q.interactHeld = false;
+    q.vote = null;
+  }
+  room.bodies = [];
+  room.keyX = null;
+  for (const c of room.cages) c.occupant = null;
+  room.meeting = null;
+  room.winner = null;
+  room.winReason = null;
+  room.blackoutUntil = 0;
+  room.blackoutReadyAt = 0;
+  room.totalTasks = 0;
+  room.phase = "lobby";
+  feed(room, "The town gathers again. The same faces… but who will wear them tonight?");
+  record(room, p, "restart", { round: room.round + 1 });
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -411,6 +490,7 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
   }
 
   if (body.action === "start") return startGame(room, p.id);
+  if (body.action === "restart") return restartGame(room, p.id);
 
   if (body.action === "interact" && p.alive) {
     // report a body
@@ -646,6 +726,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
   return {
     code: room.code,
     phase: room.phase,
+    round: room.round,
     now,
     self: {
       id: me.id,

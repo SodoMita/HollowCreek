@@ -23,6 +23,7 @@ const TYPE_LABELS: Record<string, [string, string]> = {
   blackout: ["🌑", "snuffed every lantern in town"],
   leave: ["🚪", "left the town"],
   rejoin: ["🔁", "returned to their old seat"],
+  restart: ["🕯", "gathered the same souls for another night"],
   game_end: ["🌅", "The tale ended"],
 };
 

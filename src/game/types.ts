@@ -105,6 +105,7 @@ export interface FeedItem {
 export interface Snapshot {
   code: string;
   phase: Phase;
+  round: number;
   now: number;
   self: SelfInfo;
   players: PublicPlayer[];
@@ -134,11 +135,21 @@ export interface Snapshot {
   playerCount: number;
 }
 
+export interface RoomListing {
+  code: string;
+  phase: Phase;
+  playerCount: number;
+  hostName: string;
+  names: string[];
+  createdAt: number;
+  round: number;
+}
+
 export interface InputBody {
   playerId: string;
   dir?: number;
   interactHeld?: boolean;
-  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "leave";
+  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "restart" | "leave";
   chat?: string;
   vote?: string; // playerId | "skip" | "free:<id>"
 }
