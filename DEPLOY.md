@@ -1,84 +1,105 @@
-# Running a Hollow Creek server
+# Running and releasing Hollow Creek
 
-The game is a client plus an authoritative server. The server is a Next.js app
-that must run as **one long-lived Node process**: rooms live in memory, with
-Postgres behind them for the roster and the chronicle. Serverless platforms will
-not work, because each invocation would start with an empty room map.
+The game is a static browser client plus an authoritative Next.js/Postgres
+server. The server must run as **one long-lived Node process**: active rooms
+live in memory, with Postgres used for the roster and chronicle. Serverless
+invocations and multiple independent production instances are not substitutes
+for that process.
 
 ## What each piece is
 
 | Piece | Where | Notes |
 | --- | --- | --- |
 | Authoritative server | this repo (`npm start`) | owns every position, role, cooldown and outcome |
-| In-app client | `/` and `/room/CODE` | the React client, served by the same process |
+| In-app client | `/` and `/room/CODE` | React client served by the same process |
 | Static client | `/play` | built by `node scripts/build-static.mjs` from `static-src/` |
 | Published static client | https://sodomita.github.io/HollowCreek/ | the `gh-pages` branch |
-| Newgrounds builds | https://github.com/SodoMita/HollowCreek/releases | a zip of the static client, and a zip that just frames Pages |
+| itch.io / Newgrounds build | GitHub Releases | a direct static ZIP; **no nested iframe** |
 
 ## Quick start
 
+Use Node 22 and any PostgreSQL database:
+
 ```bash
 npm ci
-cp .env.example .env          # DATABASE_URL -> any Postgres
-npx drizzle-kit push --force  # creates game_events, rooms, room_players, player_stats
+cp .env.example .env          # set DATABASE_URL
+npx drizzle-kit push --force  # creates the four game tables
 npm run build
 npm start                     # one process, port 3000
 ```
 
 Open `/` on several devices, found a town, and share the four-letter code.
+`GET /api/health` returns `{"ok":true}` when the process is ready.
 
-## E2B
+## E2B and other temporary backends
 
-E2B sandboxes work fine while they live, which makes them good for testing and
-bad for a release: the public URL changes when the sandbox is rebuilt.
+E2B sandboxes are useful for testing but are not permanent release hosting:
+their public URLs can change and the processes can stop.
+
+`SERVERS` in `static-src/main.ts` is an ordered list of testing backends. The
+menu probes their `/api/health` endpoints. Joining by room code is more strict:
+if the current backend says the code does not exist, the client tries the other
+configured backends, then pins itself to the one that accepted the join. That
+backend is also kept in the room URL so a refresh cannot silently switch away.
+
+**These servers are not a synchronized cluster.** Their active rooms and room
+lists are independent. Room-code discovery makes temporary multi-backend tests
+usable, but it does not migrate a live match or provide mid-game failover. Use
+one permanent public backend for a real launch.
+
+After changing `SERVERS`:
 
 ```bash
-e2b template build -n hollow-creek   # a Node 22 base image
-```
-
-then inside the sandbox: `npm ci`, set `DATABASE_URL`, `npx drizzle-kit push`,
-`npm run build`, `npm start -- -p 3000`.
-
-Because the URL moves, the static client does not depend on one address. It
-probes a list of servers (`SERVERS` in `static-src/main.ts`) with a 3.5s
-`/api/health` request each and binds to the first one that answers. A player can
-always override it with `?server=https://…` or the Server field on the title
-screen.
-
-**When the server moves, republish the client rather than re-uploading anywhere:**
-
-```bash
-# 1. put the new address first in the list
-$EDITOR static-src/main.ts
-# 2. rebuild
 node scripts/build-static.mjs
-# 3. republish Pages (the gh-pages branch holds index.html, game.js, icon.png)
-git checkout gh-pages && cp public/play/* . && git commit -am "new server" && git push
 ```
 
-Nothing hosted on Newgrounds or itch.io needs to be re-uploaded, because those
-builds either frame Pages or carry the probe list.
+Then:
 
-## Somewhere permanent
+1. Publish the contents of `public/play/` to the root of `gh-pages` if you use
+   the GitHub Pages client.
+2. ZIP the **contents** of `public/play/` and upload the new archive to itch.io
+   and Newgrounds. Direct static uploads contain their own bundle, so changing
+   a backend requires replacing those uploads.
 
-For a release, point `SERVERS[0]` at something that does not move:
+```bash
+(cd public/play && zip -r ../../hollow-creek-web.zip .)
+```
 
-- **Fly.io / Render / Railway** — one always-on process plus a managed Postgres.
+`index.html` must be at the archive root, not inside a `play/` folder.
+
+## Permanent hosting
+
+Suitable options include:
+
+- **Fly.io / Render / Railway** — one always-on process plus managed Postgres.
 - **A small VM** — `npm ci && npm run build && npm start` behind Caddy or nginx,
-  with `systemd` to keep it alive.
-- Any Postgres works; the schema is four tables and `drizzle-kit push` makes them.
+  with `systemd` keeping the process alive.
 
-Memory: a room is a few kilobytes, and empty rooms are dropped from memory after
-15 minutes (they are all in Postgres, and `loadRoom()` restores a town the moment
-anybody asks for its code), so one small instance serves a lot of concurrent
-towns.
+Run one public game instance unless room state is redesigned for distributed
+coordination. Empty rooms are dropped from memory after six hours; persisted
+rooms are hydrated when someone asks for their code. Concurrent requests for
+the same persisted room share a single hydration so successful joins cannot be
+overwritten by a duplicate in-memory room.
 
-## Hosting the client elsewhere
+## Cross-origin client hosting
 
-The API sends `Access-Control-Allow-Origin: *` (there are no cookies and no
-ambient credentials — identity is an explicit playerId in the request body), and
-the pages allow framing, so the static client runs from anywhere: GitHub Pages,
-itch.io, an LMS, a USB stick or `file://`.
+The API sends `Access-Control-Allow-Origin: *` for `/api/*` and answers the
+POST preflight. There are no cookies or ambient credentials; identity is an
+explicit `playerId`. The direct static client therefore runs on GitHub Pages,
+`html.itch.zone`, `html-classic.itch.zone`, `isolated.ungrounded.net`,
+`uploads.ungrounded.net`, or a local file. Those portal origins host only the
+client—they are never used as the game API address.
 
-To build a zip for Newgrounds' HTML5 uploader, keep `index.html` at the root of
-the archive or Newgrounds returns a 403. `release/README.md` covers both paths.
+## Validation
+
+With a local database configured and the production server on port 3100:
+
+```bash
+npm run typecheck
+npm run build
+node scripts/test-rng.mjs
+node scripts/smoke-rooms.mjs       # includes concurrent joins after restart
+node scripts/smoke-static.mjs
+node scripts/smoke-stats.mjs http://127.0.0.1:3100
+node scripts/smoke-random.mjs http://127.0.0.1:3100 200
+```

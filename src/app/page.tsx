@@ -267,7 +267,7 @@ export default function Home() {
           </div>
 
           <p className="mt-4 text-xs leading-relaxed text-[#6b5a55]">
-            4–10 townsfolk. One or two among you are Hollow. The town's wards are shared —
+            4–10 townsfolk. One or two among you are Hollow. The town&rsquo;s wards are shared —
             any living soul may work them, but chores and deeds drain your vigor; stand
             still to catch your breath. Survive the night and the same souls can gather
             again — every deed is written into the chronicle.

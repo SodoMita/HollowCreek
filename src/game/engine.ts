@@ -72,10 +72,16 @@ interface Room {
 
 const g = globalThis as typeof globalThis & {
   __hollowRooms?: Map<string, Room>;
+  __hollowRoomLoads?: Map<string, Promise<Room | undefined>>;
   __hollowLoop?: ReturnType<typeof setInterval>;
 };
 const rooms: Map<string, Room> = g.__hollowRooms ?? new Map();
 g.__hollowRooms = rooms;
+// Concurrent join/state requests after a restart must share one hydration.
+// Otherwise each request can build a room and overwrite the previous one,
+// leaving a player whose join already succeeded as "Unknown soul".
+const roomLoads: Map<string, Promise<Room | undefined>> = g.__hollowRoomLoads ?? new Map();
+g.__hollowRoomLoads = roomLoads;
 
 // ---------------------------------------------------------------------------
 // Chronicle — every player action is persisted
@@ -150,7 +156,23 @@ if (!gPersist.__hollowPersistTimer) {
 /** Bring a town back from Postgres: same code, same seats, same names. */
 export async function loadRoom(code: string): Promise<Room | undefined> {
   const key = code.toUpperCase();
-  if (rooms.has(key)) return rooms.get(key);
+  const existing = rooms.get(key);
+  if (existing) return existing;
+  const pending = roomLoads.get(key);
+  if (pending) return pending;
+  const loading = hydrateRoom(key);
+  roomLoads.set(key, loading);
+  try {
+    return await loading;
+  } finally {
+    if (roomLoads.get(key) === loading) roomLoads.delete(key);
+  }
+}
+
+async function hydrateRoom(code: string): Promise<Room | undefined> {
+  const key = code.toUpperCase();
+  const existing = rooms.get(key);
+  if (existing) return existing;
   let round = 0;
   let roster: { id: string; name: string; color: string; joinedAt: Date }[] = [];
   try {

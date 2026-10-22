@@ -34,7 +34,9 @@ export default function GameClient({ code }: { code: string }) {
   const audioRef = useRef<AudioDirector | null>(null);
   const lastPhase = useRef<string>("lobby");
   const chatInputRef = useRef<HTMLInputElement>(null);
-  chatOpenRef.current = chatOpen;
+  useEffect(() => {
+    chatOpenRef.current = chatOpen;
+  }, [chatOpen]);
 
   const send = useCallback(async (payload: Record<string, unknown>) => {
     try {

@@ -42,7 +42,7 @@ export default async function ChroniclePage({ params }: { params: Promise<{ code
         <Lock className="h-12 w-12 text-[#8f3b1f]" />
         <h1 className="mt-4 font-display text-5xl text-[#e9dfcf]">The ledger is sealed</h1>
         <p className="mt-3 max-w-md italic text-[#9c8b7a]">
-          The clerk's hand is still moving. The chronicle of {code.toUpperCase()} may
+          The clerk&rsquo;s hand is still moving. The chronicle of {code.toUpperCase()} may
           only be read once the night has ended — from the records shown at match end.
         </p>
         <Link href={`/room/${code.toUpperCase()}`} className="mt-6 rounded bg-[#8f3b1f] px-6 py-2.5 font-display text-xl text-[#f3e6d0] hover:bg-[#a84a26]">

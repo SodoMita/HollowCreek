@@ -14,7 +14,12 @@ const ok = (c, l) => { console.log(`${c ? "  ok  " : " FAIL "} ${l}`); if (!c) f
 const main = async () => {
   const a = pid();
   const code = (await post("/api/game/create", { playerId: a, name: "Marta" })).code;
-  for (const n of ["Nils", "Olga", "Piotr"]) await post("/api/game/join", { code, playerId: pid(), name: n });
+  const seats = [{ id: a, name: "Marta" }];
+  for (const name of ["Nils", "Olga", "Piotr"]) {
+    const id = pid();
+    seats.push({ id, name });
+    await post("/api/game/join", { code, playerId: id, name });
+  }
   const roster = async () => (await state(code, a)).players.map((p) => p.name).sort().join(",");
   ok((await roster()) === "Marta,Nils,Olga,Piotr", `roster seated (${await roster()})`);
 
@@ -38,11 +43,19 @@ const main = async () => {
   ok(!!card, "town still listed after the restart");
   ok(card.playerCount === 4, `seats survived the restart (${card.names.join(",")})`);
 
-  const back = await post("/api/game/join", { code, playerId: a, name: "Marta" });
-  ok(back.ok !== false, `same browser id reclaims its seat (${back.error ?? "ok"})`);
+  // Rejoin everyone at once. Before single-flight hydration, concurrent
+  // requests could overwrite the restored room and strand successful joins.
+  const returning = await Promise.all(
+    seats.map(({ id, name }) => post("/api/game/join", { code, playerId: id, name }))
+  );
+  ok(returning.every((r) => r.ok !== false), "all concurrent returning joins accepted");
   const s1 = await state(code, a);
-  ok(s1.playerCount === 4, `no duplicate seat (${s1.playerCount})`);
-  ok(s1.players.some((p) => p.name === "Marta"), "Marta is still Marta");
+  ok(s1?.playerCount === 4, `single restored room keeps all 4 souls (${s1?.playerCount ?? "unknown"})`);
+  ok(!!s1?.players.some((p) => p.name === "Marta"), "Marta is still Marta");
+  for (const seat of seats) {
+    const s = await state(code, seat.id);
+    ok(!!s?.self, `${seat.name} has a snapshot immediately after concurrent join`);
+  }
 
   await sleep(8300);
   const other = await post("/api/game/join", { code, playerId: pid(), name: "Olga" });

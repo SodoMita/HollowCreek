@@ -6,9 +6,9 @@ import { AudioDirector } from "../src/game/audio";
 import { BELL_X } from "../src/game/types";
 import type { RoomListing, Snapshot } from "../src/game/types";
 
-// Both author-built sandboxes run the same unified code (see SYNC.md). The
-// static client probes them in order and binds to the first one awake, so the
-// GitHub Pages / Newgrounds build survives either sandbox going to sleep.
+// Temporary author-built sandboxes run the same unified code (see SYNC.md).
+// The menu probes them in order; room-code joins also discover the backend
+// that owns the town and then stay pinned there. Use one server in production.
 const SERVERS = [
   "https://3000-iv1ax3jjgiz1x3ha95746.e2b.app",
   "https://3000-ihrqg7gfricyapy48j4hv.e2b.app",
@@ -20,31 +20,47 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const params = new URLSearchParams(location.search);
 let server = (params.get("server") || localStorage.getItem("hc_server") || "").replace(/\/$/, "");
 let mustProbe = false;
+// Uploaded HTML builds run in a portal-owned iframe. That origin hosts only
+// the static files; it is never the authoritative Hollow Creek server.
+const externalStaticHost =
+  /(^|\.)github\.io$/.test(location.hostname) ||
+  /(^|\.)itch\.zone$/.test(location.hostname) ||
+  /(^|\.)ungrounded\.net$/.test(location.hostname) ||
+  location.protocol === "file:";
 if (!server) {
-  if (/github\.io$/.test(location.hostname) || location.protocol === "file:") {
+  if (externalStaticHost) {
     server = DEFAULT_SERVER;
     mustProbe = true;
   } else {
     server = location.origin; // served from /play on a town server itself
   }
 }
+let probeEpoch = 0;
+function cancelProbe() { probeEpoch++; }
+function bindServer(s: string) {
+  server = s.replace(/\/$/, "");
+  ($("server") as HTMLInputElement).value = server;
+  ($("fullsite") as HTMLAnchorElement).href = server + "/";
+}
 async function probeServers() {
+  const epoch = ++probeEpoch;
   for (const s of [server, ...SERVERS.filter((x) => x !== server)]) {
     try {
       const ctl = new AbortController();
       const t = setTimeout(() => ctl.abort(), 3500);
       const r = await fetch(s + "/api/health", { signal: ctl.signal });
       clearTimeout(t);
+      // A create/join clicked while this probe was in flight pins the server.
+      // Never change it after that request has succeeded.
+      if (epoch !== probeEpoch) return;
       if (r.ok) {
-        server = s;
-        ($("server") as HTMLInputElement).value = s;
-        ($("fullsite") as HTMLAnchorElement).href = s + "/";
+        bindServer(s);
         void refreshRooms();
         return;
       }
     } catch { /* try the next town server */ }
   }
-  menuErr("No town server is awake. Set one under Server (advanced).");
+  if (epoch === probeEpoch) menuErr("No town server is awake. Set one under Server (advanced).");
 }
 function getPid(): string {
   let pid = localStorage.getItem("hc_pid");
@@ -56,6 +72,9 @@ let snap: Snapshot | null = null;
 let roomCode = "";
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let roomsTimer: ReturnType<typeof setInterval> | null = null;
+let polling = false;
+let pollFailures = 0;
+let roomError = "";
 let lastPhase = "lobby";
 let overlayKey = "";
 const keys = new Set<string>();
@@ -64,11 +83,19 @@ const displayX = new Map<string, number>();
 const audio = new AudioDirector();
 let tasksOpen = window.innerWidth > 640;
 
-async function api(path: string, body?: unknown): Promise<any> {
-  const res = await fetch(server + path, body === undefined ? undefined : {
+async function api(path: string, body?: unknown, base = server, timeoutMs = 0): Promise<any> {
+  const ctl = timeoutMs > 0 ? new AbortController() : undefined;
+  const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : undefined;
+  const init: RequestInit = body === undefined ? {} : {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-  });
-  return res.json();
+  };
+  if (ctl) init.signal = ctl.signal;
+  try {
+    const res = await fetch(base + path, init);
+    return await res.json();
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 function toast(msg: string) {
   const t = $("toast"); t.textContent = msg; t.style.display = "block";
@@ -88,27 +115,53 @@ function initMenu() {
   ($("server") as HTMLInputElement).value = server;
   ($("fullsite") as HTMLAnchorElement).href = server + "/";
   $("server").addEventListener("change", () => {
-    server = ($("server") as HTMLInputElement).value.trim().replace(/\/$/, "") || DEFAULT_SERVER;
+    cancelProbe();
+    bindServer(($("server") as HTMLInputElement).value.trim() || DEFAULT_SERVER);
     localStorage.setItem("hc_server", server);
-    ($("fullsite") as HTMLAnchorElement).href = server + "/";
     void refreshRooms();
   });
   $("create").addEventListener("click", async () => {
+    cancelProbe();
     saveName();
     try {
-      const d = await api("/api/game/create", { playerId: getPid(), name: nameVal() });
+      const d = await api("/api/game/create", { playerId: getPid(), name: nameVal() }, server, 8000);
       if (d.code) enterRoom(d.code); else menuErr(d.error ?? "Failed");
     } catch { menuErr("Cannot reach the town server. Check the Server field."); }
   });
+  let joinInFlight = false;
   const joinCode = async (c: string) => {
     c = c.trim().toUpperCase();
     if (c.length < 4) { menuErr("Enter the 4-letter town code."); return; }
+    if (joinInFlight) return;
+    joinInFlight = true;
+    cancelProbe();
     saveName();
+    $("menuerr").style.display = "none";
+    let lastError = "Cannot reach the town server. Check the Server field.";
     try {
-      const d = await api("/api/game/join", { code: c, playerId: getPid(), name: nameVal() });
-      if (d.ok) { if (d.playerId) localStorage.setItem("hc_pid", d.playerId); enterRoom(c); }
-      else menuErr(d.error ?? "Failed to join");
-    } catch { menuErr("Cannot reach the town server. Check the Server field."); }
+      // A room code identifies a town, not whichever backend this browser
+      // happened to probe first. If it is unknown here, locate it on the other
+      // configured backends. Once accepted, pin every poll to that backend.
+      const candidates = [server, ...SERVERS.filter((x) => x !== server)];
+      for (const candidate of candidates) {
+        try {
+          const d = await api("/api/game/join", { code: c, playerId: getPid(), name: nameVal() }, candidate, 6000);
+          if (d.ok) {
+            if (d.playerId) localStorage.setItem("hc_pid", d.playerId);
+            bindServer(candidate);
+            enterRoom(c);
+            return;
+          }
+          lastError = d.error ?? "Failed to join";
+          // Full/begun rooms are authoritative answers, not a reason to try
+          // a coincidentally identical code on another backend.
+          if (!/no such town/i.test(lastError)) break;
+        } catch { /* try the next backend */ }
+      }
+      menuErr(lastError);
+    } finally {
+      joinInFlight = false;
+    }
   };
   $("join").addEventListener("click", () => joinCode(($("code") as HTMLInputElement).value));
   $("code").addEventListener("keydown", (e) => { if (e.key === "Enter") joinCode(($("code") as HTMLInputElement).value); });
@@ -149,11 +202,19 @@ function esc(s: string) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 
 // ---------------------------------------------------------------- room ----
 function enterRoom(code: string) {
+  cancelProbe();
   roomCode = code;
+  snap = null;
+  roomError = "";
+  pollFailures = 0;
+  overlayKey = "";
+  $("overlay").style.display = "none";
   $("menu").style.display = "none";
   $("game").style.display = "block";
   if (roomsTimer) { clearInterval(roomsTimer); roomsTimer = null; }
-  history.replaceState(null, "", `${location.pathname}?room=${code}${params.get("server") ? `&server=${encodeURIComponent(server)}` : ""}`);
+  // Preserve the backend that actually accepted the join. A refresh must not
+  // probe a different server and turn a valid room into an empty screen.
+  history.replaceState(null, "", `${location.pathname}?room=${code}&server=${encodeURIComponent(server)}`);
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(poll, 100);
   void poll();
@@ -162,7 +223,7 @@ function leaveToMenu() {
   void send({ dir: 0, interactHeld: false });
   beaconLeave();
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  snap = null; roomCode = ""; overlayKey = "";
+  snap = null; roomCode = ""; overlayKey = ""; roomError = ""; pollFailures = 0;
   $("game").style.display = "none";
   $("menu").style.display = "block";
   history.replaceState(null, "", location.pathname);
@@ -177,16 +238,43 @@ function beaconLeave() {
 }
 window.addEventListener("pagehide", beaconLeave);
 
+function showRoomError(message: string) {
+  if (roomError === message) return;
+  roomError = message;
+  overlayKey = "";
+  $("overlay").style.display = "flex";
+  $("overlaypanel").innerHTML = `
+    <h2>Cannot enter the town</h2>
+    <p class="muted" style="margin-top:12px">${esc(message)}</p>
+    <div class="row" style="margin-top:16px;justify-content:center">
+      <button class="chip" data-act="menu">Other towns</button>
+    </div>`;
+}
 async function poll() {
+  if (polling || !roomCode) return;
+  polling = true;
+  const code = roomCode;
   try {
-    const s = (await api(`/api/game/state?code=${roomCode}&playerId=${getPid()}`)) as Snapshot & { error?: string };
-    if (s.error || !s.self) return;
+    const s = (await api(`/api/game/state?code=${code}&playerId=${getPid()}`, undefined, server, 5000)) as Snapshot & { error?: string };
+    if (code !== roomCode) return; // an old request must not paint a new room
+    if (s.error || !s.self) {
+      showRoomError(s.error ?? "The town did not return this player. Rejoin with its code.");
+      return;
+    }
+    pollFailures = 0;
+    roomError = "";
     snap = s;
     audio.update(s);
     if (lastPhase === "lobby" && s.phase === "playing") reveal(s.self.role === "hollow");
     lastPhase = s.phase;
     renderHud(s);
-  } catch { /* retry */ }
+  } catch {
+    if (code === roomCode && ++pollFailures >= 5) {
+      showRoomError("The town server is not answering. Retrying…");
+    }
+  } finally {
+    polling = false;
+  }
 }
 function reveal(hollow: boolean) {
   const r = $("reveal");
