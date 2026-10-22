@@ -6,14 +6,44 @@ import { AudioDirector } from "../src/game/audio";
 import { BELL_X } from "../src/game/types";
 import type { RoomListing, Snapshot } from "../src/game/types";
 
-const DEFAULT_SERVER = "https://3000-irlhq619hi9cpbud4mpec.e2b.app";
+// Both author-built sandboxes run the same unified code (see SYNC.md). The
+// static client probes them in order and binds to the first one awake, so the
+// GitHub Pages / Newgrounds build survives either sandbox going to sleep.
+const SERVERS = [
+  "https://3000-ixp7ma1a1ia6aq75osgyc.e2b.app",
+  "https://3000-irlhq619hi9cpbud4mpec.e2b.app",
+];
+const DEFAULT_SERVER = SERVERS[0];
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const params = new URLSearchParams(location.search);
 let server = (params.get("server") || localStorage.getItem("hc_server") || "").replace(/\/$/, "");
+let mustProbe = false;
 if (!server) {
-  // served from our own origin (/play) → same origin; hosted elsewhere → default
-  server = /github\.io$/.test(location.hostname) || location.protocol === "file:" ? DEFAULT_SERVER : location.origin;
+  if (/github\.io$/.test(location.hostname) || location.protocol === "file:") {
+    server = DEFAULT_SERVER;
+    mustProbe = true;
+  } else {
+    server = location.origin; // served from /play on a town server itself
+  }
+}
+async function probeServers() {
+  for (const s of [server, ...SERVERS.filter((x) => x !== server)]) {
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 3500);
+      const r = await fetch(s + "/api/health", { signal: ctl.signal });
+      clearTimeout(t);
+      if (r.ok) {
+        server = s;
+        ($("server") as HTMLInputElement).value = s;
+        ($("fullsite") as HTMLAnchorElement).href = s + "/";
+        void refreshRooms();
+        return;
+      }
+    } catch { /* try the next town server */ }
+  }
+  menuErr("No town server is awake. Set one under Server (advanced).");
 }
 function getPid(): string {
   let pid = localStorage.getItem("hc_pid");
@@ -87,6 +117,7 @@ function initMenu() {
   });
   void refreshRooms();
   roomsTimer = setInterval(refreshRooms, 3000);
+  if (mustProbe) void probeServers();
   const rc = params.get("room");
   if (rc) joinCode(rc);
 }
