@@ -19,11 +19,11 @@ Everything is written into the town chronicle - every step, chore, word, vote an
 
 CONTROLS
 A / D or arrow keys - walk
+E - interact: report a body, take the key, free a prisoner, ring the bell
 E (hold) - work a chore
-R - report a body
-Space - your ability (ring the bell, or kill if you are Hollow)
+Q or Space - your ability (kill if you are Hollow, ring the bell if you are not)
 F - snuff the lights (Hollow only)
-Enter or T - speak
+Enter - speak (your words appear above your head)
 Touchscreen works too. Everything is playable on a phone.
 
 PLAYING WITH FRIENDS
