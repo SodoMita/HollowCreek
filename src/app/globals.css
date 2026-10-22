@@ -1,0 +1,49 @@
+@import url("https://fonts.googleapis.com/css2?family=Pirata+One&family=Alegreya:ital,wght@0,400;0,600;0,700;1,400&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Pirata One", serif;
+  --font-body: "Alegreya", Georgia, serif;
+}
+
+html, body {
+  background: #0b0710;
+  color: #e9dfcf;
+  font-family: var(--font-body);
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #140d18; }
+::-webkit-scrollbar-thumb { background: #4a3040; border-radius: 4px; }
+
+@keyframes hc-flicker {
+  0%, 100% { opacity: 1; }
+  92% { opacity: 1; }
+  93% { opacity: 0.4; }
+  94% { opacity: 1; }
+  97% { opacity: 0.7; }
+  98% { opacity: 1; }
+}
+@keyframes hc-leaf-fall {
+  0% { transform: translateY(-8vh) translateX(0) rotate(0deg); opacity: 0; }
+  10% { opacity: 0.9; }
+  100% { transform: translateY(108vh) translateX(-14vw) rotate(540deg); opacity: 0.5; }
+}
+@keyframes hc-fog-drift {
+  0% { transform: translateX(-6%); }
+  50% { transform: translateX(6%); }
+  100% { transform: translateX(-6%); }
+}
+@keyframes hc-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes hc-bell-swing {
+  0%, 100% { transform: rotate(-12deg); }
+  50% { transform: rotate(12deg); }
+}
+.hc-title-flicker { animation: hc-flicker 6s infinite; }
+.hc-rise { animation: hc-rise 0.5s ease-out both; }
+.hc-rise-1 { animation: hc-rise 0.5s 0.1s ease-out both; }
+.hc-rise-2 { animation: hc-rise 0.5s 0.22s ease-out both; }
+.hc-rise-3 { animation: hc-rise 0.5s 0.34s ease-out both; }
