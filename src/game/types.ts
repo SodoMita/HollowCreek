@@ -87,6 +87,10 @@ export interface SelfInfo {
   canBlackout: boolean;
   teammates: string[]; // other hollow ids (only for hollow)
   myVote: string | null;
+  /** 0..100 — work and deeds spend it, standing still recovers it */
+  stamina: number;
+  /** true when the player is too tired for the nearest chore to progress */
+  winded: boolean;
 }
 
 export interface TaskView {

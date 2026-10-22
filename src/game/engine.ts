@@ -1,6 +1,6 @@
 import { db } from "@/db";
-import { gameEvents, roomRows, roomPlayers } from "@/db/schema";
-import { desc, eq, lt } from "drizzle-orm";
+import { gameEvents, roomRows, roomPlayers, playerStats } from "@/db/schema";
+import { desc, eq, lt, sql } from "drizzle-orm";
 import {
   BELL_X, BLACKOUT_CD_MS, BLACKOUT_MS, BUBBLE_MS, CAGE_XS, CELL_HALF, GHOST_SPEED,
   INTERACT_RANGE, KILL_COOLDOWN_MS, KILL_RANGE, MEETING_FROM, MEETING_MS, MEETING_TO,
@@ -14,6 +14,16 @@ import type { FeedItem, InputBody, Phase, Role, RoomListing, Snapshot } from "./
 // ---------------------------------------------------------------------------
 
 interface TaskState { id: string; done: boolean; progress: number }
+
+// stamina (0..100): work and deeds spend it, standing still recovers it
+const STAMINA_MAX = 100;
+const STAMINA_WORK_DRAIN = 15;   // per second of holding a chore
+const STAMINA_WALK_DRAIN = 2.5;  // per second of walking
+const STAMINA_RECOVER = 13;      // per second of standing still
+const STAMINA_KILL = 25;
+const STAMINA_BLACKOUT = 20;
+const STAMINA_BELL = 15;
+const STAMINA_UNLOCK = 15;
 
 interface P {
   id: string;
@@ -40,6 +50,7 @@ interface P {
   isHost: boolean;
   /** true for a seat restored from the database that nobody has claimed yet */
   parked: boolean;
+  stamina: number;
 }
 
 interface Room {
@@ -58,6 +69,9 @@ interface Room {
   nextFlicker: number;
   createdAt: number;
   totalTasks: number;
+  /** the town's chores: anyone may finish any of them, so a death never
+   *  blocks the work the way a personal task list would */
+  chores: Map<string, TaskState>;
   blackoutUntil: number;
   blackoutReadyAt: number;
   round: number;
@@ -173,6 +187,7 @@ export async function loadRoom(code: string): Promise<Room | undefined> {
     nextFlicker: Date.now() + 20000,
     createdAt: Date.now(),
     totalTasks: 0,
+    chores: new Map(STATIONS.map((s) => [s.id, { id: s.id, done: false, progress: 0 }])),
     blackoutUntil: 0,
     blackoutReadyAt: 0,
   };
@@ -202,6 +217,7 @@ export async function loadRoom(code: string): Promise<Room | undefined> {
       vote: null,
       isHost: false,
       parked: true,
+      stamina: STAMINA_MAX,
     });
   });
   // the newest returning player holds the lantern
@@ -252,6 +268,7 @@ export function createRoom(playerId: string, name: string) {
     nextFlicker: Date.now() + 20000,
     createdAt: Date.now(),
     totalTasks: 0,
+    chores: new Map(STATIONS.map((s) => [s.id, { id: s.id, done: false, progress: 0 }])),
     blackoutUntil: 0,
     blackoutReadyAt: 0,
     round: 0,
@@ -330,7 +347,8 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
     joinedAt: Date.now(),
     vote: null,
     isHost: true,
-    parked: false, // the lantern always passes to the LAST joiner
+    parked: false,
+    stamina: STAMINA_MAX, // the lantern always passes to the LAST joiner
   };
   const previousHost = [...room.players.values()].find((q) => q.isHost);
   if (previousHost) {
@@ -387,25 +405,21 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
     p.x = 300 + Math.random() * (WORLD_W - 600);
     p.killAt = Date.now() + 10000;
   });
-  const stationIds = STATIONS.map((s) => s.id);
-  let total = 0;
+  // Chores belong to the town. Every station is open to any living townsperson,
+  // so the work is never held hostage by one player's death, and nobody has to
+  // be handed a stranger's list.
+  room.chores = new Map(STATIONS.map((st) => [st.id, { id: st.id, done: false, progress: 0 }]));
+  room.totalTasks = STATIONS.length;
   for (const p of ps) {
-    if (p.role === "crew") {
-      const picks = [...stationIds].sort(() => Math.random() - 0.5).slice(0, TASKS_PER_CREW);
-      p.tasks = picks.map((id) => ({ id, done: false, progress: 0 }));
-      total += picks.length;
-    } else {
-      p.tasks = [...stationIds].sort(() => Math.random() - 0.5)
-        .slice(0, TASKS_PER_CREW)
-        .map((id) => ({ id, done: false, progress: 0 }));
-    }
+    p.tasks = [];
+    p.stamina = STAMINA_MAX;
   }
-  room.totalTasks = total;
   room.round += 1;
   // The cage key hides somewhere on the outskirts.
   room.keyX = Math.random() < 0.5 ? 150 + Math.random() * 1400 : 2700 + Math.random() * 1350;
   room.phase = "playing";
   room.nextFlicker = Date.now() + 15000 + Math.random() * 15000;
+  for (const p of ps) statDelta(p, { games: 1 });
   feed(room, "Night falls. Something wearing a human shape walks among you.");
   record(room, null, "game_start", { players: ps.map((p) => ({ id: p.id, name: p.name, role: p.role })) });
   checkWin(room);
@@ -525,6 +539,7 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
     q.cageIndex = -1;
     q.role = "crew";
     q.tasks = [];
+    q.stamina = STAMINA_MAX;
     q.killAt = 0;
     q.bellUsed = false;
     q.hasKey = false;
@@ -542,6 +557,7 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
   room.blackoutUntil = 0;
   room.blackoutReadyAt = 0;
   room.totalTasks = 0;
+  room.chores = new Map(STATIONS.map((st) => [st.id, { id: st.id, done: false, progress: 0 }]));
   room.phase = "lobby";
   feed(room, "The town gathers again. The same faces… but who will wear them tonight?");
   record(room, p, "restart", { round: room.round + 1 });
@@ -554,6 +570,99 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
 
 const dist = (a: number, b: number) => Math.abs(a - b);
 const inMeetingArea = (p: P) => p.caged || (p.x >= MEETING_FROM && p.x <= MEETING_TO);
+
+/** The town's nearest unfinished chore within reach of this player. */
+function nearestChore(room: Room, p: P): TaskState | null {
+  if (room.phase !== "playing") return null;
+  for (const st of STATIONS) {
+    if (dist(st.x, p.x) >= INTERACT_RANGE) continue;
+    const c = room.chores.get(st.id);
+    if (c && !c.done) return c;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Statistics — deaths, kills, wins, losses, playtime, words written, chores
+// finished. Accumulated as deltas in memory and added to Postgres on an
+// interval so the tick loop never touches the database.
+// ---------------------------------------------------------------------------
+
+export interface StatDeltas {
+  games?: number; wins?: number; losses?: number; kills?: number; deaths?: number;
+  tasksDone?: number; chatLines?: number; chatChars?: number; playMs?: number;
+  reports?: number; caged?: number; blackouts?: number;
+}
+
+const gStats = globalThis as typeof globalThis & {
+  __hollowStatDeltas?: Map<string, StatDeltas & { name: string }>;
+  __hollowStatsTimer?: ReturnType<typeof setInterval>;
+};
+const statDeltas: Map<string, StatDeltas & { name: string }> =
+  gStats.__hollowStatDeltas ?? new Map();
+gStats.__hollowStatDeltas = statDeltas;
+
+function statDelta(p: P, d: StatDeltas) {
+  const cur = statDeltas.get(p.id) ?? { name: p.name };
+  for (const [k, v] of Object.entries(d) as [keyof StatDeltas, number][]) {
+    cur[k] = (cur[k] ?? 0) + v;
+  }
+  cur.name = p.name;
+  statDeltas.set(p.id, cur);
+}
+
+async function flushStats() {
+  if (statDeltas.size === 0) return;
+  const batch = [...statDeltas.entries()].map(([id, d]) => ({ id, ...d }));
+  statDeltas.clear();
+  try {
+    for (const d of batch) {
+      await db
+        .insert(playerStats)
+        .values({
+          playerId: d.id,
+          name: d.name,
+          games: d.games ?? 0,
+          wins: d.wins ?? 0,
+          losses: d.losses ?? 0,
+          kills: d.kills ?? 0,
+          deaths: d.deaths ?? 0,
+          tasksDone: d.tasksDone ?? 0,
+          chatLines: d.chatLines ?? 0,
+          chatChars: d.chatChars ?? 0,
+          playMs: d.playMs ?? 0,
+          reports: d.reports ?? 0,
+          caged: d.caged ?? 0,
+          blackouts: d.blackouts ?? 0,
+        })
+        .onConflictDoUpdate({
+          target: playerStats.playerId,
+          set: {
+            name: d.name,
+            games: sql`${playerStats.games} + ${d.games ?? 0}`,
+            wins: sql`${playerStats.wins} + ${d.wins ?? 0}`,
+            losses: sql`${playerStats.losses} + ${d.losses ?? 0}`,
+            kills: sql`${playerStats.kills} + ${d.kills ?? 0}`,
+            deaths: sql`${playerStats.deaths} + ${d.deaths ?? 0}`,
+            tasksDone: sql`${playerStats.tasksDone} + ${d.tasksDone ?? 0}`,
+            chatLines: sql`${playerStats.chatLines} + ${d.chatLines ?? 0}`,
+            chatChars: sql`${playerStats.chatChars} + ${d.chatChars ?? 0}`,
+            playMs: sql`${playerStats.playMs} + ${Math.round(d.playMs ?? 0)}`,
+            reports: sql`${playerStats.reports} + ${d.reports ?? 0}`,
+            caged: sql`${playerStats.caged} + ${d.caged ?? 0}`,
+            blackouts: sql`${playerStats.blackouts} + ${d.blackouts ?? 0}`,
+            updatedAt: new Date(),
+          },
+        });
+    }
+  } catch (e) {
+    console.error("stats persist failed", e);
+  }
+}
+
+if (!gStats.__hollowStatsTimer) {
+  gStats.__hollowStatsTimer = setInterval(() => void flushStats(), 1500);
+}
 
 function nearestBody(room: Room, p: P) {
   let best: Room["bodies"][number] | null = null;
@@ -578,6 +687,7 @@ function dropKey(room: Room, p: P) {
 }
 
 function cagePlayer(room: Room, p: P): boolean {
+  statDelta(p, { caged: 1 });
   const idx = room.cages.findIndex((c) => c.occupant === null);
   if (idx === -1) return false;
   room.cages[idx].occupant = p.id;
@@ -607,6 +717,8 @@ function beginMeeting(room: Room, reason: string, caller: P | null) {
 }
 
 function doKill(room: Room, killer: P, victim: P) {
+  statDelta(killer, { kills: 1 });
+  statDelta(victim, { deaths: 1 });
   victim.alive = false;
   victim.dir = 0;
   dropKey(room, victim);
@@ -625,7 +737,8 @@ function checkWin(room: Room) {
   const hollowFree = ps.filter((p) => p.role === "hollow" && p.alive && !p.caged).length;
   const crewFree = ps.filter((p) => p.role === "crew" && p.alive && !p.caged).length;
   const crewAll = ps.filter((p) => p.role === "crew");
-  const tasksDone = crewAll.every((p) => p.tasks.every((t) => t.done));
+  const choresLeft = [...room.chores.values()].filter((c) => !c.done).length;
+  const tasksDone = choresLeft === 0;
   let winner: Role | null = null;
   let reason = "";
   if (tasksDone && crewAll.length > 0) { winner = "crew"; reason = "Every ward is restored. The Hollow starves and retreats."; }
@@ -636,6 +749,10 @@ function checkWin(room: Room) {
     room.winner = winner;
     room.winReason = reason;
     room.meeting = null;
+    for (const q of ps) {
+      const won = (winner === "hollow") === (q.role === "hollow");
+      statDelta(q, won ? { wins: 1 } : { losses: 1 });
+    }
     feed(room, winner === "crew" ? "Dawn breaks over Hollow Creek." : "The last lantern goes out.");
     record(room, null, "game_end", { winner, reason });
   }
@@ -695,6 +812,7 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     p.bubbleText = text;
     p.bubbleUntil = Date.now() + BUBBLE_MS;
     record(room, p, "chat", { text, ghost: !p.alive, caged: p.caged });
+    statDelta(p, { chatLines: 1, chatChars: text.length });
   }
 
   if (body.action === "start") return startGame(room, p.id);
@@ -705,6 +823,9 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     if (room.phase === "playing" && !p.caged) {
       const b = nearestBody(room, p);
       if (b) {
+        if (p.stamina <= 0) return { ok: false, error: "You are too winded to shout." };
+        p.stamina = Math.max(0, p.stamina - STAMINA_BELL);
+        statDelta(p, { reports: 1 });
         record(room, p, "report", { body: b.name });
         feed(room, `${p.name} found ${b.name}'s body.`);
         beginMeeting(room, `${p.name} found the body of ${b.name}`, p);
@@ -715,6 +836,8 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     if (p.hasKey) {
       const ci = room.cages.findIndex((c) => c.occupant && dist(c.x, p.x) < INTERACT_RANGE);
       if (ci >= 0) {
+        if (p.stamina <= 0) return { ok: false, error: "You are too winded to turn the key." };
+        p.stamina = Math.max(0, p.stamina - STAMINA_UNLOCK);
         const occ = room.players.get(room.cages[ci].occupant!)!;
         freePlayer(room, occ);
         p.hasKey = false;
@@ -734,6 +857,8 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     }
     // ring the bell
     if (room.phase === "playing" && !p.caged && !p.bellUsed && dist(p.x, BELL_X) < INTERACT_RANGE) {
+      if (p.stamina <= 0) return { ok: false, error: "You are too winded to ring the bell." };
+      p.stamina = Math.max(0, p.stamina - STAMINA_BELL);
       p.bellUsed = true;
       record(room, p, "ring_bell", {});
       beginMeeting(room, `${p.name} rang the bell`, p);
@@ -746,6 +871,8 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
       if (Date.now() < p.killAt) return { ok: false, error: "The hunger has not returned." };
       const victim = killTarget(room, p);
       if (!victim) return { ok: false, error: "No one close enough." };
+      if (p.stamina <= 0) return { ok: false, error: "Too weak to strike." };
+      p.stamina = Math.max(0, p.stamina - STAMINA_KILL);
       doKill(room, p, victim);
       return { ok: true };
     }
@@ -760,6 +887,9 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
   if (body.action === "blackout" && p.alive && p.role === "hollow" && room.phase === "playing") {
     const now = Date.now();
     if (now < room.blackoutReadyAt) return { ok: false, error: "The dark is not yet hungry again." };
+    if (p.stamina <= 0) return { ok: false, error: "Too weak to call the dark." };
+    p.stamina = Math.max(0, p.stamina - STAMINA_BLACKOUT);
+    statDelta(p, { blackouts: 1 });
     room.blackoutUntil = now + BLACKOUT_MS;
     room.blackoutReadyAt = now + BLACKOUT_CD_MS;
     feed(room, "Every lantern in town is snuffed at once. The dark rushes in.");
@@ -839,19 +969,35 @@ function tick() {
       } else {
         p.x = Math.max(30, Math.min(WORLD_W - 30, p.x));
       }
-      // task progress (hold-to-work)
+      // ---- playtime accrues for the living while a night runs ----
+      if (room.phase === "playing" && p.alive && !p.parked) statDelta(p, { playMs: TICK_MS });
+
+      // ---- stamina: work and walking spend it, standing still recovers it ----
+      if (room.phase === "playing" && p.alive) {
+        const dt = TICK_MS / 1000;
+        const working =
+          !p.caged && p.role === "crew" && p.interactHeld && p.dir === 0 &&
+          nearestChore(room, p) !== null;
+        if (working) p.stamina -= STAMINA_WORK_DRAIN * dt;
+        else if (p.dir !== 0) p.stamina -= STAMINA_WALK_DRAIN * dt;
+        else p.stamina += STAMINA_RECOVER * dt;
+        p.stamina = Math.max(0, Math.min(STAMINA_MAX, p.stamina));
+      }
+
+      // ---- the town's chores: any townsperson may finish any of them ----
       if (room.phase === "playing" && p.alive && !p.caged && p.role === "crew" && p.interactHeld && p.dir === 0) {
-        for (const t of p.tasks) {
-          if (t.done) continue;
-          const st = STATIONS.find((s) => s.id === t.id)!;
-          if (dist(st.x, p.x) < INTERACT_RANGE) {
-            t.progress += (TICK_MS / TASK_HOLD_MS);
-            if (t.progress >= 1) {
-              t.progress = 1;
-              t.done = true;
-              record(room, p, "task_complete", { task: t.id });
-              checkWin(room);
-            }
+        const chore = nearestChore(room, p);
+        if (chore && !chore.done) {
+          // tired hands work slower; at zero stamina nothing gets done at all
+          const rate = p.stamina <= 0 ? 0 : Math.max(0.15, p.stamina / STAMINA_MAX);
+          chore.progress += (TICK_MS / TASK_HOLD_MS) * rate;
+          if (chore.progress >= 1) {
+            chore.progress = 1;
+            chore.done = true;
+            record(room, p, "task_complete", { task: chore.id });
+            statDelta(p, { tasksDone: 1 });
+            feed(room, `${p.name} finished ${STATIONS.find((s) => s.id === chore.id)?.name ?? "a chore"}.`);
+            checkWin(room);
           }
         }
       }
@@ -903,8 +1049,8 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     else if (room.keyX !== null && !me.caged && dist(room.keyX, me.x) < INTERACT_RANGE) hint = "Take the iron key";
     else if (room.phase === "playing" && !me.caged && !me.bellUsed && dist(me.x, BELL_X) < INTERACT_RANGE) hint = "Ring the bell";
     else if (room.phase === "playing" && me.alive && !me.caged) {
-      const t = me.tasks.find((t) => !t.done && dist(STATIONS.find((s) => s.id === t.id)!.x, me.x) < INTERACT_RANGE);
-      if (t) hint = `Hold E — ${STATIONS.find((s) => s.id === t.id)!.name}${me.role === "hollow" ? " (pretend)" : ""}`;
+      const near = STATIONS.find((st) => dist(st.x, me.x) < INTERACT_RANGE && !room.chores.get(st.id)?.done);
+      if (near) hint = `Hold E — ${near.name}${me.role === "hollow" ? " (pretend)" : ""}`;
     }
   }
 
@@ -913,8 +1059,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     me.role === "hollow" ? killCd <= 0 && !!target : !me.caged && !me.bellUsed && dist(me.x, BELL_X) < INTERACT_RANGE + 20
   );
 
-  const crewAll = ps.filter((p) => p.role === "crew");
-  const doneTasks = crewAll.reduce((n, p) => n + p.tasks.filter((t) => t.done).length, 0);
+  const doneTasks = [...room.chores.values()].filter((c) => c.done).length;
 
   // ---- server-side vision: a hacked client cannot wallhack ----
   const blackout = now < room.blackoutUntil;
@@ -954,6 +1099,8 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
       canBlackout: me.role === "hollow" && me.alive && room.phase === "playing" && now >= room.blackoutReadyAt,
       teammates: me.role === "hollow" ? ps.filter((p) => p.role === "hollow" && p.id !== me.id).map((p) => p.id) : [],
       myVote: me.vote,
+      stamina: Math.round(me.stamina),
+      winded: me.stamina <= 0,
     },
     players: ps
       .filter((p) => p.id === me.id || canSee(p.x) || room.phase === "meeting" || room.phase === "lobby" || room.phase === "ended")
@@ -980,9 +1127,15 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     bodies: room.bodies.filter((b) => canSee(b.x)).map((b) => ({ x: b.x, color: b.color, name: b.name })),
     keyX: room.keyX !== null && canSee(room.keyX) ? room.keyX : null,
     cages: room.cages.map((c) => ({ x: c.x, occupant: c.occupant })),
-    tasks: me.tasks.map((t) => {
-      const st = STATIONS.find((s) => s.id === t.id)!;
-      return { id: t.id, name: st.name, x: st.x, done: t.done, progress: t.progress };
+    tasks: STATIONS.map((st) => ({
+      id: st.id,
+      name: st.name,
+      x: st.x,
+      done: !!room.chores.get(st.id)?.done,
+      progress: room.chores.get(st.id)?.progress ?? 0,
+    })).sort((a, b) => {
+      if (a.done !== b.done) return a.done ? 1 : -1;
+      return dist(a.x, me.x) - dist(b.x, me.x);
     }),
     taskBar: { done: doneTasks, total: room.totalTasks },
     meeting: room.meeting

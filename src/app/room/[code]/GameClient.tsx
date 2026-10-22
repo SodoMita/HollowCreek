@@ -273,7 +273,7 @@ export default function GameClient({ code }: { code: string }) {
           {s.phase !== "lobby" && s.self.alive && s.tasks.length > 0 && (
             <div className="absolute left-2 top-12 w-56 max-w-[70vw] rounded border border-[#3a2733]/60 bg-[#140d18]/70 p-2.5 text-xs backdrop-blur sm:left-3 sm:top-20 sm:w-60 sm:p-3">
               <button onClick={() => setTasksOpen(!tasksOpen)} className="mb-1.5 flex w-full items-center justify-between uppercase tracking-widest text-[#9c8b7a]">
-                <span>{s.self.role === "hollow" ? "Blend in (fake chores)" : "Your chores"}</span>
+                <span>{s.self.role === "hollow" ? "Blend in (the town's chores)" : "The town's chores"}</span>
                 <span className="sm:hidden">{tasksOpen ? "▾" : "▸"}</span>
               </button>
               <div className={`${tasksOpen ? "block" : "hidden"} max-h-[26dvh] overflow-y-auto sm:block`}>
@@ -283,6 +283,30 @@ export default function GameClient({ code }: { code: string }) {
                   {!t.done && t.progress > 0 && <span className="ml-auto text-[#d99a3d]">{Math.round(t.progress * 100)}%</span>}
                 </div>
               ))}
+              </div>
+            </div>
+          )}
+
+          {/* ---- stamina ---- */}
+          {s.phase !== "lobby" && s.self.alive && (
+            <div className="absolute bottom-[max(0.5rem,env(safe-area-inset-bottom))] left-1/2 w-[min(92vw,320px)] -translate-x-1/2 rounded border border-[#3a2733] bg-[#140d18]/80 p-2 backdrop-blur sm:bottom-3 sm:p-2.5">
+              <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-widest">
+                <span className={s.self.stamina <= 0 ? "text-[#ff6a5a]" : "text-[#9c8b7a]"}>
+                  {s.self.stamina <= 0 ? "winded — stand still to breathe" : "breath"}
+                </span>
+                <span className="font-mono text-[#d99a3d]">{s.self.stamina}</span>
+              </div>
+              <div className="h-2.5 overflow-hidden rounded-full border border-[#3a2733] bg-[#0d0810]">
+                <div
+                  className={`h-full transition-all duration-200 ${
+                    s.self.stamina <= 0
+                      ? "bg-[#ff6a5a]"
+                      : s.self.stamina < 35
+                        ? "bg-gradient-to-r from-[#8f3b1f] to-[#c9762f]"
+                        : "bg-gradient-to-r from-[#6b8e23] to-[#d99a3d]"
+                  }`}
+                  style={{ width: `${s.self.stamina}%` }}
+                />
               </div>
             </div>
           )}

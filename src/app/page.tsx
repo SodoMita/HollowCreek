@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { Bell, DoorOpen, Flame, Moon, Plus, RefreshCw, Skull, Users } from "lucide-react";
+import { Bell, DoorOpen, Flame, Moon, Plus, RefreshCw, ScrollText, Skull, Users } from "lucide-react";
 import type { RoomListing } from "@/game/types";
 
 function getPid(): string {
@@ -189,6 +189,12 @@ export default function Home() {
             </button>
           </div>
           {error && <p className="mt-3 text-sm text-[#e06a5a]">{error}</p>}
+          <a
+            href="/stats"
+            className="mt-4 flex items-center justify-center gap-2 rounded border border-[#3a2733] px-4 py-2.5 text-sm text-[#9c8b7a] transition hover:border-[#c9762f]/60 hover:text-[#d99a3d]"
+          >
+            <ScrollText className="h-4 w-4" strokeWidth={2} /> Town records — who survived
+          </a>
 
           {/* ---- open towns browser ---- */}
           <div className="mt-6 border-t border-[#3a2733] pt-4">

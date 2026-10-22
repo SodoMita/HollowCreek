@@ -36,3 +36,25 @@ export const roomPlayers = pgTable(
   },
   (t) => [index("room_players_code_idx").on(t.code)]
 );
+/** Lifetime record of every soul: kills, deaths, wins, losses, playtime, words. */
+export const playerStats = pgTable(
+  "player_stats",
+  {
+    playerId: text("player_id").primaryKey(),
+    name: text("name").notNull(),
+    games: integer("games").notNull().default(0),
+    wins: integer("wins").notNull().default(0),
+    losses: integer("losses").notNull().default(0),
+    kills: integer("kills").notNull().default(0),
+    deaths: integer("deaths").notNull().default(0),
+    tasksDone: integer("tasks_done").notNull().default(0),
+    chatLines: integer("chat_lines").notNull().default(0),
+    chatChars: integer("chat_chars").notNull().default(0),
+    playMs: integer("play_ms").notNull().default(0),
+    reports: integer("reports").notNull().default(0),
+    caged: integer("caged").notNull().default(0),
+    blackouts: integer("blackouts").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("player_stats_wins_idx").on(t.wins)]
+);

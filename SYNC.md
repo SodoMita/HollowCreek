@@ -39,3 +39,18 @@ it is archived history; port ideas via PR-style diffs into `main`.
 - blackout radii + shared cooldown, vision occlusion in snapshots
 - host: solo → last-joiner → leave-promotes-newest → watching-host stable
   → stale-name re-adoption without duplicates → host never nobody
+## Locked decisions (added later)
+
+5. **Chores belong to the town, not to a person.** `room.chores` holds one entry
+   per station; any living townsperson may finish any of them, and the crew wins
+   when the pool is empty. There is no per-player task list and no
+   redistribution — a death can never hold the work hostage.
+6. **Stamina.** 0–100 on every seat. Holding a chore drains 15/s, walking 2.5/s,
+   standing still recovers 13/s. Chore progress scales with stamina, so tired
+   hands work slower and at 0 nothing progresses. Kill 25, blackout 20, bell and
+   unlock 15. Actions are refused at 0 ("too winded").
+7. **Statistics.** `player_stats` accumulates games, wins, losses, kills,
+   deaths, chores finished, reports, times caged, blackouts, chat lines and
+   characters, and playtime while alive. Written as deltas from the tick loop
+   and upserted (column + delta) every 1.5s so nothing is lost or overwritten.
+   Shown at `/stats`, linked from the landing page.
