@@ -4,9 +4,12 @@ import { desc, eq, lt } from "drizzle-orm";
 import {
   BELL_X, BLACKOUT_CD_MS, BLACKOUT_MS, BUBBLE_MS, CAGE_XS, CELL_HALF, GHOST_SPEED,
   INTERACT_RANGE, KILL_COOLDOWN_MS, KILL_RANGE, MEETING_FROM, MEETING_MS, MEETING_TO,
-  PLAYER_COLORS, SPEED, STATIONS, TASKS_PER_CREW, TASK_HOLD_MS, TICK_MS,
+  PLAYER_COLORS, SPEED, STAMINA_BELL_COST, STAMINA_BLACKOUT_COST, STAMINA_IDLE_REGEN,
+  STAMINA_KILL_COST, STAMINA_SLOW_THRESHOLD, STAMINA_UNLOCK_COST, STAMINA_WORK_DRAIN,
+  STATIONS, TASK_HOLD_MS, TICK_MS,
   VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW, WORLD_W,
 } from "./types";
+import { bumpStats } from "./stats";
 import type { FeedItem, InputBody, Phase, Role, RoomListing, Snapshot } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -27,7 +30,8 @@ interface P {
   caged: boolean;
   cageIndex: number;
   role: Role;
-  tasks: TaskState[];
+  stamina: number;
+  exhausted: boolean;
   killAt: number;
   bellUsed: boolean;
   hasKey: boolean;
@@ -57,7 +61,9 @@ interface Room {
   flickerAt: number;
   nextFlicker: number;
   createdAt: number;
-  totalTasks: number;
+  startedAt: number;
+  /** Shared town wards — any living townfolk may work any of them. */
+  pool: TaskState[];
   blackoutUntil: number;
   blackoutReadyAt: number;
   round: number;
@@ -172,7 +178,8 @@ export async function loadRoom(code: string): Promise<Room | undefined> {
     flickerAt: 0,
     nextFlicker: Date.now() + 20000,
     createdAt: Date.now(),
-    totalTasks: 0,
+    startedAt: 0,
+    pool: [],
     blackoutUntil: 0,
     blackoutReadyAt: 0,
   };
@@ -190,7 +197,8 @@ export async function loadRoom(code: string): Promise<Room | undefined> {
       caged: false,
       cageIndex: -1,
       role: "crew",
-      tasks: [],
+      stamina: 1,
+      exhausted: false,
       killAt: 0,
       bellUsed: false,
       hasKey: false,
@@ -251,7 +259,8 @@ export function createRoom(playerId: string, name: string) {
     flickerAt: 0,
     nextFlicker: Date.now() + 20000,
     createdAt: Date.now(),
-    totalTasks: 0,
+    startedAt: 0,
+    pool: [],
     blackoutUntil: 0,
     blackoutReadyAt: 0,
     round: 0,
@@ -319,7 +328,8 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
     caged: false,
     cageIndex: -1,
     role: "crew",
-    tasks: [],
+    stamina: 1,
+    exhausted: false,
     killAt: 0,
     bellUsed: false,
     hasKey: false,
@@ -387,20 +397,16 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
     p.x = 300 + Math.random() * (WORLD_W - 600);
     p.killAt = Date.now() + 10000;
   });
-  const stationIds = STATIONS.map((s) => s.id);
-  let total = 0;
-  for (const p of ps) {
-    if (p.role === "crew") {
-      const picks = [...stationIds].sort(() => Math.random() - 0.5).slice(0, TASKS_PER_CREW);
-      p.tasks = picks.map((id) => ({ id, done: false, progress: 0 }));
-      total += picks.length;
-    } else {
-      p.tasks = [...stationIds].sort(() => Math.random() - 0.5)
-        .slice(0, TASKS_PER_CREW)
-        .map((id) => ({ id, done: false, progress: 0 }));
-    }
-  }
-  room.totalTasks = total;
+  // Shared pool: the town's wards belong to everyone. A death never orphans
+  // a chore, and nothing is redistributed — anyone living can work anything.
+  const crewCount = ps.filter((p) => p.role === "crew").length;
+  const poolSize = Math.min(STATIONS.length, 2 + crewCount * 2);
+  room.pool = STATIONS.map((s) => s.id)
+    .sort(() => Math.random() - 0.5)
+    .slice(0, poolSize)
+    .map((id) => ({ id, done: false, progress: 0 }));
+  for (const p of ps) { p.stamina = 1; p.exhausted = false; }
+  room.startedAt = Date.now();
   room.round += 1;
   // The cage key hides somewhere on the outskirts.
   room.keyX = Math.random() < 0.5 ? 150 + Math.random() * 1400 : 2700 + Math.random() * 1350;
@@ -524,7 +530,8 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
     q.caged = false;
     q.cageIndex = -1;
     q.role = "crew";
-    q.tasks = [];
+    q.stamina = 1;
+    q.exhausted = false;
     q.killAt = 0;
     q.bellUsed = false;
     q.hasKey = false;
@@ -541,7 +548,7 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
   room.winReason = null;
   room.blackoutUntil = 0;
   room.blackoutReadyAt = 0;
-  room.totalTasks = 0;
+  room.pool = [];
   room.phase = "lobby";
   feed(room, "The town gathers again. The same faces… but who will wear them tonight?");
   record(room, p, "restart", { round: room.round + 1 });
@@ -613,9 +620,12 @@ function doKill(room: Room, killer: P, victim: P) {
   freePlayer(room, victim); // a killed prisoner dies inside the cell; body remains there
   room.bodies.push({ x: victim.x, color: victim.color, name: victim.name, id: victim.id });
   killer.killAt = Date.now() + KILL_COOLDOWN_MS;
+  killer.stamina = Math.max(0, killer.stamina - STAMINA_KILL_COST);
   killer.x = victim.x; // lunge
   feed(room, "A scream cuts through the fog, then silence.");
   record(room, killer, "kill", { victim: victim.name, victimId: victim.id, victimCaged: victim.caged });
+  bumpStats(killer.id, killer.name, { kills: 1 });
+  bumpStats(victim.id, victim.name, { deaths: 1 });
   checkWin(room);
 }
 
@@ -625,7 +635,7 @@ function checkWin(room: Room) {
   const hollowFree = ps.filter((p) => p.role === "hollow" && p.alive && !p.caged).length;
   const crewFree = ps.filter((p) => p.role === "crew" && p.alive && !p.caged).length;
   const crewAll = ps.filter((p) => p.role === "crew");
-  const tasksDone = crewAll.every((p) => p.tasks.every((t) => t.done));
+  const tasksDone = room.pool.length > 0 && room.pool.every((t) => t.done);
   let winner: Role | null = null;
   let reason = "";
   if (tasksDone && crewAll.length > 0) { winner = "crew"; reason = "Every ward is restored. The Hollow starves and retreats."; }
@@ -638,6 +648,15 @@ function checkWin(room: Room) {
     room.meeting = null;
     feed(room, winner === "crew" ? "Dawn breaks over Hollow Creek." : "The last lantern goes out.");
     record(room, null, "game_end", { winner, reason });
+    const playtimeSec = Math.max(0, Math.round((Date.now() - room.startedAt) / 1000));
+    for (const p of room.players.values()) {
+      bumpStats(p.id, p.name, {
+        games: 1,
+        wins: p.role === winner ? 1 : 0,
+        losses: p.role === winner ? 0 : 1,
+        playtimeSec,
+      });
+    }
   }
 }
 
@@ -663,8 +682,10 @@ function resolveMeeting(room: Room) {
   } else {
     const p = room.players.get(top);
     if (p && p.alive && !p.caged) {
-      if (cagePlayer(room, p)) feed(room, `The town drags ${p.name} into a cage. They can still speak…`);
-      else feed(room, "Every cage is already full. The verdict is void.");
+      if (cagePlayer(room, p)) {
+        feed(room, `The town drags ${p.name} into a cage. They can still speak…`);
+        bumpStats(p.id, p.name, { cagings: 1 });
+      } else feed(room, "Every cage is already full. The verdict is void.");
     }
   }
   room.bodies = [];
@@ -695,6 +716,7 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     p.bubbleText = text;
     p.bubbleUntil = Date.now() + BUBBLE_MS;
     record(room, p, "chat", { text, ghost: !p.alive, caged: p.caged });
+    bumpStats(p.id, p.name, { chatChars: text.length });
   }
 
   if (body.action === "start") return startGame(room, p.id);
@@ -706,6 +728,7 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
       const b = nearestBody(room, p);
       if (b) {
         record(room, p, "report", { body: b.name });
+        bumpStats(p.id, p.name, { reports: 1 });
         feed(room, `${p.name} found ${b.name}'s body.`);
         beginMeeting(room, `${p.name} found the body of ${b.name}`, p);
         return { ok: true };
@@ -718,9 +741,11 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
         const occ = room.players.get(room.cages[ci].occupant!)!;
         freePlayer(room, occ);
         p.hasKey = false;
+        p.stamina = Math.max(0, p.stamina - STAMINA_UNLOCK_COST);
         room.keyX = room.cages[ci].x + 40; // the key falls by the open cage — the town learns where it lies
         feed(room, `${p.name} unlocks the cage. ${occ.name} steps free. The key clatters to the ground.`);
         record(room, p, "unlock_cage", { freed: occ.name });
+        bumpStats(p.id, p.name, { unlocks: 1 });
         return { ok: true };
       }
     }
@@ -735,7 +760,9 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     // ring the bell
     if (room.phase === "playing" && !p.caged && !p.bellUsed && dist(p.x, BELL_X) < INTERACT_RANGE) {
       p.bellUsed = true;
+      p.stamina = Math.max(0, p.stamina - STAMINA_BELL_COST);
       record(room, p, "ring_bell", {});
+      bumpStats(p.id, p.name, { bells: 1 });
       beginMeeting(room, `${p.name} rang the bell`, p);
       return { ok: true };
     }
@@ -751,7 +778,9 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     }
     if (p.role === "crew" && room.phase === "playing" && !p.caged && !p.bellUsed && dist(p.x, BELL_X) < INTERACT_RANGE + 20) {
       p.bellUsed = true;
+      p.stamina = Math.max(0, p.stamina - STAMINA_BELL_COST);
       record(room, p, "ring_bell", {});
+      bumpStats(p.id, p.name, { bells: 1 });
       beginMeeting(room, `${p.name} rang the bell`, p);
       return { ok: true };
     }
@@ -762,6 +791,8 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     if (now < room.blackoutReadyAt) return { ok: false, error: "The dark is not yet hungry again." };
     room.blackoutUntil = now + BLACKOUT_MS;
     room.blackoutReadyAt = now + BLACKOUT_CD_MS;
+    p.stamina = Math.max(0, p.stamina - STAMINA_BLACKOUT_COST);
+    bumpStats(p.id, p.name, { blackouts: 1 });
     feed(room, "Every lantern in town is snuffed at once. The dark rushes in.");
     record(room, p, "blackout", { caged: p.caged });
     return { ok: true };
@@ -839,21 +870,33 @@ function tick() {
       } else {
         p.x = Math.max(30, Math.min(WORLD_W - 30, p.x));
       }
-      // task progress (hold-to-work)
+      // shared ward work (hold E) — vigor drains, low vigor slows, zero halts
+      let working = false;
       if (room.phase === "playing" && p.alive && !p.caged && p.role === "crew" && p.interactHeld && p.dir === 0) {
-        for (const t of p.tasks) {
-          if (t.done) continue;
+        const t = room.pool.find((t) => {
+          if (t.done) return false;
           const st = STATIONS.find((s) => s.id === t.id)!;
-          if (dist(st.x, p.x) < INTERACT_RANGE) {
-            t.progress += (TICK_MS / TASK_HOLD_MS);
-            if (t.progress >= 1) {
-              t.progress = 1;
-              t.done = true;
-              record(room, p, "task_complete", { task: t.id });
-              checkWin(room);
-            }
+          return dist(st.x, p.x) < INTERACT_RANGE;
+        });
+        if (t && p.stamina > 0 && !p.exhausted) {
+          working = true;
+          const factor = Math.min(1, p.stamina / STAMINA_SLOW_THRESHOLD);
+          t.progress += (TICK_MS / TASK_HOLD_MS) * factor;
+          p.stamina = Math.max(0, p.stamina - STAMINA_WORK_DRAIN * dt);
+          if (p.stamina <= 0) p.exhausted = true; // must truly rest before working again
+          if (t.progress >= 1) {
+            t.progress = 1;
+            t.done = true;
+            record(room, p, "task_complete", { task: t.id });
+            bumpStats(p.id, p.name, { tasksDone: 1 });
+            checkWin(room);
           }
         }
+      }
+      // vigor returns only while truly idle
+      if (!working && p.dir === 0) {
+        p.stamina = Math.min(1, p.stamina + STAMINA_IDLE_REGEN * dt);
+        if (p.exhausted && p.stamina >= 0.2) p.exhausted = false;
       }
     }
 
@@ -903,8 +946,14 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     else if (room.keyX !== null && !me.caged && dist(room.keyX, me.x) < INTERACT_RANGE) hint = "Take the iron key";
     else if (room.phase === "playing" && !me.caged && !me.bellUsed && dist(me.x, BELL_X) < INTERACT_RANGE) hint = "Ring the bell";
     else if (room.phase === "playing" && me.alive && !me.caged) {
-      const t = me.tasks.find((t) => !t.done && dist(STATIONS.find((s) => s.id === t.id)!.x, me.x) < INTERACT_RANGE);
-      if (t) hint = `Hold E — ${STATIONS.find((s) => s.id === t.id)!.name}${me.role === "hollow" ? " (pretend)" : ""}`;
+      const t = room.pool.find((t) => !t.done && dist(STATIONS.find((s) => s.id === t.id)!.x, me.x) < INTERACT_RANGE);
+      if (t) {
+        hint = me.role === "hollow"
+          ? `Hold E — ${STATIONS.find((s) => s.id === t.id)!.name} (pretend)`
+          : me.exhausted
+            ? "Spent — stand still and catch your breath"
+            : `Hold E — ${STATIONS.find((s) => s.id === t.id)!.name}${me.stamina < STAMINA_SLOW_THRESHOLD ? " (weary, slow)" : ""}`;
+      }
     }
   }
 
@@ -913,8 +962,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     me.role === "hollow" ? killCd <= 0 && !!target : !me.caged && !me.bellUsed && dist(me.x, BELL_X) < INTERACT_RANGE + 20
   );
 
-  const crewAll = ps.filter((p) => p.role === "crew");
-  const doneTasks = crewAll.reduce((n, p) => n + p.tasks.filter((t) => t.done).length, 0);
+  const doneTasks = room.pool.filter((t) => t.done).length;
 
   // ---- server-side vision: a hacked client cannot wallhack ----
   const blackout = now < room.blackoutUntil;
@@ -950,6 +998,8 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
       bellUsed: me.bellUsed,
       killCooldownMs: killCd,
       canKill: !!target && killCd <= 0,
+      stamina: Math.round(me.stamina * 100) / 100,
+      exhausted: me.exhausted,
       blackoutCooldownMs: Math.max(0, room.blackoutReadyAt - now),
       canBlackout: me.role === "hollow" && me.alive && room.phase === "playing" && now >= room.blackoutReadyAt,
       teammates: me.role === "hollow" ? ps.filter((p) => p.role === "hollow" && p.id !== me.id).map((p) => p.id) : [],
@@ -980,11 +1030,11 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     bodies: room.bodies.filter((b) => canSee(b.x)).map((b) => ({ x: b.x, color: b.color, name: b.name })),
     keyX: room.keyX !== null && canSee(room.keyX) ? room.keyX : null,
     cages: room.cages.map((c) => ({ x: c.x, occupant: c.occupant })),
-    tasks: me.tasks.map((t) => {
+    tasks: room.pool.map((t) => {
       const st = STATIONS.find((s) => s.id === t.id)!;
       return { id: t.id, name: st.name, x: st.x, done: t.done, progress: t.progress };
     }),
-    taskBar: { done: doneTasks, total: room.totalTasks },
+    taskBar: { done: doneTasks, total: room.pool.length },
     meeting: room.meeting
       ? { endsAt: room.meeting.endsAt, reason: room.meeting.reason, inArea: inMeetingArea(me) }
       : null,

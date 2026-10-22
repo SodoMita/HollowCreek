@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { Bell, DoorOpen, Flame, Moon, Plus, RefreshCw, Skull, Users } from "lucide-react";
+import { Bell, DoorOpen, Flame, Moon, Plus, RefreshCw, Skull, Trophy, Users } from "lucide-react";
+import Link from "next/link";
 import type { RoomListing } from "@/game/types";
 
 function getPid(): string {
@@ -152,7 +153,15 @@ export default function Home() {
 
         {/* right: forms */}
         <div className="hc-rise-2 w-full max-w-sm shrink-0 rounded-lg border border-[#3a2733] bg-[#140d18]/90 p-6 shadow-[0_20px_80px_rgba(0,0,0,0.6)] backdrop-blur">
-          <h2 className="font-display text-3xl text-[#e9dfcf]">Enter the town</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="font-display text-3xl text-[#e9dfcf]">Enter the town</h2>
+            <Link
+              href="/stats"
+              className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition hover:border-[#c9762f]/40 hover:text-[#d99a3d]"
+            >
+              <Trophy className="h-3.5 w-3.5" /> Hall of Records
+            </Link>
+          </div>
           <label className="mt-5 block text-xs uppercase tracking-widest text-[#9c8b7a]">Your name</label>
           <input
             value={name}
@@ -258,8 +267,10 @@ export default function Home() {
           </div>
 
           <p className="mt-4 text-xs leading-relaxed text-[#6b5a55]">
-            4–10 townsfolk. One or two among you are Hollow. Survive the night and the
-            same souls can gather in the same town again — every deed is written into the chronicle.
+            4–10 townsfolk. One or two among you are Hollow. The town's wards are shared —
+            any living soul may work them, but chores and deeds drain your vigor; stand
+            still to catch your breath. Survive the night and the same souls can gather
+            again — every deed is written into the chronicle.
           </p>
         </div>
       </div>

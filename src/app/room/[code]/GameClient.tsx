@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { DoorOpen, Flame, ScrollText } from "lucide-react";
+import { DoorOpen, Flame, ScrollText, Trophy, Zap } from "lucide-react";
 import { Renderer } from "@/game/render";
 import { AudioDirector } from "@/game/audio";
 import { BELL_X } from "@/game/types";
@@ -273,7 +273,7 @@ export default function GameClient({ code }: { code: string }) {
           {s.phase !== "lobby" && s.self.alive && s.tasks.length > 0 && (
             <div className="absolute left-2 top-12 w-56 max-w-[70vw] rounded border border-[#3a2733]/60 bg-[#140d18]/70 p-2.5 text-xs backdrop-blur sm:left-3 sm:top-20 sm:w-60 sm:p-3">
               <button onClick={() => setTasksOpen(!tasksOpen)} className="mb-1.5 flex w-full items-center justify-between uppercase tracking-widest text-[#9c8b7a]">
-                <span>{s.self.role === "hollow" ? "Blend in (fake chores)" : "Your chores"}</span>
+                <span>{s.self.role === "hollow" ? "Town wards (pretend)" : "Town wards · shared"}</span>
                 <span className="sm:hidden">{tasksOpen ? "▾" : "▸"}</span>
               </button>
               <div className={`${tasksOpen ? "block" : "hidden"} max-h-[26dvh] overflow-y-auto sm:block`}>
@@ -341,7 +341,20 @@ export default function GameClient({ code }: { code: string }) {
 
           {/* ---- bottom controls ---- */}
           <div className="absolute bottom-0 left-0 right-0 flex items-end justify-between gap-2 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))]">
-            <div className="flex gap-2 sm:gap-3">
+            <div className="flex flex-col gap-1.5">
+              {s.self.alive && s.phase !== "lobby" && (
+                <div className="flex items-center gap-1.5" title="Vigor — work and deeds drain it; stand still to recover. Low vigor slows chores, zero halts them.">
+                  <Zap className={`h-3.5 w-3.5 ${s.self.stamina <= 0 ? "text-[#e06a5a]" : s.self.stamina < 0.3 ? "text-[#d99a3d]" : "text-[#a8c98a]"}`} />
+                  <div className="h-2 w-24 overflow-hidden rounded-full border border-[#3a2733] bg-[#140d18]/80 sm:w-28">
+                    <div
+                      className={`h-full transition-all duration-300 ${s.self.stamina <= 0 ? "bg-[#e06a5a]" : s.self.stamina < 0.3 ? "bg-[#d99a3d]" : "bg-[#6b8e23]"}`}
+                      style={{ width: `${Math.round(s.self.stamina * 100)}%` }}
+                    />
+                  </div>
+                  <span className={`text-[10px] ${s.self.exhausted ? "text-[#e06a5a]" : "text-[#9c8b7a]"}`}>{s.self.exhausted ? "spent — rest!" : "vigor"}</span>
+                </div>
+              )}
+              <div className="flex gap-2 sm:gap-3">
               {([["left", "◀"], ["right", "▶"]] as const).map(([d, glyph]) => (
                 <button
                   key={d}
@@ -352,6 +365,7 @@ export default function GameClient({ code }: { code: string }) {
                   onContextMenu={(e) => e.preventDefault()}
                 >{glyph}</button>
               ))}
+              </div>
             </div>
             <div className="flex items-end gap-2 sm:gap-3">
               <button
@@ -482,6 +496,7 @@ export default function GameClient({ code }: { code: string }) {
                 <div className="mt-3 flex justify-center gap-3">
                   <button onClick={() => router.push("/")} className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#c9b8a4] hover:bg-[#2a1a26]"><DoorOpen className="h-4 w-4" /> Other towns</button>
                   <a href={`/chronicle/${s.code}`} target="_blank" className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#d99a3d] hover:bg-[#2a1a26]"><ScrollText className="h-4 w-4" /> Chronicle</a>
+                  <a href="/stats" target="_blank" className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#c9b8a4] hover:bg-[#2a1a26]"><Trophy className="h-4 w-4" /> Records</a>
                 </div>
               </div>
             </div>

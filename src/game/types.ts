@@ -20,6 +20,14 @@ export const VISION_HOLLOW = 620;
 export const VISION_BLACKOUT = 190;
 export const BLACKOUT_MS = 9000;
 export const BLACKOUT_CD_MS = 30000;
+// Vigor (stamina): work and deeds drain it; idling restores it.
+export const STAMINA_WORK_DRAIN = 0.10; // per second while working a ward
+export const STAMINA_IDLE_REGEN = 0.09; // per second while idle
+export const STAMINA_SLOW_THRESHOLD = 0.3; // below this, work slows linearly
+export const STAMINA_KILL_COST = 0.35;
+export const STAMINA_BLACKOUT_COST = 0.3;
+export const STAMINA_BELL_COST = 0.15;
+export const STAMINA_UNLOCK_COST = 0.1;
 
 export interface Station {
   id: string;
@@ -83,6 +91,8 @@ export interface SelfInfo {
   bellUsed: boolean;
   killCooldownMs: number;
   canKill: boolean;
+  stamina: number; // 0..1
+  exhausted: boolean; // hit 0 — must rest to 20% before working again
   blackoutCooldownMs: number;
   canBlackout: boolean;
   teammates: string[]; // other hollow ids (only for hollow)
