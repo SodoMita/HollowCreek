@@ -1,5 +1,8 @@
 node_modules/
 .next/
 .env
+.env.local
 .tools/
 *.tsbuildinfo
+*.log
+.DS_Store

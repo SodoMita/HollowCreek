@@ -1,25 +1,17 @@
-import type { Metadata, Viewport } from "next";
+import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
 
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-  viewportFit: "cover",
-};
-
 export const metadata: Metadata = {
-  title: "Hollow Creek — an autumn horror of townsfolk and things",
+  title: "The Hollow Creek Bell — a 1D horror town",
   description:
-    "A 1D multiplayer social-deduction horror. Walk the autumn street, do your chores, ring the bell — and cage the Hollow before it wears your face.",
+    "A side-scrolling social deduction horror game. Server-authoritative movement, speech bubbles, a bell, and cages in the town square.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body className="antialiased">{children}</body>
+      <body className="bg-[#05070c] text-[#efe3d0] antialiased">{children}</body>
     </html>
   );
 }

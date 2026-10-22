@@ -1,80 +1,100 @@
-import { db } from "@/db";
-import { gameEvents } from "@/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { recorder } from "@/server/recorder";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
-const TYPE_LABELS: Record<string, [string, string]> = {
-  room_created: ["🏚", "A town was founded"],
-  join: ["🚶", "arrived in town"],
-  game_start: ["🌒", "Night fell — roles were dealt"],
-  move_input: ["👣", "changed direction"],
-  chat: ["💬", "spoke"],
-  task_complete: ["🕯", "finished a chore"],
-  kill: ["🩸", "killed"],
-  report: ["❗", "reported a body"],
-  ring_bell: ["🔔", "rang the bell"],
-  meeting_start: ["🔔", "A meeting was called"],
-  vote: ["⚖️", "voted"],
-  meeting_result: ["📜", "The verdict was tallied"],
-  unlock_cage: ["🗝", "unlocked a cage"],
-  pickup_key: ["🗝", "took the iron key"],
-  blackout: ["🌑", "snuffed every lantern in town"],
-  leave: ["🚪", "left the town"],
-  game_end: ["🌅", "The tale ended"],
+const SECRET_LABEL: Record<string, string> = {
+  kill: "MURDER",
+  killed: "MURDERED",
+  role_assign: "ROLE GIVEN",
+  lights_snuffed: "LIGHTS SNUFFED",
+  hedge_travel: "SLIPPED THROUGH A HEDGE",
+  game_start: "NIGHT BEGAN",
+  game_end: "NIGHT ENDED",
 };
 
-export default async function ChroniclePage({ params }: { params: Promise<{ code: string }> }) {
+function timeOf(d: Date | string | null) {
+  if (!d) return "--:--:--";
+  const date = typeof d === "string" ? new Date(d) : d;
+  return date.toLocaleTimeString([], { hour12: false });
+}
+
+export default async function ChroniclePage({
+  params,
+}: {
+  params: Promise<{ code: string }>;
+}) {
   const { code } = await params;
-  const rows = await db
-    .select()
-    .from(gameEvents)
-    .where(eq(gameEvents.roomCode, code.toUpperCase()))
-    .orderBy(desc(gameEvents.id))
-    .limit(800);
-  const events = rows.reverse();
+  const upper = code.toUpperCase();
+  const { actions, chat } = await recorder.chronicle(upper);
 
   return (
-    <main className="min-h-screen bg-[#0b0710] px-4 py-10">
+    <main className="min-h-screen bg-[#05070c] px-6 py-12 text-[#efe3d0]">
       <div className="mx-auto max-w-3xl">
-        <Link href="/" className="text-sm text-[#9c8b7a] hover:text-[#d99a3d]">← back to the crossroads</Link>
-        <h1 className="mt-2 font-display text-5xl text-[#e9dfcf]">The Chronicle of {code.toUpperCase()}</h1>
-        <p className="mt-2 italic text-[#9c8b7a]">
-          Every step, word, vote and kill — written down by the town clerk, who saw more than he said.
+        <p className="text-[11px] uppercase tracking-[0.5em] text-[#c98a3c]">the town record</p>
+        <h1 className="mt-2 text-4xl font-semibold">Chronicle of room {upper}</h1>
+        <p className="mt-2 text-sm text-[#8b7f6d]">
+          Every action taken in this room is recorded server-side, in order, including the ones the
+          town was never meant to see. {actions.length} recorded actions · {chat.length} spoken lines.
         </p>
-        <div className="mt-8 space-y-1.5">
-          {events.length === 0 && <p className="text-[#6b5a55]">Nothing is written here yet.</p>}
-          {events.map((e) => {
-            const [icon, label] = TYPE_LABELS[e.type] ?? ["•", e.type];
-            const d = (e.data ?? {}) as Record<string, unknown>;
-            const detail =
-              e.type === "chat" ? `“${String(d.text ?? "")}”${d.ghost ? " (ghost whisper)" : ""}${d.caged ? " (from the cage)" : ""}`
-              : e.type === "kill" ? `${String(d.victim ?? "")}${d.victimCaged ? " — inside their cage" : ""}`
-              : e.type === "vote" ? `for ${String(d.target ?? "")}`
-              : e.type === "move_input" ? `dir ${String(d.dir ?? "")}`
-              : e.type === "task_complete" ? String(d.task ?? "")
-              : e.type === "meeting_start" ? String(d.reason ?? "")
-              : e.type === "game_end" ? `${String(d.winner ?? "")} — ${String(d.reason ?? "")}`
-              : e.type === "meeting_result" ? JSON.stringify(d.tally ?? {})
-              : e.type === "unlock_cage" ? `freed ${String(d.freed ?? "")}`
-              : "";
-            const danger = e.type === "kill" || e.type === "game_end";
-            return (
-              <div key={e.id} className={`flex items-baseline gap-3 rounded border px-3 py-2 text-sm ${danger ? "border-[#4a1210] bg-[#1c0e0e]/60" : "border-[#241a26] bg-[#140d18]/60"}`}>
-                <span className="shrink-0 font-mono text-xs text-[#6b5a55]">
-                  {new Date(e.createdAt).toLocaleTimeString()}
-                </span>
-                <span className="shrink-0">{icon}</span>
-                <span className="text-[#d8c9b4]">
-                  {e.playerName ? <b className="text-[#e9dfcf]">{e.playerName}</b> : <i className="text-[#9c8b7a]">the town</i>}{" "}
-                  {label} {detail && <span className="italic text-[#9c8b7a]">{detail}</span>}
-                </span>
-                {typeof d.x === "number" && <span className="ml-auto shrink-0 font-mono text-xs text-[#5a4a50]">x:{d.x}</span>}
-              </div>
-            );
-          })}
-        </div>
+        <Link href={`/play/${upper}`} className="mt-4 inline-block text-sm text-[#c98a3c] hover:underline">
+          ← back to the street
+        </Link>
+
+        <section className="mt-8 overflow-hidden rounded-2xl border border-[#3a2b1c]">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-[#0e1016] text-[10px] uppercase tracking-widest text-[#8b7f6d]">
+              <tr>
+                <th className="px-4 py-3">time</th>
+                <th className="px-4 py-3">who</th>
+                <th className="px-4 py-3">action</th>
+                <th className="px-4 py-3">where</th>
+                <th className="px-4 py-3">detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {actions.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-6 text-center text-[#6c6357]">
+                    Nothing has happened here yet.
+                  </td>
+                </tr>
+              )}
+              {actions.map((a) => (
+                <tr key={a.id} className="border-t border-[#1a1410] align-top">
+                  <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-[#6c6357]">
+                    {timeOf(a.createdAt)}
+                  </td>
+                  <td className="px-4 py-2" style={{ color: a.secret ? "#ff9d8a" : "#d8cdbc" }}>
+                    {a.playerName}
+                  </td>
+                  <td className="px-4 py-2 text-xs uppercase tracking-widest text-[#c98a3c]">
+                    {SECRET_LABEL[a.type] ?? a.type.replace(/_/g, " ")}
+                  </td>
+                  <td className="px-4 py-2 font-mono text-xs text-[#7d7468]">{a.x ?? ""}</td>
+                  <td className="px-4 py-2 text-xs text-[#a2988a]">
+                    {a.payload ? JSON.stringify(a.payload) : ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+
+        {chat.length > 0 && (
+          <section className="mt-8">
+            <h2 className="text-[10px] uppercase tracking-[0.3em] text-[#c98a3c]">everything said</h2>
+            <ul className="mt-3 space-y-1">
+              {chat.map((c) => (
+                <li key={c.id} className="text-sm">
+                  <span className="font-mono text-xs text-[#6c6357]">{timeOf(c.createdAt)} </span>
+                  <span className={c.ghost ? "text-[#7fa6c9]" : "text-[#d8cdbc]"}>{c.name}:</span>{" "}
+                  <span className="text-[#a2988a]">{c.text}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
       </div>
     </main>
   );
