@@ -127,6 +127,7 @@ export default function GameClient({ code }: { code: string }) {
       else if (k === "arrowright" || k === "d") { keys.current.add("right"); computeDir(); e.preventDefault(); }
       else if (k === "e" && !e.repeat) { void send({ action: "interact", interactHeld: true }); }
       else if ((k === "q" || k === " ") && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
+      else if (k === "f" && !e.repeat) { void send({ action: "blackout" }); }
       else if (k === "enter") { setChatOpen(true); setTimeout(() => chatInputRef.current?.focus(), 30); e.preventDefault(); }
     };
     const up = (e: KeyboardEvent) => {
@@ -345,6 +346,18 @@ export default function GameClient({ code }: { code: string }) {
                   className={`h-16 w-16 rounded-full border-2 font-display text-lg backdrop-blur ${s.hint ? "border-[#d99a3d] bg-[#3a2410]/90 text-[#ffd98a]" : "border-[#3a2733] bg-[#140d18]/80 text-[#9c8b7a]"}`}
                 >E</button>
               </div>
+              {s.self.role === "hollow" && s.self.alive && s.phase === "playing" && (
+                <div className="flex flex-col items-center gap-1">
+                  {s.self.blackoutCooldownMs > 0 && (
+                    <span className="rounded bg-[#0d0810]/80 px-2 py-0.5 text-xs text-[#9aa]">{Math.ceil(s.self.blackoutCooldownMs / 1000)}s</span>
+                  )}
+                  <button
+                    onClick={() => send({ action: "blackout" })}
+                    title="Snuff every lantern (F)"
+                    className={`h-16 w-16 rounded-full border-2 font-display text-base leading-tight backdrop-blur ${s.self.canBlackout ? "border-[#7a6ab0] bg-[#1a1430]/90 text-[#b0a0e0] shadow-[0_0_18px_rgba(120,100,200,0.35)]" : "border-[#3a2733] bg-[#140d18]/80 text-[#6b5a55]"}`}
+                  >Snuff<br /><span className="text-[10px]">F</span></button>
+                </div>
+              )}
               <div className="flex flex-col items-center gap-1">
                 {s.self.role === "hollow" && s.self.killCooldownMs > 0 && s.self.alive && (
                   <span className="rounded bg-[#0d0810]/80 px-2 py-0.5 text-xs text-[#ff6a5a]">{Math.ceil(s.self.killCooldownMs / 1000)}s</span>

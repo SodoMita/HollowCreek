@@ -15,6 +15,11 @@ export const MEETING_TO = 2520;
 export const BELL_X = 2200;
 export const BUBBLE_MS = 6000;
 export const TASKS_PER_CREW = 4;
+export const VISION_CREW = 420;
+export const VISION_HOLLOW = 620;
+export const VISION_BLACKOUT = 190;
+export const BLACKOUT_MS = 9000;
+export const BLACKOUT_CD_MS = 30000;
 
 export interface Station {
   id: string;
@@ -78,6 +83,8 @@ export interface SelfInfo {
   bellUsed: boolean;
   killCooldownMs: number;
   canKill: boolean;
+  blackoutCooldownMs: number;
+  canBlackout: boolean;
   teammates: string[]; // other hollow ids (only for hollow)
   myVote: string | null;
 }
@@ -116,6 +123,10 @@ export interface Snapshot {
   winReason: string | null;
   bellAt: number;
   flickerAt: number;
+  blackoutUntil: number;
+  /** 0..1 proximity dread — nearest living Hollow to you (crew only). Drives audio tension. */
+  danger: number;
+  visionRadius: number;
   hint: string | null;
   abilityLabel: string;
   abilityReady: boolean;
@@ -127,7 +138,7 @@ export interface InputBody {
   playerId: string;
   dir?: number;
   interactHeld?: boolean;
-  action?: "interact" | "ability" | "vote" | "start";
+  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "leave";
   chat?: string;
   vote?: string; // playerId | "skip" | "free:<id>"
 }

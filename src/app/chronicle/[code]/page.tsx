@@ -20,6 +20,8 @@ const TYPE_LABELS: Record<string, [string, string]> = {
   meeting_result: ["📜", "The verdict was tallied"],
   unlock_cage: ["🗝", "unlocked a cage"],
   pickup_key: ["🗝", "took the iron key"],
+  blackout: ["🌑", "snuffed every lantern in town"],
+  leave: ["🚪", "left the town"],
   game_end: ["🌅", "The tale ended"],
 };
 

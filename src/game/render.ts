@@ -11,6 +11,7 @@ const LEAF_COLORS = ["#b4552a", "#c9762f", "#8f3b1f", "#d99a3d", "#7a4a21"];
 export class Renderer {
   private leaves: Leaf[] = [];
   cameraX = 0;
+  private visionR = 420;
 
   constructor() {
     for (let i = 0; i < 70; i++) {
@@ -146,7 +147,7 @@ export class Renderer {
       ctx.restore();
     }
 
-    // --- bodies ---
+    // --- bodies (crows gather above the dead) ---
     for (const b of snap.bodies) {
       const bx = b.x - cam;
       ctx.fillStyle = "rgba(90,10,10,0.7)";
@@ -156,6 +157,19 @@ export class Renderer {
       ctx.rotate(Math.PI / 2);
       this.drawFigure(ctx, 0, 0, b.color, 1, false, false, false, t, 1);
       ctx.restore();
+      // circling crows
+      ctx.strokeStyle = "#0a0608";
+      ctx.lineWidth = 2.5;
+      for (let i = 0; i < 3; i++) {
+        const a = t * (0.9 + i * 0.2) + i * 2.1;
+        const cx2 = bx + Math.cos(a) * (34 + i * 14);
+        const cy2 = ground - 120 - i * 16 + Math.sin(a * 1.7) * 10;
+        const flap = Math.sin(t * 9 + i * 2) * 4;
+        ctx.beginPath();
+        ctx.moveTo(cx2 - 7, cy2 - flap);
+        ctx.quadraticCurveTo(cx2, cy2 + 3, cx2 + 7, cy2 - flap);
+        ctx.stroke();
+      }
     }
 
     // --- players ---
@@ -216,6 +230,23 @@ export class Renderer {
       fog.addColorStop(1, "rgba(120,110,130,0)");
       ctx.fillStyle = fog;
       ctx.fillRect(drift - 80, fy - 24, w + 160, 48);
+    }
+
+    // --- lantern-light darkness mask (server-authoritative vision radius) ---
+    const targetR = snap.visionRadius;
+    if (targetR < 1500) {
+      this.visionR += (targetR - this.visionR) * Math.min(1, dt * 3.5);
+      const r = Math.max(80, this.visionR + Math.sin(t * 7.3) * 6); // lantern breathing
+      const cx2 = meX - cam;
+      const cy2 = ground - 50;
+      const dark = ctx.createRadialGradient(cx2, cy2, r * 0.45, cx2, cy2, r);
+      dark.addColorStop(0, "rgba(4,2,8,0)");
+      dark.addColorStop(0.75, "rgba(4,2,8,0.55)");
+      dark.addColorStop(1, "rgba(3,1,6,0.965)");
+      ctx.fillStyle = dark;
+      ctx.fillRect(0, 0, w, h);
+    } else {
+      this.visionR = 420;
     }
 
     // --- vignette ---
@@ -379,9 +410,11 @@ export class Renderer {
     t: number, now: number, snap: Snapshot
   ) {
     if (x < -260 || x > (ctx.canvas.width / (window.devicePixelRatio || 1)) + 260) return;
+    const blackout = now < snap.blackoutUntil;
     const flick = now - snap.flickerAt < 900 ? Math.random() * 0.6 : 0;
     const win = (wx: number, wy: number, ww: number, wh: number) => {
-      ctx.fillStyle = `rgba(255,${170 + Math.sin(t * 2 + wx) * 20},80,${0.75 - flick})`;
+      const a = blackout ? 0.04 : Math.max(0.05, 0.75 - flick);
+      ctx.fillStyle = `rgba(255,${170 + Math.sin(t * 2 + wx) * 20},80,${a})`;
       ctx.fillRect(wx, wy, ww, wh);
     };
     ctx.save();
@@ -430,9 +463,9 @@ export class Renderer {
         ctx.fillStyle = "#191420";
         ctx.fillRect(-3, -110, 6, 110);
         ctx.fillRect(-14, -112, 28, 5);
-        const glow = 0.6 + Math.sin(t * 5) * 0.1 - flick;
-        ctx.fillStyle = `rgba(255,190,90,${Math.max(0.05, glow)})`;
-        ctx.shadowColor = "rgba(255,180,80,0.9)"; ctx.shadowBlur = 24;
+        const glow = blackout ? 0.03 : 0.6 + Math.sin(t * 5) * 0.1 - flick;
+        ctx.fillStyle = `rgba(255,190,90,${Math.max(0.03, glow)})`;
+        ctx.shadowColor = "rgba(255,180,80,0.9)"; ctx.shadowBlur = blackout ? 0 : 24;
         ctx.fillRect(-8, -106, 16, 18);
         ctx.shadowBlur = 0;
         ctx.fillStyle = "#191420"; ctx.fillRect(-10, -108, 20, 3);

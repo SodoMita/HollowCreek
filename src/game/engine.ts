@@ -1,10 +1,10 @@
 import { db } from "@/db";
 import { gameEvents } from "@/db/schema";
 import {
-  BELL_X, BUBBLE_MS, CAGE_XS, CELL_HALF, GHOST_SPEED, INTERACT_RANGE,
-  KILL_COOLDOWN_MS, KILL_RANGE, MEETING_FROM, MEETING_MS, MEETING_TO,
+  BELL_X, BLACKOUT_CD_MS, BLACKOUT_MS, BUBBLE_MS, CAGE_XS, CELL_HALF, GHOST_SPEED,
+  INTERACT_RANGE, KILL_COOLDOWN_MS, KILL_RANGE, MEETING_FROM, MEETING_MS, MEETING_TO,
   PLAYER_COLORS, SPEED, STATIONS, TASKS_PER_CREW, TASK_HOLD_MS, TICK_MS,
-  WORLD_W,
+  VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW, WORLD_W,
 } from "./types";
 import type { FeedItem, InputBody, Phase, Role, Snapshot } from "./types";
 
@@ -54,6 +54,8 @@ interface Room {
   nextFlicker: number;
   createdAt: number;
   totalTasks: number;
+  blackoutUntil: number;
+  blackoutReadyAt: number;
 }
 
 const g = globalThis as typeof globalThis & {
@@ -114,6 +116,8 @@ export function createRoom(playerId: string, name: string) {
     nextFlicker: Date.now() + 20000,
     createdAt: Date.now(),
     totalTasks: 0,
+    blackoutUntil: 0,
+    blackoutReadyAt: 0,
   };
   rooms.set(room.code, room);
   record(room, null, "room_created", {});
@@ -256,6 +260,7 @@ function freePlayer(room: Room, p: P) {
 
 function beginMeeting(room: Room, reason: string, caller: P | null) {
   room.phase = "meeting";
+  room.blackoutUntil = 0; // the gathering rekindles the lanterns
   room.meeting = { endsAt: Date.now() + MEETING_MS, reason };
   room.bellAt = Date.now();
   for (const p of room.players.values()) { p.vote = null; p.interactHeld = false; }
@@ -413,6 +418,16 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     }
   }
 
+  if (body.action === "blackout" && p.alive && p.role === "hollow" && room.phase === "playing") {
+    const now = Date.now();
+    if (now < room.blackoutReadyAt) return { ok: false, error: "The dark is not yet hungry again." };
+    room.blackoutUntil = now + BLACKOUT_MS;
+    room.blackoutReadyAt = now + BLACKOUT_CD_MS;
+    feed(room, "Every lantern in town is snuffed at once. The dark rushes in.");
+    record(room, p, "blackout", { caged: p.caged });
+    return { ok: true };
+  }
+
   if (body.action === "vote" && room.phase === "meeting" && p.alive && body.vote) {
     if (!inMeetingArea(p)) return { ok: false, error: "Walk to the square to vote." };
     const v = body.vote;
@@ -544,6 +559,26 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
   const crewAll = ps.filter((p) => p.role === "crew");
   const doneTasks = crewAll.reduce((n, p) => n + p.tasks.filter((t) => t.done).length, 0);
 
+  // ---- server-side vision: a hacked client cannot wallhack ----
+  const blackout = now < room.blackoutUntil;
+  const ghostView = !me.alive;
+  let vision = ghostView ? 99999
+    : room.phase === "meeting" ? 900
+    : me.role === "hollow" ? VISION_HOLLOW
+    : blackout ? VISION_BLACKOUT
+    : VISION_CREW;
+  if (room.phase === "lobby" || room.phase === "ended") vision = 99999;
+  const canSee = (x: number) => ghostView || dist(x, me.x) <= vision;
+
+  // proximity dread for the living crew — drives heartbeat / tension audio
+  let danger = 0;
+  if (me.alive && me.role === "crew" && room.phase === "playing") {
+    let nearest = Infinity;
+    for (const p of ps) if (p.role === "hollow" && p.alive && !p.caged) nearest = Math.min(nearest, dist(p.x, me.x));
+    danger = Math.max(0, Math.min(1, 1 - nearest / 340));
+    if (blackout) danger = Math.max(danger, 0.35);
+  }
+
   return {
     code: room.code,
     phase: room.phase,
@@ -557,28 +592,35 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
       bellUsed: me.bellUsed,
       killCooldownMs: killCd,
       canKill: !!target && killCd <= 0,
+      blackoutCooldownMs: Math.max(0, room.blackoutReadyAt - now),
+      canBlackout: me.role === "hollow" && me.alive && room.phase === "playing" && now >= room.blackoutReadyAt,
       teammates: me.role === "hollow" ? ps.filter((p) => p.role === "hollow" && p.id !== me.id).map((p) => p.id) : [],
       myVote: me.vote,
     },
-    players: ps.map((p) => ({
-      id: p.id,
-      name: p.name,
-      color: p.color,
-      x: Math.round(p.x * 10) / 10,
-      facing: p.facing,
-      moving: p.moving && p.dir !== 0,
-      alive: p.alive,
-      caged: p.caged,
-      hasKey: p.hasKey,
-      voted: p.vote !== null,
-      isHost: p.isHost,
-      bubble:
-        p.bubbleUntil > now && (me.alive ? p.alive : true)
-          ? { text: p.bubbleText, until: p.bubbleUntil }
-          : null,
-    })),
-    bodies: room.bodies.map((b) => ({ x: b.x, color: b.color, name: b.name })),
-    keyX: room.keyX,
+    players: ps
+      .filter((p) => p.id === me.id || canSee(p.x) || room.phase === "meeting" || room.phase === "lobby" || room.phase === "ended")
+      .map((p) => {
+        const seen = p.id === me.id || canSee(p.x);
+        return {
+          id: p.id,
+          name: p.name,
+          color: p.color,
+          x: seen ? Math.round(p.x * 10) / 10 : -9999, // meeting roster: names known, positions hidden
+          facing: p.facing,
+          moving: seen && p.moving && p.dir !== 0,
+          alive: p.alive,
+          caged: p.caged,
+          hasKey: seen && p.hasKey,
+          voted: p.vote !== null,
+          isHost: p.isHost,
+          bubble:
+            seen && p.bubbleUntil > now && (me.alive ? p.alive : true)
+              ? { text: p.bubbleText, until: p.bubbleUntil }
+              : null,
+        };
+      }),
+    bodies: room.bodies.filter((b) => canSee(b.x)).map((b) => ({ x: b.x, color: b.color, name: b.name })),
+    keyX: room.keyX !== null && canSee(room.keyX) ? room.keyX : null,
     cages: room.cages.map((c) => ({ x: c.x, occupant: c.occupant })),
     tasks: me.tasks.map((t) => {
       const st = STATIONS.find((s) => s.id === t.id)!;
@@ -593,6 +635,9 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     winReason: room.winReason,
     bellAt: room.bellAt,
     flickerAt: room.flickerAt,
+    blackoutUntil: room.blackoutUntil,
+    danger: Math.round(danger * 100) / 100,
+    visionRadius: Math.min(vision, 9999),
     hint,
     abilityLabel,
     abilityReady,
