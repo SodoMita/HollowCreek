@@ -3,3 +3,4 @@ node_modules/
 .env
 .tools/
 *.tsbuildinfo
+.pages/

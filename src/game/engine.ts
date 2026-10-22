@@ -10,6 +10,7 @@ import {
   VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW, WORLD_W,
 } from "./types";
 import { bumpStats } from "./stats";
+import { shuffle } from "./rng";
 import type { FeedItem, InputBody, Phase, Role, RoomListing, Snapshot } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -390,7 +391,7 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
   if (room.players.size < 4) return { ok: false, error: "At least 4 souls are needed." };
 
   const ps = [...room.players.values()];
-  const shuffled = [...ps].sort(() => Math.random() - 0.5);
+  const shuffled = shuffle(ps); // uniform Fisher–Yates — every seat equally likely
   const hollowCount = ps.length >= 6 ? 2 : 1;
   shuffled.forEach((p, i) => {
     p.role = i < hollowCount ? "hollow" : "crew";
@@ -401,8 +402,7 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
   // a chore, and nothing is redistributed — anyone living can work anything.
   const crewCount = ps.filter((p) => p.role === "crew").length;
   const poolSize = Math.min(STATIONS.length, 2 + crewCount * 2);
-  room.pool = STATIONS.map((s) => s.id)
-    .sort(() => Math.random() - 0.5)
+  room.pool = shuffle(STATIONS.map((s) => s.id))
     .slice(0, poolSize)
     .map((id) => ({ id, done: false, progress: 0 }));
   for (const p of ps) { p.stamina = 1; p.exhausted = false; }
