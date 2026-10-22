@@ -10,9 +10,9 @@ import type { RoomListing, Snapshot } from "../src/game/types";
 // static client probes them in order and binds to the first one awake, so the
 // GitHub Pages / Newgrounds build survives either sandbox going to sleep.
 const SERVERS = [
+  "https://3000-iv1ax3jjgiz1x3ha95746.e2b.app",
   "https://3000-ihrqg7gfricyapy48j4hv.e2b.app",
   "https://3000-irlhq619hi9cpbud4mpec.e2b.app",
-  "https://3000-ixp7ma1a1ia6aq75osgyc.e2b.app",
 ];
 const DEFAULT_SERVER = SERVERS[0];
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
