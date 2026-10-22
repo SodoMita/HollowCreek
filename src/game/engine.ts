@@ -34,6 +34,7 @@ interface P {
   bubbleUntil: number;
   interactHeld: boolean;
   lastSeen: number;
+  joinedAt: number;
   vote: string | null;
   isHost: boolean;
 }
@@ -159,12 +160,40 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
     bubbleUntil: 0,
     interactHeld: false,
     lastSeen: Date.now(),
+    joinedAt: Date.now(),
     vote: null,
     isHost: room.players.size === 0,
   };
   room.players.set(playerId, p);
   feed(room, `${name} arrived in Hollow Creek.`);
   record(room, p, "join", {});
+  return { ok: true };
+}
+
+/** Explicit leave (button or sendBeacon on tab close). Lobby: removed + host
+ *  promoted to the NEWEST remaining joiner (most likely to be present).
+ *  In-game: seat is kept (roles must persist), but the lantern passes on. */
+export function leaveRoom(code: string, playerId: string): { ok: boolean } {
+  const room = rooms.get(code.toUpperCase());
+  if (!room) return { ok: false };
+  const p = room.players.get(playerId);
+  if (!p) return { ok: false };
+  record(room, p, "leave", { lobby: room.phase === "lobby" });
+  if (room.phase === "lobby") {
+    room.players.delete(playerId);
+    feed(room, `${p.name} turned back down the old road.`);
+  } else {
+    p.dir = 0;
+    p.lastSeen = 0;
+  }
+  if (p.isHost) {
+    p.isHost = false;
+    const next = [...room.players.values()].sort((a, b) => b.joinedAt - a.joinedAt)[0];
+    if (next) {
+      next.isHost = true;
+      feed(room, `${next.name} now holds the town lantern (host).`);
+    }
+  }
   return { ok: true };
 }
 
@@ -463,9 +492,11 @@ function tick() {
     if (room.phase === "lobby") {
       // hand the lantern to someone present if the host went stale
       const host = [...room.players.values()].find((p) => p.isHost);
-      if (host && now - host.lastSeen > 20000) {
-        const fresh = [...room.players.values()].filter((p) => p.id !== host.id).sort((a, b) => b.lastSeen - a.lastSeen)[0];
-        if (fresh && now - fresh.lastSeen < 10000) {
+      if (host && now - host.lastSeen > 12000) {
+        const fresh = [...room.players.values()]
+          .filter((p) => p.id !== host.id && now - p.lastSeen < 8000)
+          .sort((a, b) => b.joinedAt - a.joinedAt)[0];
+        if (fresh) {
           host.isHost = false;
           fresh.isHost = true;
           feed(room, `${fresh.name} now holds the town lantern (host).`);

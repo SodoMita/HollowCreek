@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Renderer } from "@/game/render";
+import { AudioDirector } from "@/game/audio";
 import { BELL_X } from "@/game/types";
 import type { Snapshot } from "@/game/types";
 
@@ -21,14 +22,15 @@ export default function GameClient({ code }: { code: string }) {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatText, setChatText] = useState("");
   const [roleBanner, setRoleBanner] = useState<string | null>(null);
+  const [muted, setMuted] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
 
   const snapRef = useRef<Snapshot | null>(null);
   const chatOpenRef = useRef(false);
   const displayX = useRef(new Map<string, number>());
   const keys = useRef(new Set<string>());
   const lastDir = useRef(0);
-  const audioRef = useRef<AudioContext | null>(null);
-  const lastBell = useRef(0);
+  const audioRef = useRef<AudioDirector | null>(null);
   const lastPhase = useRef<string>("lobby");
   const chatInputRef = useRef<HTMLInputElement>(null);
   chatOpenRef.current = chatOpen;
@@ -48,24 +50,12 @@ export default function GameClient({ code }: { code: string }) {
     } catch { /* network hiccup — next poll resyncs */ }
   }, [code]);
 
-  const ringBell = useCallback(() => {
-    try {
-      if (!audioRef.current) audioRef.current = new AudioContext();
-      const ctx = audioRef.current;
-      if (ctx.state === "suspended") void ctx.resume();
-      for (let i = 0; i < 3; i++) {
-        const t0 = ctx.currentTime + i * 0.9;
-        for (const [f, g] of [[392, 0.22], [587, 0.1], [784, 0.05]] as const) {
-          const o = ctx.createOscillator();
-          const gain = ctx.createGain();
-          o.type = "sine"; o.frequency.value = f;
-          gain.gain.setValueAtTime(g, t0);
-          gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.6);
-          o.connect(gain).connect(ctx.destination);
-          o.start(t0); o.stop(t0 + 1.7);
-        }
-      }
-    } catch { /* audio unavailable */ }
+  const ensureAudio = useCallback(() => {
+    if (!audioRef.current) {
+      audioRef.current = new AudioDirector();
+      setMuted(audioRef.current.muted);
+    }
+    audioRef.current.start();
   }, []);
 
   // ---- join + poll ----
@@ -90,10 +80,7 @@ export default function GameClient({ code }: { code: string }) {
           if (!alive) return;
           snapRef.current = s;
           setSnap(s);
-          if (s.bellAt > lastBell.current) {
-            if (lastBell.current !== 0 || Date.now() - s.bellAt < 4000) ringBell();
-            lastBell.current = s.bellAt;
-          }
+          audioRef.current?.update(s);
           if (lastPhase.current === "lobby" && s.phase === "playing") {
             setRoleBanner(s.self.role === "hollow" ? "hollow" : "crew");
             setTimeout(() => setRoleBanner(null), 4500);
@@ -102,8 +89,23 @@ export default function GameClient({ code }: { code: string }) {
         } catch { /* retry next tick */ }
       }, 100);
     })();
-    return () => { alive = false; if (timer) clearInterval(timer); void send({ dir: 0, interactHeld: false }); };
-  }, [code, ringBell, send]);
+    const bye = () => {
+      try {
+        navigator.sendBeacon(
+          "/api/game/leave",
+          new Blob([JSON.stringify({ code, playerId: getPid() })], { type: "application/json" })
+        );
+      } catch { /* noop */ }
+    };
+    window.addEventListener("pagehide", bye);
+    return () => {
+      alive = false;
+      if (timer) clearInterval(timer);
+      window.removeEventListener("pagehide", bye);
+      void send({ dir: 0, interactHeld: false });
+      bye();
+    };
+  }, [code, send]);
 
   // ---- input: clients only ever send intent ----
   const computeDir = useCallback(() => {
@@ -113,9 +115,7 @@ export default function GameClient({ code }: { code: string }) {
   }, [send]);
 
   useEffect(() => {
-    const unlockAudio = () => {
-      if (!audioRef.current) { try { audioRef.current = new AudioContext(); } catch { /* noop */ } }
-    };
+    const unlockAudio = () => ensureAudio();
     const down = (e: KeyboardEvent) => {
       unlockAudio();
       if (chatOpenRef.current) {
@@ -140,7 +140,7 @@ export default function GameClient({ code }: { code: string }) {
     window.addEventListener("keyup", up);
     window.addEventListener("pointerdown", unlockAudio);
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("pointerdown", unlockAudio); };
-  }, [computeDir, send]);
+  }, [computeDir, send, ensureAudio]);
 
   // ---- render loop ----
   useEffect(() => {
@@ -213,7 +213,7 @@ export default function GameClient({ code }: { code: string }) {
   ] : [];
 
   return (
-    <main className="relative h-screen w-screen select-none overflow-hidden bg-[#0b0710]">
+    <main className="fixed inset-0 h-[100dvh] w-full select-none overflow-hidden bg-[#0b0710]" style={{ touchAction: "none" }}>
       <canvas ref={canvasRef} className="absolute inset-0" />
 
       {!s && !joinError && (
@@ -225,15 +225,15 @@ export default function GameClient({ code }: { code: string }) {
       {s && (
         <>
           {/* ---- top bar ---- */}
-          <div className="absolute left-0 right-0 top-0 flex items-start justify-between gap-3 p-3 text-sm">
-            <div className="rounded border border-[#3a2733]/70 bg-[#140d18]/80 px-3 py-2 backdrop-blur">
-              <span className="font-display text-lg text-[#d99a3d]">Hollow Creek</span>
+          <div className="absolute left-0 right-0 top-0 flex items-start justify-between gap-2 p-2 pt-[max(0.5rem,env(safe-area-inset-top))] text-xs sm:gap-3 sm:p-3 sm:text-sm">
+            <div className="min-w-0 rounded border border-[#3a2733]/70 bg-[#140d18]/80 px-2 py-1.5 backdrop-blur sm:px-3 sm:py-2">
+              <span className="hidden font-display text-lg text-[#d99a3d] md:inline">Hollow Creek</span>
               <button
                 onClick={() => { void navigator.clipboard?.writeText(s.code); setToast("Town code copied"); setTimeout(() => setToast(null), 1500); }}
-                className="ml-3 rounded bg-[#2a1a26] px-2 py-0.5 font-mono tracking-[0.3em] text-[#e9dfcf] hover:bg-[#3a2733]"
+                className="rounded bg-[#2a1a26] px-2 py-0.5 font-mono tracking-[0.3em] text-[#e9dfcf] hover:bg-[#3a2733] md:ml-3"
                 title="Copy town code"
               >{s.code}</button>
-              <span className="ml-2 text-[#9c8b7a]">{s.playerCount} souls</span>
+              <span className="ml-2 hidden text-[#9c8b7a] sm:inline">{s.playerCount} souls</span>
             </div>
             {s.phase !== "lobby" && (
               <div className="mt-1 hidden w-72 sm:block">
@@ -243,34 +243,44 @@ export default function GameClient({ code }: { code: string }) {
                 </div>
               </div>
             )}
-            <div className="flex items-center gap-2">
-              <span className={`rounded px-3 py-1.5 font-display text-lg ${!s.self.alive ? "bg-[#2a2a3a]/80 text-[#9aa]" : s.self.role === "hollow" ? "bg-[#4a1210]/90 text-[#ff6a5a]" : "bg-[#1d2a1a]/80 text-[#a8c98a]"}`}>
+            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+              <span className={`rounded px-2 py-1 font-display text-sm sm:px-3 sm:py-1.5 sm:text-lg ${!s.self.alive ? "bg-[#2a2a3a]/80 text-[#9aa]" : s.self.role === "hollow" ? "bg-[#4a1210]/90 text-[#ff6a5a]" : "bg-[#1d2a1a]/80 text-[#a8c98a]"}`}>
                 {!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "The Hollow" : "Townfolk"}
                 {s.self.caged && s.self.alive ? " · Caged" : ""}
               </span>
-              <a href={`/chronicle/${s.code}`} target="_blank" className="rounded border border-[#3a2733] bg-[#140d18]/80 px-3 py-1.5 text-[#9c8b7a] hover:text-[#d99a3d]">Chronicle</a>
-              <button onClick={() => router.push("/")} className="rounded border border-[#3a2733] bg-[#140d18]/80 px-3 py-1.5 text-[#9c8b7a] hover:text-[#e06a5a]">Leave</button>
+              <button
+                onClick={() => { ensureAudio(); const m = !muted; setMuted(m); audioRef.current?.setMuted(m); }}
+                title={muted ? "Unmute" : "Mute"}
+                className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] sm:py-1.5"
+              >{muted ? "🔇" : "🔊"}</button>
+              <a href={`/chronicle/${s.code}`} target="_blank" className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] sm:px-3 sm:py-1.5"><span className="sm:hidden">📜</span><span className="hidden sm:inline">Chronicle</span></a>
+              <button onClick={() => router.push("/")} className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#e06a5a] sm:px-3 sm:py-1.5"><span className="sm:hidden">✕</span><span className="hidden sm:inline">Leave</span></button>
             </div>
           </div>
 
           {/* ---- task list ---- */}
           {s.phase !== "lobby" && s.self.alive && s.tasks.length > 0 && (
-            <div className="absolute left-3 top-20 w-60 rounded border border-[#3a2733]/60 bg-[#140d18]/70 p-3 text-xs backdrop-blur">
-              <div className="mb-1.5 uppercase tracking-widest text-[#9c8b7a]">{s.self.role === "hollow" ? "Blend in (fake chores)" : "Your chores"}</div>
+            <div className="absolute left-2 top-12 w-56 max-w-[70vw] rounded border border-[#3a2733]/60 bg-[#140d18]/70 p-2.5 text-xs backdrop-blur sm:left-3 sm:top-20 sm:w-60 sm:p-3">
+              <button onClick={() => setTasksOpen(!tasksOpen)} className="mb-1.5 flex w-full items-center justify-between uppercase tracking-widest text-[#9c8b7a]">
+                <span>{s.self.role === "hollow" ? "Blend in (fake chores)" : "Your chores"}</span>
+                <span className="sm:hidden">{tasksOpen ? "▾" : "▸"}</span>
+              </button>
+              <div className={`${tasksOpen ? "block" : "hidden"} max-h-[26dvh] overflow-y-auto sm:block`}>
               {s.tasks.map((t) => (
                 <div key={t.id} className={`flex items-center gap-2 py-0.5 ${t.done ? "text-[#6b8e5a] line-through" : "text-[#d8c9b4]"}`}>
                   <span>{t.done ? "✓" : "•"}</span><span>{t.name}</span>
                   {!t.done && t.progress > 0 && <span className="ml-auto text-[#d99a3d]">{Math.round(t.progress * 100)}%</span>}
                 </div>
               ))}
+              </div>
             </div>
           )}
 
           {/* ---- meeting banner ---- */}
           {s.phase === "meeting" && s.meeting && (
-            <div className="absolute left-1/2 top-16 w-[min(92vw,540px)] -translate-x-1/2 rounded border border-[#d99a3d]/40 bg-[#1c1210]/90 p-3 text-center backdrop-blur">
-              <div className="font-display text-2xl text-[#d99a3d]" style={{ animation: "hc-bell-swing 1s ease-in-out infinite", display: "inline-block" }}>🔔</div>
-              <div className="font-display text-xl text-[#e9dfcf]">{s.meeting.reason}</div>
+            <div className="absolute left-1/2 top-11 w-[min(94vw,540px)] -translate-x-1/2 rounded border border-[#d99a3d]/40 bg-[#1c1210]/90 p-2 text-center backdrop-blur sm:top-16 sm:p-3">
+              <div className="hidden font-display text-2xl text-[#d99a3d] sm:block" style={{ animation: "hc-bell-swing 1s ease-in-out infinite", display: undefined }}>🔔</div>
+              <div className="font-display text-base leading-tight text-[#e9dfcf] sm:text-xl">🔔 {s.meeting.reason}</div>
               <div className="mt-1 text-sm text-[#9c8b7a]">
                 {s.meeting.inArea ? <>Cast your verdict — <span className="text-[#d99a3d]">{secsLeft}s</span></> : <>Walk to the town square {me && me.x < BELL_X ? "→ east" : "← west"} — <span className="text-[#d99a3d]">{secsLeft}s</span></>}
               </div>
@@ -279,7 +289,7 @@ export default function GameClient({ code }: { code: string }) {
 
           {/* ---- vote panel ---- */}
           {s.phase === "meeting" && s.meeting?.inArea && s.self.alive && (
-            <div className="absolute right-3 top-32 max-h-[55vh] w-56 overflow-y-auto rounded border border-[#3a2733] bg-[#140d18]/90 p-3 backdrop-blur">
+            <div className="absolute right-2 top-28 max-h-[44dvh] w-44 overflow-y-auto rounded border border-[#3a2733] bg-[#140d18]/90 p-2 backdrop-blur sm:right-3 sm:top-32 sm:w-56 sm:max-h-[55dvh] sm:p-3">
               <div className="mb-2 font-display text-xl text-[#e9dfcf]">The Verdict</div>
               <div className="flex flex-col gap-1.5">
                 {voteOptions.map((o) => (
@@ -300,31 +310,31 @@ export default function GameClient({ code }: { code: string }) {
           )}
 
           {/* ---- event feed ---- */}
-          <div className="pointer-events-none absolute bottom-32 left-3 w-[min(88vw,360px)] space-y-1 text-sm">
+          <div className="pointer-events-none absolute bottom-24 left-2 w-[min(70vw,360px)] space-y-1 text-xs sm:bottom-32 sm:left-3 sm:text-sm short:hidden">
             {s.feed.slice(-5).map((f, i) => (
-              <p key={f.at + "" + i} className="rounded bg-[#0d0810]/60 px-2 py-1 italic text-[#c9b8a4]" style={{ opacity: 0.45 + (i / 5) * 0.55 }}>{f.text}</p>
+              <p key={f.at + "" + i} className={`rounded bg-[#0d0810]/60 px-2 py-0.5 italic text-[#c9b8a4] sm:py-1 ${i < 3 ? "hidden sm:block" : ""}`} style={{ opacity: 0.45 + (i / 5) * 0.55 }}>{f.text}</p>
             ))}
           </div>
 
           {/* ---- status banners ---- */}
           {!s.self.alive && s.phase !== "ended" && (
-            <div className="pointer-events-none absolute left-1/2 top-28 -translate-x-1/2 rounded bg-[#0d0810]/70 px-4 py-1.5 text-sm text-[#9aa]">
+            <div className="pointer-events-none absolute left-1/2 top-[7.5rem] sm:top-28 max-w-[92vw] text-center -translate-x-1/2 rounded bg-[#0d0810]/70 px-4 py-1.5 text-sm text-[#9aa]">
               You are dead. Drift as a ghost — only the dead can see and hear you.
             </div>
           )}
           {s.self.caged && s.self.alive && (
-            <div className="pointer-events-none absolute left-1/2 top-28 -translate-x-1/2 rounded bg-[#1c1210]/80 px-4 py-1.5 text-sm text-[#d99a3d]">
+            <div className="pointer-events-none absolute left-1/2 top-[7.5rem] sm:top-28 max-w-[92vw] text-center -translate-x-1/2 rounded bg-[#1c1210]/80 px-4 py-1.5 text-sm text-[#d99a3d]">
               The iron is cold. You can still speak and vote — plead for the key.
             </div>
           )}
 
           {/* ---- bottom controls ---- */}
-          <div className="absolute bottom-0 left-0 right-0 flex items-end justify-between p-4">
-            <div className="flex gap-3">
+          <div className="absolute bottom-0 left-0 right-0 flex items-end justify-between gap-2 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))]">
+            <div className="flex gap-2 sm:gap-3">
               {([["left", "◀"], ["right", "▶"]] as const).map(([d, glyph]) => (
                 <button
                   key={d}
-                  className="h-16 w-16 rounded-full border border-[#3a2733] bg-[#140d18]/80 text-2xl text-[#d8c9b4] backdrop-blur active:bg-[#3a2733]"
+                  className="h-[52px] w-[52px] rounded-full border border-[#3a2733] bg-[#140d18]/80 text-xl text-[#d8c9b4] backdrop-blur active:bg-[#3a2733] sm:h-16 sm:w-16 sm:text-2xl short:h-12 short:w-12"
                   onPointerDown={(e) => { e.preventDefault(); holdMove(d, true); }}
                   onPointerUp={() => holdMove(d, false)}
                   onPointerLeave={() => holdMove(d, false)}
@@ -332,18 +342,18 @@ export default function GameClient({ code }: { code: string }) {
                 >{glyph}</button>
               ))}
             </div>
-            <div className="flex items-end gap-3">
+            <div className="flex items-end gap-2 sm:gap-3">
               <button
                 onClick={() => { setChatOpen(true); setTimeout(() => chatInputRef.current?.focus(), 30); }}
-                className="h-12 rounded-full border border-[#3a2733] bg-[#140d18]/80 px-4 text-sm text-[#d8c9b4] backdrop-blur hover:bg-[#2a1a26]"
-              >💬 Speak</button>
+                className="h-11 rounded-full border border-[#3a2733] bg-[#140d18]/80 px-3 text-sm text-[#d8c9b4] backdrop-blur hover:bg-[#2a1a26] sm:px-4"
+              >💬<span className="hidden sm:inline"> Speak</span></button>
               <div className="flex flex-col items-center gap-1">
-                {s.hint && <span className="max-w-44 rounded bg-[#0d0810]/80 px-2 py-0.5 text-center text-xs text-[#d99a3d]">{s.hint}</span>}
+                {s.hint && <span className="max-w-36 sm:max-w-44 rounded bg-[#0d0810]/80 px-2 py-0.5 text-center text-xs text-[#d99a3d]">{s.hint}</span>}
                 <button
                   onPointerDown={() => send({ action: "interact", interactHeld: true })}
                   onPointerUp={() => send({ interactHeld: false })}
                   onPointerLeave={() => send({ interactHeld: false })}
-                  className={`h-16 w-16 rounded-full border-2 font-display text-lg backdrop-blur ${s.hint ? "border-[#d99a3d] bg-[#3a2410]/90 text-[#ffd98a]" : "border-[#3a2733] bg-[#140d18]/80 text-[#9c8b7a]"}`}
+                  className={`h-[52px] w-[52px] rounded-full border-2 font-display text-sm sm:h-16 sm:w-16 sm:text-base short:h-12 short:w-12 text-lg backdrop-blur ${s.hint ? "border-[#d99a3d] bg-[#3a2410]/90 text-[#ffd98a]" : "border-[#3a2733] bg-[#140d18]/80 text-[#9c8b7a]"}`}
                 >E</button>
               </div>
               {s.self.role === "hollow" && s.self.alive && s.phase === "playing" && (
@@ -354,7 +364,7 @@ export default function GameClient({ code }: { code: string }) {
                   <button
                     onClick={() => send({ action: "blackout" })}
                     title="Snuff every lantern (F)"
-                    className={`h-16 w-16 rounded-full border-2 font-display text-base leading-tight backdrop-blur ${s.self.canBlackout ? "border-[#7a6ab0] bg-[#1a1430]/90 text-[#b0a0e0] shadow-[0_0_18px_rgba(120,100,200,0.35)]" : "border-[#3a2733] bg-[#140d18]/80 text-[#6b5a55]"}`}
+                    className={`h-[52px] w-[52px] rounded-full border-2 font-display text-sm sm:h-16 sm:w-16 sm:text-base short:h-12 short:w-12 text-base leading-tight backdrop-blur ${s.self.canBlackout ? "border-[#7a6ab0] bg-[#1a1430]/90 text-[#b0a0e0] shadow-[0_0_18px_rgba(120,100,200,0.35)]" : "border-[#3a2733] bg-[#140d18]/80 text-[#6b5a55]"}`}
                   >Snuff<br /><span className="text-[10px]">F</span></button>
                 </div>
               )}
@@ -365,7 +375,7 @@ export default function GameClient({ code }: { code: string }) {
                 <button
                   onClick={() => send({ action: "ability" })}
                   disabled={!s.self.alive}
-                  className={`h-16 w-16 rounded-full border-2 font-display text-base leading-tight backdrop-blur ${s.abilityReady ? (s.self.role === "hollow" ? "border-[#ff4a3a] bg-[#4a1210]/90 text-[#ff8a7a] shadow-[0_0_20px_rgba(255,60,40,0.4)]" : "border-[#d99a3d] bg-[#3a2410]/90 text-[#ffd98a]") : "border-[#3a2733] bg-[#140d18]/80 text-[#6b5a55]"}`}
+                  className={`h-[52px] w-[52px] rounded-full border-2 font-display text-sm sm:h-16 sm:w-16 sm:text-base short:h-12 short:w-12 text-base leading-tight backdrop-blur ${s.abilityReady ? (s.self.role === "hollow" ? "border-[#ff4a3a] bg-[#4a1210]/90 text-[#ff8a7a] shadow-[0_0_20px_rgba(255,60,40,0.4)]" : "border-[#d99a3d] bg-[#3a2410]/90 text-[#ffd98a]") : "border-[#3a2733] bg-[#140d18]/80 text-[#6b5a55]"}`}
                 >{s.abilityLabel}</button>
               </div>
             </div>
@@ -373,7 +383,7 @@ export default function GameClient({ code }: { code: string }) {
 
           {/* ---- chat ---- */}
           {chatOpen && (
-            <div className="absolute bottom-24 left-1/2 w-[min(92vw,420px)] -translate-x-1/2">
+            <div className="absolute bottom-20 left-1/2 w-[min(92vw,420px)] sm:bottom-24 -translate-x-1/2">
               <input
                 ref={chatInputRef}
                 value={chatText}
@@ -390,7 +400,7 @@ export default function GameClient({ code }: { code: string }) {
           {/* ---- lobby overlay ---- */}
           {s.phase === "lobby" && (
             <div className="absolute inset-0 flex items-center justify-center bg-[#0b0710]/70 backdrop-blur-sm">
-              <div className="hc-rise w-[min(92vw,440px)] rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-6 text-center">
+              <div className="hc-rise max-h-[88dvh] w-[min(92vw,440px)] overflow-y-auto rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-4 text-center sm:p-6">
                 <h2 className="font-display text-4xl text-[#e9dfcf]">Gathering at dusk</h2>
                 <p className="mt-1 text-sm text-[#9c8b7a]">Share the town code with your fellow townsfolk</p>
                 <div className="mt-3 font-mono text-5xl tracking-[0.4em] text-[#d99a3d]">{s.code}</div>
@@ -425,12 +435,12 @@ export default function GameClient({ code }: { code: string }) {
               <div className="text-center">
                 {roleBanner === "hollow" ? (
                   <>
-                    <p className="font-display text-7xl text-[#ff4a3a] drop-shadow-[0_0_30px_rgba(255,60,40,0.6)]">You are Hollow</p>
+                    <p className="font-display text-5xl sm:text-7xl text-[#ff4a3a] drop-shadow-[0_0_30px_rgba(255,60,40,0.6)]">You are Hollow</p>
                     <p className="mt-3 text-lg text-[#c9a0a0]">Wear their faces. Kill when none watch. Q to strike.</p>
                   </>
                 ) : (
                   <>
-                    <p className="font-display text-7xl text-[#a8c98a]">Townfolk</p>
+                    <p className="font-display text-5xl sm:text-7xl text-[#a8c98a]">Townfolk</p>
                     <p className="mt-3 text-lg text-[#b8c9a4]">Finish your chores. Find the key. Trust no one.</p>
                   </>
                 )}
@@ -441,8 +451,8 @@ export default function GameClient({ code }: { code: string }) {
           {/* ---- end overlay ---- */}
           {s.phase === "ended" && (
             <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0b0710]/80 backdrop-blur-sm">
-              <div className="hc-rise w-[min(92vw,480px)] rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-8 text-center">
-                <p className={`font-display text-6xl ${s.winner === "hollow" ? "text-[#ff4a3a]" : "text-[#a8c98a]"}`}>
+              <div className="hc-rise max-h-[88dvh] w-[min(92vw,480px)] overflow-y-auto rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-5 text-center sm:p-8">
+                <p className={`font-display text-4xl sm:text-6xl ${s.winner === "hollow" ? "text-[#ff4a3a]" : "text-[#a8c98a]"}`}>
                   {s.winner === "hollow" ? "The Hollow wins" : "The town survives"}
                 </p>
                 <p className="mt-4 text-lg italic text-[#c9b8a4]">{s.winReason}</p>
@@ -455,7 +465,7 @@ export default function GameClient({ code }: { code: string }) {
           )}
 
           {toast && (
-            <div className="absolute bottom-44 left-1/2 -translate-x-1/2 rounded bg-[#1c1210]/95 px-4 py-2 text-sm text-[#d99a3d]">{toast}</div>
+            <div className="absolute bottom-32 left-1/2 sm:bottom-44 -translate-x-1/2 rounded bg-[#1c1210]/95 px-4 py-2 text-sm text-[#d99a3d]">{toast}</div>
           )}
         </>
       )}

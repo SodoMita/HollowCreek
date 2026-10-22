@@ -6,10 +6,13 @@
   --font-body: "Alegreya", Georgia, serif;
 }
 
+@custom-variant short (@media (max-height: 520px));
+
 html, body {
   background: #0b0710;
   color: #e9dfcf;
   font-family: var(--font-body);
+  overscroll-behavior: none;
 }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }

@@ -118,7 +118,7 @@ export default function Home() {
             {[
               ["A / D", "walk the street"],
               ["E", "interact · hold for chores"],
-              ["Q", "ability — kill or bell"],
+              ["Q / F", "kill · bell · snuff lights"],
               ["Enter", "speak (bubble)"],
             ].map(([k, v]) => (
               <div key={k} className="rounded border border-[#3a2733] bg-[#160e1a]/80 p-3">
