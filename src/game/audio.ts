@@ -6,6 +6,13 @@
 import type { Snapshot } from "./types";
 
 const SCALE = [587.33, 698.46, 783.99, 880.0, 1046.5, 1174.66]; // D5 F5 G5 A5 C6 D6
+// slow chord cycle for the drone bed: Dm → Bb → F → Am (ported from Agent-Hollow)
+const CHORDS = [
+  [73.42, 110.0, 146.83, 174.61],
+  [58.27, 87.31, 116.54, 146.83],
+  [87.31, 130.81, 174.61, 220.0],
+  [55.0, 82.41, 110.0, 130.81],
+];
 
 export class AudioDirector {
   private ctx: AudioContext | null = null;
@@ -15,6 +22,10 @@ export class AudioDirector {
   private nextMotif = 0;
   private nextBeat = 0;
   private nextStep = 0;
+  private nextChord = 0;
+  private chordIdx = 0;
+  private droneOscs: OscillatorNode[] = [];
+  private echoSend: DelayNode | null = null;
   private lastFlicker = 0;
   private lastBell = 0;
   private blackoutActive = false;
@@ -54,21 +65,36 @@ export class AudioDirector {
       noise.connect(bp).connect(this.windGain).connect(this.master);
       noise.start();
 
-      // --- bowed drone stack in D ---
+      // --- bowed drone stack, cycling Dm → Bb → F → Am every 17s ---
       this.droneGain = ctx.createGain();
       this.droneGain.gain.value = 0.045;
       this.droneGain.connect(this.master);
-      for (const [f, g, det] of [[73.42, 0.5, 0], [110, 0.32, 3], [146.83, 0.22, -4], [220.5, 0.1, 6]] as const) {
+      const gains = [0.5, 0.32, 0.22, 0.12];
+      const dets = [0, 3, -4, 6];
+      for (let i = 0; i < 4; i++) {
         const o = ctx.createOscillator();
-        o.type = "triangle"; o.frequency.value = f; o.detune.value = det;
-        const og = ctx.createGain(); og.gain.value = g;
+        o.type = "triangle"; o.frequency.value = CHORDS[0][i]; o.detune.value = dets[i];
+        const og = ctx.createGain(); og.gain.value = gains[i];
         const trem = ctx.createOscillator(); trem.frequency.value = 0.13 + Math.random() * 0.1;
-        const tremG = ctx.createGain(); tremG.gain.value = g * 0.4;
+        const tremG = ctx.createGain(); tremG.gain.value = gains[i] * 0.4;
         trem.connect(tremG).connect(og.gain); trem.start();
         o.connect(og).connect(this.droneGain);
         o.start();
+        this.droneOscs.push(o);
       }
+
+      // --- feedback echo for the music box ---
+      const delay = ctx.createDelay(1);
+      delay.delayTime.value = 0.34;
+      const fb = ctx.createGain(); fb.gain.value = 0.34;
+      const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 1900;
+      const wet = ctx.createGain(); wet.gain.value = 0.22;
+      delay.connect(lp).connect(fb).connect(delay);
+      delay.connect(wet).connect(this.master);
+      this.echoSend = delay;
+
       this.nextMotif = ctx.currentTime + 2;
+      this.nextChord = ctx.currentTime + 17;
     } catch { this.ctx = null; }
   }
 
@@ -78,7 +104,7 @@ export class AudioDirector {
     if (this.master && this.ctx) this.master.gain.linearRampToValueAtTime(m ? 0 : 0.9, this.ctx.currentTime + 0.2);
   }
 
-  private tone(freq: number, t0: number, dur: number, gain: number, type: OscillatorType = "sine") {
+  private tone(freq: number, t0: number, dur: number, gain: number, type: OscillatorType = "sine", echo = false) {
     if (!this.ctx || !this.master) return;
     const o = this.ctx.createOscillator();
     o.type = type; o.frequency.value = freq;
@@ -86,6 +112,7 @@ export class AudioDirector {
     g.gain.setValueAtTime(gain, t0);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
     o.connect(g).connect(this.master);
+    if (echo && this.echoSend) g.connect(this.echoSend);
     o.start(t0); o.stop(t0 + dur + 0.05);
   }
 
@@ -183,14 +210,25 @@ export class AudioDirector {
       this.nextBeat = t + (1.5 - snap.danger * 1.0);
     }
 
-    // sparse music box motif — falls silent when danger is near
+    // slow chord drift in the drone bed
+    if (t >= this.nextChord) {
+      this.chordIdx = (this.chordIdx + 1) % CHORDS.length;
+      this.droneOscs.forEach((o, i) => {
+        o.frequency.cancelScheduledValues(t);
+        o.frequency.setValueAtTime(o.frequency.value, t);
+        o.frequency.linearRampToValueAtTime(CHORDS[this.chordIdx][i], t + 5);
+      });
+      this.nextChord = t + 17;
+    }
+
+    // sparse music box motif through the echo — falls silent when danger is near
     if (t >= this.nextMotif) {
       if (snap.danger < 0.35 && snap.phase !== "ended") {
         const n = 3 + Math.floor(Math.random() * 3);
         let tt = t + 0.1;
         let idx = Math.floor(Math.random() * SCALE.length);
         for (let i = 0; i < n; i++) {
-          this.tone(SCALE[idx], tt, 1.3, 0.045);
+          this.tone(SCALE[idx], tt, 1.3, 0.045, "sine", true);
           this.tone(SCALE[idx] * 3.01, tt, 0.5, 0.008); // glassy partial
           idx = Math.max(0, Math.min(SCALE.length - 1, idx + (Math.random() < 0.5 ? -1 : 1) * (1 + Math.floor(Math.random() * 2))));
           tt += 0.34 + Math.random() * 0.22;

@@ -55,6 +55,7 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to join");
+      if (data.playerId) localStorage.setItem("hc_pid", data.playerId);
       router.push(`/room/${code.trim().toUpperCase()}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");

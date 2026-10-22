@@ -72,6 +72,8 @@ export default function GameClient({ code }: { code: string }) {
       const data = await res.json();
       if (!alive) return;
       if (!res.ok || !data.ok) { setJoinError(data.error ?? "Could not enter the town."); return; }
+      // the server may re-adopt a stale seat under our name — use its canonical id
+      if (data.playerId && data.playerId !== getPid()) localStorage.setItem("hc_pid", data.playerId);
       timer = setInterval(async () => {
         try {
           const r = await fetch(`/api/game/state?code=${code}&playerId=${getPid()}`);
@@ -151,16 +153,20 @@ export default function GameClient({ code }: { code: string }) {
     const renderer = new Renderer();
     let raf = 0;
     let last = performance.now();
+    // visualViewport: mobile URL bars otherwise clip the bottom controls
+    const vw = () => window.visualViewport?.width ?? window.innerWidth;
+    const vh = () => window.visualViewport?.height ?? window.innerHeight;
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      canvas.width = window.innerWidth * dpr;
-      canvas.height = window.innerHeight * dpr;
-      canvas.style.width = `${window.innerWidth}px`;
-      canvas.style.height = `${window.innerHeight}px`;
+      canvas.width = vw() * dpr;
+      canvas.height = vh() * dpr;
+      canvas.style.width = `${vw()}px`;
+      canvas.style.height = `${vh()}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener("resize", resize);
+    window.visualViewport?.addEventListener("resize", resize);
     const loop = (nowMs: number) => {
       raf = requestAnimationFrame(loop);
       const dt = Math.min(0.05, (nowMs - last) / 1000);
@@ -172,10 +178,14 @@ export default function GameClient({ code }: { code: string }) {
         if (cur === undefined || Math.abs(cur - p.x) > 300) displayX.current.set(p.id, p.x);
         else displayX.current.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 10));
       }
-      renderer.render(ctx, window.innerWidth, window.innerHeight, s, displayX.current, nowMs / 1000, dt);
+      renderer.render(ctx, vw(), vh(), s, displayX.current, nowMs / 1000, dt);
     };
     raf = requestAnimationFrame(loop);
-    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", resize);
+      window.visualViewport?.removeEventListener("resize", resize);
+    };
   }, []);
 
   const holdMove = (dir: "left" | "right", on: boolean) => {

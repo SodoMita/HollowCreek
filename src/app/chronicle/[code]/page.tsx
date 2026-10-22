@@ -22,6 +22,7 @@ const TYPE_LABELS: Record<string, [string, string]> = {
   pickup_key: ["🗝", "took the iron key"],
   blackout: ["🌑", "snuffed every lantern in town"],
   leave: ["🚪", "left the town"],
+  rejoin: ["🔁", "returned to their old seat"],
   game_end: ["🌅", "The tale ended"],
 };
 

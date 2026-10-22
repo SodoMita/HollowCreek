@@ -127,17 +127,34 @@ export function createRoom(playerId: string, name: string) {
   return room.code;
 }
 
-export function joinRoom(code: string, playerId: string, rawName: string): { ok: boolean; error?: string } {
+export function joinRoom(code: string, playerId: string, rawName: string): { ok: boolean; error?: string; playerId?: string } {
   const room = rooms.get(code.toUpperCase());
   if (!room) return { ok: false, error: "No such town. Check the code." };
+  const now = Date.now();
   const existing = room.players.get(playerId);
   if (existing) {
-    existing.lastSeen = Date.now();
-    return { ok: true };
+    existing.lastSeen = now;
+    return { ok: true, playerId };
   }
   if (room.phase !== "lobby") return { ok: false, error: "This tale has already begun." };
-  if (room.players.size >= 10) return { ok: false, error: "The town is full (10 souls)." };
   const name = (rawName || "Stranger").trim().slice(0, 14) || "Stranger";
+  // Re-adoption: someone returning under the same name takes over their old
+  // (stale) seat instead of spawning a duplicate "name-2" stranger.
+  const staleSeat = [...room.players.values()].find(
+    (q) => q.name.toLowerCase() === name.toLowerCase() && now - q.lastSeen > 8000
+  );
+  if (staleSeat) {
+    room.players.delete(staleSeat.id);
+    const oldId = staleSeat.id;
+    staleSeat.id = playerId;
+    staleSeat.lastSeen = now;
+    staleSeat.joinedAt = now;
+    room.players.set(playerId, staleSeat);
+    record(room, staleSeat, "rejoin", { oldId });
+    feed(room, `${staleSeat.name} returned to town.`);
+    return { ok: true, playerId };
+  }
+  if (room.players.size >= 10) return { ok: false, error: "The town is full (10 souls)." };
   const used = new Set([...room.players.values()].map((p) => p.color));
   const color = PLAYER_COLORS.find((c) => !used.has(c)) ?? PLAYER_COLORS[0];
   const p: P = {
@@ -162,12 +179,17 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
     lastSeen: Date.now(),
     joinedAt: Date.now(),
     vote: null,
-    isHost: room.players.size === 0,
+    isHost: true, // the lantern always passes to the LAST joiner
   };
+  const previousHost = [...room.players.values()].find((q) => q.isHost);
+  if (previousHost) {
+    previousHost.isHost = false;
+    feed(room, `${name} takes the town lantern (host).`);
+  }
   room.players.set(playerId, p);
   feed(room, `${name} arrived in Hollow Creek.`);
   record(room, p, "join", {});
-  return { ok: true };
+  return { ok: true, playerId };
 }
 
 /** Explicit leave (button or sendBeacon on tab close). Lobby: removed + host
@@ -408,8 +430,8 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
         const occ = room.players.get(room.cages[ci].occupant!)!;
         freePlayer(room, occ);
         p.hasKey = false;
-        room.keyX = null; // key snaps in the lock, spent
-        feed(room, `${p.name} unlocks the cage. ${occ.name} steps free.`);
+        room.keyX = room.cages[ci].x + 40; // the key falls by the open cage — the town learns where it lies
+        feed(room, `${p.name} unlocks the cage. ${occ.name} steps free. The key clatters to the ground.`);
         record(room, p, "unlock_cage", { freed: occ.name });
         return { ok: true };
       }
@@ -490,8 +512,18 @@ function tick() {
   for (const room of rooms.values()) {
     if (now - room.createdAt > 6 * 3600_000 && room.players.size === 0) { rooms.delete(room.code); continue; }
     if (room.phase === "lobby") {
-      // hand the lantern to someone present if the host went stale
+      // prune souls who have been gone 75s so seats (and the lantern) never rot
+      for (const p of [...room.players.values()]) {
+        if (now - p.lastSeen > 75000) leaveRoom(room.code, p.id);
+      }
+      // invariant: while anyone is in the lobby, SOMEONE holds the lantern
       const host = [...room.players.values()].find((p) => p.isHost);
+      if (!host && room.players.size > 0) {
+        const next = [...room.players.values()].sort((a, b) => b.joinedAt - a.joinedAt)[0];
+        next.isHost = true;
+        feed(room, `${next.name} now holds the town lantern (host).`);
+      }
+      // hand the lantern to someone present if the host went stale
       if (host && now - host.lastSeen > 12000) {
         const fresh = [...room.players.values()]
           .filter((p) => p.id !== host.id && now - p.lastSeen < 8000)
@@ -564,6 +596,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
   const me = room.players.get(playerId);
   if (!me) return null;
   const now = Date.now();
+  me.lastSeen = now; // the 100ms state poll IS the presence heartbeat
   const ps = [...room.players.values()];
   const killCd = Math.max(0, me.killAt - now);
   const target = me.role === "hollow" ? killTarget(room, me) : null;
