@@ -1,5 +1,6 @@
 import { db } from "@/db";
-import { gameEvents } from "@/db/schema";
+import { gameEvents, roomRows, roomPlayers } from "@/db/schema";
+import { desc, eq, lt } from "drizzle-orm";
 import {
   BELL_X, BLACKOUT_CD_MS, BLACKOUT_MS, BUBBLE_MS, CAGE_XS, CELL_HALF, GHOST_SPEED,
   INTERACT_RANGE, KILL_COOLDOWN_MS, KILL_RANGE, MEETING_FROM, MEETING_MS, MEETING_TO,
@@ -37,6 +38,8 @@ interface P {
   joinedAt: number;
   vote: string | null;
   isHost: boolean;
+  /** true for a seat restored from the database that nobody has claimed yet */
+  parked: boolean;
 }
 
 interface Room {
@@ -83,6 +86,137 @@ function record(room: Room, p: P | null, type: string, data: Record<string, unkn
     .catch((e) => console.error("chronicle write failed", e));
 }
 
+// ---------------------------------------------------------------------------
+// Persistence — the same players repeat in the same room even across a server
+// restart. Writes are queued and flushed on an interval so the tick loop never
+// waits on the database.
+// ---------------------------------------------------------------------------
+
+const gPersist = globalThis as typeof globalThis & {
+  __hollowDirtyRooms?: Set<string>;
+  __hollowPersistTimer?: ReturnType<typeof setInterval>;
+};
+const dirtyRooms: Set<string> = gPersist.__hollowDirtyRooms ?? new Set();
+gPersist.__hollowDirtyRooms = dirtyRooms;
+
+function markDirty(room: Room) {
+  dirtyRooms.add(room.code);
+}
+
+async function flushRooms() {
+  const codes = [...dirtyRooms];
+  dirtyRooms.clear();
+  for (const code of codes) {
+    const room = rooms.get(code);
+    if (!room) continue;
+    try {
+      await db
+        .insert(roomRows)
+        .values({ code: room.code, phase: room.phase, round: room.round, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: roomRows.code,
+          set: { phase: room.phase, round: room.round, updatedAt: new Date() },
+        });
+      const roster = [...room.players.values()];
+      await db.delete(roomPlayers).where(eq(roomPlayers.code, code));
+      if (roster.length) {
+        await db.insert(roomPlayers).values(
+          roster.map((p) => ({
+            id: p.id,
+            code,
+            name: p.name,
+            color: p.color,
+            joinedAt: new Date(p.joinedAt),
+          }))
+        );
+      }
+    } catch (e) {
+      console.error("room persist failed", code, e);
+    }
+  }
+}
+
+if (!gPersist.__hollowPersistTimer) {
+  gPersist.__hollowPersistTimer = setInterval(() => void flushRooms(), 900);
+}
+
+/** Bring a town back from Postgres: same code, same seats, same names. */
+export async function loadRoom(code: string): Promise<Room | undefined> {
+  const key = code.toUpperCase();
+  if (rooms.has(key)) return rooms.get(key);
+  let round = 0;
+  let roster: { id: string; name: string; color: string; joinedAt: Date }[] = [];
+  try {
+    const rows = await db.select().from(roomRows).where(eq(roomRows.code, key)).limit(1);
+    if (!rows.length) return undefined;
+    round = rows[0].round ?? 0;
+    roster = await db.select().from(roomPlayers).where(eq(roomPlayers.code, key));
+  } catch (e) {
+    console.error("room load failed", key, e);
+    return undefined;
+  }
+  const room: Room = {
+    code: key,
+    // a night interrupted by a restart is over; the same people simply gather again
+    phase: "lobby",
+    round,
+    players: new Map(),
+    bodies: [],
+    keyX: null,
+    cages: CAGE_XS.map((x) => ({ x, occupant: null })),
+    feed: [],
+    meeting: null,
+    winner: null,
+    winReason: null,
+    bellAt: 0,
+    flickerAt: 0,
+    nextFlicker: Date.now() + 20000,
+    createdAt: Date.now(),
+    totalTasks: 0,
+    blackoutUntil: 0,
+    blackoutReadyAt: 0,
+  };
+  const seated = roster.slice().sort((a, b) => a.joinedAt.getTime() - b.joinedAt.getTime());
+  seated.forEach((pr, i) => {
+    room.players.set(pr.id, {
+      id: pr.id,
+      name: pr.name,
+      color: pr.color,
+      x: BELL_X + (i - 1) * 60,
+      dir: 0,
+      facing: 1,
+      moving: false,
+      alive: true,
+      caged: false,
+      cageIndex: -1,
+      role: "crew",
+      tasks: [],
+      killAt: 0,
+      bellUsed: false,
+      hasKey: false,
+      bubbleText: "",
+      bubbleUntil: 0,
+      interactHeld: false,
+      lastSeen: 0,
+      joinedAt: pr.joinedAt.getTime(),
+      vote: null,
+      isHost: false,
+      parked: true,
+    });
+  });
+  // the newest returning player holds the lantern
+  const newest = seated[seated.length - 1];
+  if (newest) {
+    const p = room.players.get(newest.id);
+    if (p) p.isHost = true;
+  }
+  rooms.set(key, room);
+  feed(room, "The town remembers everyone who has walked this street.");
+  record(room, null, "room_restored", { seats: seated.length, round });
+  dirtyRooms.add(key);
+  return room;
+}
+
 function feed(room: Room, text: string) {
   room.feed.push({ text, at: Date.now() });
   if (room.feed.length > 24) room.feed.shift();
@@ -123,6 +257,7 @@ export function createRoom(playerId: string, name: string) {
     round: 0,
   };
   rooms.set(room.code, room);
+  markDirty(room);
   record(room, null, "room_created", {});
   joinRoom(room.code, playerId, name);
   feed(room, "The town of Hollow Creek waits under a bruised October sky…");
@@ -136,6 +271,12 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
   const existing = room.players.get(playerId);
   if (existing) {
     existing.lastSeen = now;
+    if (existing.parked) {
+      existing.parked = false;
+      feed(room, `${existing.name} is back on the street.`);
+      record(room, existing, "seat_claimed", {});
+      markDirty(room);
+    }
     return { ok: true, playerId };
   }
   if (room.phase !== "lobby" && room.phase !== "ended") {
@@ -154,6 +295,7 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
     staleSeat.id = playerId;
     staleSeat.lastSeen = now;
     staleSeat.joinedAt = now;
+    staleSeat.parked = false;
     room.players.set(playerId, staleSeat);
     record(room, staleSeat, "rejoin", { oldId });
     feed(room, `${staleSeat.name} returned to town.`);
@@ -187,7 +329,8 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
     lastSeen: Date.now(),
     joinedAt: Date.now(),
     vote: null,
-    isHost: true, // the lantern always passes to the LAST joiner
+    isHost: true,
+    parked: false, // the lantern always passes to the LAST joiner
   };
   const previousHost = [...room.players.values()].find((q) => q.isHost);
   if (previousHost) {
@@ -195,6 +338,7 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
     feed(room, `${name} takes the town lantern (host).`);
   }
   room.players.set(playerId, p);
+  markDirty(room);
   feed(room, `${name} arrived in Hollow Creek.`);
   record(room, p, "join", {});
   return { ok: true, playerId };
@@ -206,6 +350,7 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
 export function leaveRoom(code: string, playerId: string): { ok: boolean } {
   const room = rooms.get(code.toUpperCase());
   if (!room) return { ok: false };
+  markDirty(room);
   const p = room.players.get(playerId);
   if (!p) return { ok: false };
   record(room, p, "leave", { lobby: room.phase === "lobby" });
@@ -228,6 +373,7 @@ export function leaveRoom(code: string, playerId: string): { ok: boolean } {
 }
 
 export function startGame(room: Room, playerId: string): { ok: boolean; error?: string } {
+  markDirty(room);
   const host = room.players.get(playerId);
   if (!host?.isHost) return { ok: false, error: "Only the host may begin." };
   if (room.phase !== "lobby") return { ok: false, error: "Already begun." };
@@ -270,8 +416,69 @@ export function getRoom(code: string): Room | undefined {
   return rooms.get(code.toUpperCase());
 }
 
+/**
+ * Room browser, backed by Postgres: towns survive a restart, so the menu can
+ * offer a town that is not currently in memory.
+ */
+export async function listRooms(): Promise<RoomListing[]> {
+  // let go of towns nobody has touched for a week
+  try {
+    await db.delete(roomRows).where(lt(roomRows.updatedAt, new Date(Date.now() - 7 * 24 * 3600_000)));
+  } catch {
+    /* non-fatal */
+  }
+  const out = new Map<string, RoomListing>();
+  try {
+    const rows = await db
+      .select({
+        code: roomRows.code,
+        round: roomRows.round,
+        updatedAt: roomRows.updatedAt,
+        name: roomPlayers.name,
+      })
+      .from(roomRows)
+      .leftJoin(roomPlayers, eq(roomPlayers.code, roomRows.code))
+      .orderBy(desc(roomRows.updatedAt))
+      .limit(24);
+    for (const r of rows) {
+      const cur = out.get(r.code) ?? {
+        code: r.code,
+        phase: "lobby" as Phase,
+        playerCount: 0,
+        hostName: "—",
+        names: [],
+        createdAt: r.updatedAt.getTime(),
+        round: r.round,
+      };
+      if (r.name) cur.names.push(r.name);
+      cur.playerCount = cur.names.length;
+      out.set(r.code, cur);
+    }
+  } catch (e) {
+    console.error("room list failed", e);
+  }
+  // live rooms win: their phase and roster are current
+  for (const r of rooms.values()) {
+    if (r.players.size === 0) continue;
+    const ps = [...r.players.values()];
+    out.set(r.code, {
+      code: r.code,
+      phase: r.phase,
+      playerCount: ps.length,
+      hostName: ps.find((p) => p.isHost)?.name ?? "—",
+      names: ps.map((p) => p.name),
+      createdAt: r.createdAt,
+      round: r.round,
+    });
+  }
+  return [...out.values()]
+    .filter((r) => r.playerCount > 0)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 24);
+}
+
 /** Live room browser — open towns on the map. */
-export function listRooms(): RoomListing[] {
+export function listRoomsSync(): RoomListing[] {
   return [...rooms.values()]
     .filter((r) => r.players.size > 0)
     .sort((a, b) => b.createdAt - a.createdAt)
@@ -292,6 +499,7 @@ export function listRooms(): RoomListing[] {
 
 /** The same souls gather in the same town for another night. */
 export function restartGame(room: Room, playerId: string): { ok: boolean; error?: string } {
+  markDirty(room);
   const p = room.players.get(playerId);
   if (!p) return { ok: false, error: "Unknown soul." };
   if (!p.isHost) {
@@ -594,6 +802,7 @@ function tick() {
     if (room.phase === "lobby") {
       // prune souls who have been gone 75s so seats (and the lantern) never rot
       for (const p of [...room.players.values()]) {
+        if (p.parked) continue; // a restored seat waits for its player
         if (now - p.lastSeen > 75000) leaveRoom(room.code, p.id);
       }
       // invariant: while anyone is in the lobby, SOMEONE holds the lantern
@@ -675,6 +884,10 @@ if (!g.__hollowLoop) {
 export function snapshot(room: Room, playerId: string): Snapshot | null {
   const me = room.players.get(playerId);
   if (!me) return null;
+  if (me.parked) {
+    me.parked = false; // its player just asked for a snapshot
+    markDirty(room);
+  }
   const now = Date.now();
   me.lastSeen = now; // the 100ms state poll IS the presence heartbeat
   const ps = [...room.players.values()];

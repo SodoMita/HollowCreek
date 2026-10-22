@@ -3,6 +3,8 @@ import { listRooms } from "@/game/engine";
 
 export const dynamic = "force-dynamic";
 
+/** Room-selection menu: every town that still exists, with who is in it. */
 export async function GET() {
-  return NextResponse.json({ rooms: listRooms() });
+  const rooms = await listRooms();
+  return NextResponse.json({ rooms });
 }

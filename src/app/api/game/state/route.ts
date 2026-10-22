@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRoom, snapshot } from "@/game/engine";
+import { loadRoom, snapshot } from "@/game/engine";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get("code") ?? "";
   const playerId = req.nextUrl.searchParams.get("playerId") ?? "";
-  const room = getRoom(code);
+  const room = await loadRoom(code);
   if (!room) return NextResponse.json({ error: "No such town." }, { status: 404 });
   const snap = snapshot(room, playerId);
   if (!snap) return NextResponse.json({ error: "Unknown soul." }, { status: 404 });
