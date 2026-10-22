@@ -36,6 +36,29 @@ cp icon-192.png play/icon.png
 - `full-description.txt` — the long description / author comments. Plain text, no
   markup needed. Newgrounds accepts plain text with blank-line paragraphs.
 
+## Two ready-made releases
+
+| Release | What it is | When to use it |
+| --- | --- | --- |
+| [`v1.1-iframe`](https://github.com/SodoMita/HollowCreek/releases/tag/v1.1-iframe) | one `index.html` that frames the GitHub Pages build | **the default choice.** This zip never changes, because the server address lives in the Pages build, not in the zip |
+| [`v1.0-static`](https://github.com/SodoMita/HollowCreek/releases/tag/v1.0-static) | the static client itself | if you would rather not depend on GitHub Pages |
+
+Both are HTML5 uploads: `index.html` sits at the root of the archive.
+
+## Pointing a Newgrounds page at one specific server
+
+Nobody ever has to type an address. Three levels, in order:
+
+1. **Do nothing.** The published client already probes a list of servers and
+   binds to the first one that answers `/api/health`, so it works out of the box.
+2. **Pin one for everyone.** Append `?server=https://your-server` to the URL you
+   give Newgrounds. The `v1.1-iframe` wrapper forwards the project URL's query
+   string to the game, and the game reads `?server=` before anything else.
+3. **Change it permanently.** Put the address first in `SERVERS` in
+   `static-src/main.ts`, run `node scripts/build-static.mjs`, and republish the
+   `gh-pages` branch. Every site hosting the iframe zip picks that up
+   immediately, with no re-upload anywhere.
+
 ## Newgrounds, step by step
 
 1. Decide where the simulation runs. It must be a single long-lived Node process
@@ -47,9 +70,10 @@ cp icon-192.png play/icon.png
    `public/play/` (an `index.html` must sit at the root of the zip or
    Newgrounds returns a 403). Use `public/icon-140.png` as the cover image and
    paste the two description files.
-4. Or **iframe it**: give Newgrounds `https://sodomita.github.io/HollowCreek/`
-   instead. That URL is stable, and if the server ever moves you fix it with one
-   line in `static-src/main.ts` and a redeploy - no re-upload to Newgrounds.
+4. Or just upload `hollow-creek-iframe.zip` from the `v1.1-iframe` release,
+   which frames the Pages build. That URL is stable, and if the server ever
+   moves you fix it with one line in `static-src/main.ts` and a redeploy - no
+   re-upload to Newgrounds.
 
 Content rating: mild realistic violence and horror themes. No sexual content, no
 adult language by default (that depends on what your friends type).
