@@ -2,6 +2,8 @@ import { db } from "@/db";
 import { gameEvents } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import Link from "next/link";
+import { getRoom } from "@/game/engine";
+import { Lock } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -24,11 +26,31 @@ const TYPE_LABELS: Record<string, [string, string]> = {
   leave: ["🚪", "left the town"],
   rejoin: ["🔁", "returned to their old seat"],
   restart: ["🕯", "gathered the same souls for another night"],
+  room_restored: ["🏚", "the town was remembered after the long dark"],
+  seat_claimed: ["🪑", "reclaimed their old seat"],
   game_end: ["🌅", "The tale ended"],
 };
 
 export default async function ChroniclePage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = await params;
+  // The ledger is sealed while the night is still being lived — it names the
+  // Hollow, and no soul may read the ending before it happens.
+  const live = getRoom(code);
+  if (live && (live.phase === "playing" || live.phase === "meeting")) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center bg-[#0b0710] px-6 text-center">
+        <Lock className="h-12 w-12 text-[#8f3b1f]" />
+        <h1 className="mt-4 font-display text-5xl text-[#e9dfcf]">The ledger is sealed</h1>
+        <p className="mt-3 max-w-md italic text-[#9c8b7a]">
+          The clerk's hand is still moving. The chronicle of {code.toUpperCase()} may
+          only be read once the night has ended — from the records shown at match end.
+        </p>
+        <Link href={`/room/${code.toUpperCase()}`} className="mt-6 rounded bg-[#8f3b1f] px-6 py-2.5 font-display text-xl text-[#f3e6d0] hover:bg-[#a84a26]">
+          Back to the street
+        </Link>
+      </main>
+    );
+  }
   const rows = await db
     .select()
     .from(gameEvents)

@@ -264,7 +264,6 @@ export default function GameClient({ code }: { code: string }) {
                 title={muted ? "Unmute" : "Mute"}
                 className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] sm:py-1.5"
               >{muted ? "🔇" : "🔊"}</button>
-              <a href={`/chronicle/${s.code}`} target="_blank" className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] sm:px-3 sm:py-1.5"><span className="sm:hidden">📜</span><span className="hidden sm:inline">Chronicle</span></a>
               <button onClick={() => router.push("/")} className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#e06a5a] sm:px-3 sm:py-1.5"><span className="sm:hidden">✕</span><span className="hidden sm:inline">Leave</span></button>
             </div>
           </div>
