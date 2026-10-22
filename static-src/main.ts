@@ -6,7 +6,7 @@ import { AudioDirector } from "../src/game/audio";
 import { BELL_X } from "../src/game/types";
 import type { RoomListing, Snapshot } from "../src/game/types";
 
-const DEFAULT_SERVER = "https://3000-ixp7ma1a1ia6aq75osgyc.e2b.app";
+const DEFAULT_SERVER = "https://3000-irlhq619hi9cpbud4mpec.e2b.app";
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const params = new URLSearchParams(location.search);
