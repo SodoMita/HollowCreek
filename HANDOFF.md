@@ -7,8 +7,8 @@
 
 ## Delivery state
 
-- Local `main` contains the implementation and this handoff.
-- **Nothing from this update has been pushed or published.** The earlier GitHub release `v1.2-static`, remote `main`, `gh-pages`, and live portal uploads do not include it.
+- `main` was pushed to GitHub at `cc95bbda278b9171b82a9fc1c8ea358ea3a31c9d` on 2026-10-23; this delivery-state correction is committed separately.
+- **`gh-pages`, the earlier GitHub release `v1.2-static`, and live portal uploads do not include this update.**
 - The new local archive is `/home/user/hollow-creek-web.zip`.
 - No backend or authoritative gameplay rules were changed. In particular, vision range, roles, movement, host semantics, polling presence, voting, and room hydration were not modified.
 - The existing temporary E2B entries in `SERVERS` remain. Configure one permanent authoritative backend before a real publication.
@@ -102,10 +102,9 @@ Inspection screenshots are saved outside the repository under `/home/user/hollow
 ## Remaining actions for release
 
 1. Review the screenshots and perform the human audio/gameplay pass.
-2. From an appropriately credentialed environment, push local `main` to GitHub.
-3. Put the permanent authoritative backend first in `SERVERS`, rebuild, and rerun the static smoke test if that configuration changes.
-4. Publish `public/play/` to `gh-pages` if the Pages client should be updated.
-5. Upload the new direct-static ZIP to itch.io. Re-create/replace a Newgrounds submission only if desired; its earlier submission was removed before human adoption.
-6. Tag a new release only after deciding the deployed backend and archive are final. Do not overwrite the meaning of the existing `v1.2-static` tag.
+2. Put the permanent authoritative backend first in `SERVERS`, rebuild, and rerun the static smoke test if that configuration changes.
+3. Publish `public/play/` to `gh-pages` if the Pages client should be updated.
+4. Upload the new direct-static ZIP to itch.io. Re-create/replace a Newgrounds submission only if desired; its earlier submission was removed before human adoption.
+5. Tag a new release only after deciding the deployed backend and archive are final. Do not overwrite the meaning of the existing `v1.2-static` tag.
 
 The full-install npm audit still reports dependency vulnerabilities. Dependency upgrades were outside this audiovisual task and were not attempted.
