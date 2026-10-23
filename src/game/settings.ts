@@ -145,7 +145,7 @@ export function loadSettings(): GameSettings {
     const settings = createDefaultSettings();
     // Migrate the original mute toggle rather than silently ignoring it.
     settings.audio.muted = localStorage.getItem("hc_muted") === "1";
-    // Reduced motion stays off unless the player turns it on in settings.
+    // Reduced motion starts OFF. A saved choice above still takes precedence.
     return settings;
   } catch {
     return createDefaultSettings();

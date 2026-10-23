@@ -27,6 +27,7 @@ export default function GameClient({ code }: { code: string }) {
   const [roleBanner, setRoleBanner] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(createDefaultSettings);
 
   const snapRef = useRef<Snapshot | null>(null);
@@ -39,6 +40,7 @@ export default function GameClient({ code }: { code: string }) {
   const settingsDialogRef = useRef<SettingsDialog | null>(null);
   const interactToggled = useRef(false);
   const lastPhase = useRef<string>("lobby");
+  const leavingRef = useRef(false);
   const chatInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     chatOpenRef.current = chatOpen;
@@ -59,17 +61,6 @@ export default function GameClient({ code }: { code: string }) {
     } catch { /* network hiccup — next poll resyncs */ }
   }, [code]);
 
-  const leaveAndBack = useCallback(async () => {
-    try {
-      await fetch("/api/game/leave", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code, playerId: getPid() }),
-      });
-    } catch { /* leaving anyway */ }
-    router.push("/");
-  }, [code, router]);
-
   const getSettingsStore = useCallback(() => {
     if (!settingsStoreRef.current) settingsStoreRef.current = new SettingsStore();
     return settingsStoreRef.current;
@@ -86,6 +77,29 @@ export default function GameClient({ code }: { code: string }) {
     interactToggled.current = false;
     void send({ dir: 0, interactHeld: false });
   }, [send]);
+
+  /** Free the seat before navigating, so the lobby and host update at once. */
+  const leaveToTownList = useCallback(async () => {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    setLeaving(true);
+    const body = JSON.stringify({ code, playerId: getPid() });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    try {
+      const result = await fetch("/api/game/leave", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body, keepalive: true, signal: controller.signal,
+      });
+      if (!result.ok) throw new Error("Leave request failed");
+    } catch {
+      try { navigator.sendBeacon("/api/game/leave", new Blob([body], { type: "application/json" })); }
+      catch { /* still leave the page if the server is unreachable */ }
+    } finally {
+      clearTimeout(timeout);
+      router.replace("/");
+    }
+  }, [code, router]);
 
   const interactDown = useCallback(() => {
     if (getSettingsStore().value.controls.interactMode === "toggle") {
@@ -164,6 +178,7 @@ export default function GameClient({ code }: { code: string }) {
       }, 100);
     })();
     const bye = () => {
+      if (leavingRef.current) return; // explicit leave already freed the seat
       try {
         navigator.sendBeacon(
           "/api/game/leave",
@@ -176,7 +191,7 @@ export default function GameClient({ code }: { code: string }) {
       alive = false;
       if (timer) clearInterval(timer);
       window.removeEventListener("pagehide", bye);
-      void send({ dir: 0, interactHeld: false });
+      if (!leavingRef.current) void send({ dir: 0, interactHeld: false });
       bye();
     };
   }, [code, send]);
@@ -331,6 +346,13 @@ export default function GameClient({ code }: { code: string }) {
                 title="Copy town code"
               >{s.code}</button>
               <span className="ml-2 hidden text-[#9c8b7a] sm:inline">{s.playerCount} souls</span>
+              {s.phase === "playing" && s.self.alive && s.self.hasSupply && (
+                <button title="Drop repair kit for another player" aria-label="Drop repair kit"
+                  onClick={() => void send({ action: "drop_supply" })}
+                  className="ml-2 rounded bg-[#4a3323] px-1.5 py-0.5 text-xs text-[#f2cf91] hover:bg-[#684327]">
+                  ▣<span className="hidden sm:inline"> Kit · drop</span>
+                </button>
+              )}
             </div>
             {s.phase !== "lobby" && (
               <div className="mt-1 hidden w-72 sm:block">
@@ -356,7 +378,7 @@ export default function GameClient({ code }: { code: string }) {
                 aria-label="Settings"
                 className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a] sm:py-1.5"
               >⚙</button>
-              <button onClick={() => void leaveAndBack()} className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#e06a5a] sm:px-3 sm:py-1.5"><span className="sm:hidden">✕</span><span className="hidden sm:inline">Leave</span></button>
+              <button onClick={() => void leaveToTownList()} disabled={leaving} aria-label="Back to towns" className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#e06a5a] disabled:opacity-50 sm:px-3 sm:py-1.5"><span className="sm:hidden">←</span><span className="hidden sm:inline">Back</span></button>
             </div>
           </div>
 
@@ -370,8 +392,12 @@ export default function GameClient({ code }: { code: string }) {
               <div className={`${tasksOpen ? "block" : "hidden"} max-h-[26dvh] overflow-y-auto sm:block`}>
               {s.tasks.map((t) => (
                 <div key={t.id} className={`flex items-center gap-2 py-0.5 ${t.done ? "text-[#6b8e5a] line-through" : "text-[#d8c9b4]"}`}>
-                  <span>{t.done ? "✓" : "•"}</span><span>{t.name}</span>
-                  {!t.done && t.progress > 0 && <span className="ml-auto text-[#d99a3d]">{Math.round(t.progress * 100)}%</span>}
+                  <span>{t.done ? "✓" : t.delivered ? "▣" : "◇"}</span><span className="min-w-0 flex-1 truncate">{t.name}</span>
+                  {!t.done && (
+                    <span className={`ml-auto shrink-0 ${t.delivered ? "text-[#a8c98a]" : "text-[#d99a3d]"}`}>
+                      {t.delivered ? t.progress > 0 ? `${Math.round(t.progress * 100)}%` : "repair" : "needs kit"}
+                    </span>
+                  )}
                 </div>
               ))}
               </div>
@@ -443,7 +469,6 @@ export default function GameClient({ code }: { code: string }) {
                     />
                   </div>
                   <span className={`text-[10px] ${s.self.exhausted ? "text-[#e06a5a]" : "text-[#9c8b7a]"}`}>{s.self.exhausted ? "spent — rest!" : "vigor"}</span>
-                  {s.self.carrying && <span className="rounded bg-[#3a2410]/90 px-1.5 py-0.5 text-[10px] text-[#ffd98a]">📦 hauling supplies</span>}
                 </div>
               )}
               <div className="flex gap-2 sm:gap-3">
@@ -522,6 +547,7 @@ export default function GameClient({ code }: { code: string }) {
               <div className="hc-rise max-h-[88dvh] w-[min(92vw,440px)] overflow-y-auto rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-4 text-center sm:p-6">
                 <h2 className="font-display text-4xl text-[#e9dfcf]">{s.round > 0 ? `Night ${s.round + 1} approaches` : "Gathering at dusk"}</h2>
                 <p className="mt-1 text-sm text-[#9c8b7a]">{s.round > 0 ? "The same souls, the same street — new roles when darkness falls" : "Share the town code with your fellow townsfolk"}</p>
+                <p className="mx-auto mt-3 max-w-sm text-sm leading-snug text-[#c9b8a4]">The wards are broken. Take a kit from a supply cart, carry it to a ward, then hold E to repair it.</p>
                 <div className="mt-3 font-mono text-5xl tracking-[0.4em] text-[#d99a3d]">{s.code}</div>
                 <div className="mt-5 grid grid-cols-2 gap-2 text-left text-sm">
                   {s.players.map((p) => (
@@ -545,8 +571,11 @@ export default function GameClient({ code }: { code: string }) {
                 )}
                 <div className="mt-4 flex justify-center gap-2">
                   <button onClick={() => settingsDialogRef.current?.open()} className="rounded border border-[#3a2733] px-4 py-1.5 text-sm text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]">⚙ Settings</button>
-                  <button onClick={() => void leaveAndBack()} className="rounded border border-[#3a2733] px-4 py-1.5 text-sm text-[#9c8b7a] hover:text-[#e9dfcf]">← Back to crossroads</button>
                 </div>
+                <button onClick={() => void leaveToTownList()} disabled={leaving}
+                  className="mt-3 w-full rounded border border-[#84624c] px-4 py-2 text-sm text-[#e9dfcf] hover:bg-[#33231f] disabled:opacity-50">
+                  {leaving ? "Leaving…" : "← Back to towns"}
+                </button>
                 <p className="mt-3 text-xs text-[#6b5a55]">4–10 players · 1–2 of you will be Hollow</p>
               </div>
             </div>
@@ -564,7 +593,7 @@ export default function GameClient({ code }: { code: string }) {
                 ) : (
                   <>
                     <p className="font-display text-5xl sm:text-7xl text-[#a8c98a]">Townfolk</p>
-                    <p className="mt-3 text-lg text-[#b8c9a4]">Haul supplies to the ruined wards. Find the key. Trust no one.</p>
+                    <p className="mt-3 text-lg text-[#b8c9a4]">Carry kits to the broken wards; hold E to repair them. Find the key. Trust no one.</p>
                   </>
                 )}
               </div>
@@ -593,7 +622,7 @@ export default function GameClient({ code }: { code: string }) {
                 )}
                 <div className="mt-3 flex flex-wrap justify-center gap-3">
                   <button onClick={() => settingsDialogRef.current?.open()} className="rounded border border-[#3a2733] px-4 py-2 text-sm text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]">⚙ Settings</button>
-                  <button onClick={() => void leaveAndBack()} className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#c9b8a4] hover:bg-[#2a1a26]"><DoorOpen className="h-4 w-4" /> Other towns</button>
+                  <button onClick={() => router.push("/")} className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#c9b8a4] hover:bg-[#2a1a26]"><DoorOpen className="h-4 w-4" /> Other towns</button>
                   <a href={`/chronicle/${s.code}`} target="_blank" className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#d99a3d] hover:bg-[#2a1a26]"><ScrollText className="h-4 w-4" /> Chronicle</a>
                   <a href="/stats" target="_blank" className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#c9b8a4] hover:bg-[#2a1a26]"><Trophy className="h-4 w-4" /> Records</a>
                 </div>

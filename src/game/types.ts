@@ -28,7 +28,6 @@ export const STAMINA_KILL_COST = 0.35;
 export const STAMINA_BLACKOUT_COST = 0.3;
 export const STAMINA_BELL_COST = 0.15;
 export const STAMINA_UNLOCK_COST = 0.1;
-export const STAMINA_DELIVER_COST = 0.15; // hauling supplies to a ward and mending it
 
 export interface Station {
   id: string;
@@ -47,16 +46,19 @@ export interface Station {
 }
 
 export const STATIONS: Station[] = [
-  { id: "pumpkins", name: "Harvest the pumpkins", x: 280, kind: "pumpkins" },
-  { id: "well", name: "Draw water from the old well", x: 680, kind: "well" },
-  { id: "scarecrow", name: "Mend the scarecrow", x: 1060, kind: "scarecrow" },
-  { id: "lantern", name: "Relight the street lantern", x: 1450, kind: "lantern" },
-  { id: "chapel", name: "Light the chapel candles", x: 1720, kind: "chapel" },
-  { id: "mill", name: "Oil the sawmill gears", x: 2760, kind: "mill" },
-  { id: "graves", name: "Cover the open graves", x: 3200, kind: "graves" },
-  { id: "radio", name: "Retune the radio tower", x: 3650, kind: "radio" },
-  { id: "silo", name: "Lock the grain silo", x: 4000, kind: "silo" },
+  { id: "pumpkins", name: "Repair the harvest shed", x: 280, kind: "pumpkins" },
+  { id: "well", name: "Rebuild the well winch", x: 680, kind: "well" },
+  { id: "scarecrow", name: "Restitch the scarecrow", x: 1060, kind: "scarecrow" },
+  { id: "lantern", name: "Rewire the street lantern", x: 1450, kind: "lantern" },
+  { id: "chapel", name: "Mend the chapel windows", x: 1720, kind: "chapel" },
+  { id: "mill", name: "Replace the sawmill blades", x: 2760, kind: "mill" },
+  { id: "graves", name: "Rebuild the grave markers", x: 3200, kind: "graves" },
+  { id: "radio", name: "Repair the radio tower", x: 3650, kind: "radio" },
+  { id: "silo", name: "Patch the grain silo", x: 4000, kind: "silo" },
 ];
+
+/** Carts of boards, spare iron and lamp oil. One carried repair kit per player. */
+export const SUPPLY_DEPOTS = [480, 1250, 2940, 3830] as const;
 
 export const CAGE_XS = [1940, 2030, 2120, 2280, 2370, 2460];
 
@@ -78,6 +80,7 @@ export interface PublicPlayer {
   alive: boolean;
   caged: boolean;
   hasKey: boolean;
+  hasSupply: boolean;
   voted: boolean;
   bubble: { text: string; until: number } | null;
   isHost: boolean;
@@ -89,10 +92,10 @@ export interface SelfInfo {
   alive: boolean;
   caged: boolean;
   hasKey: boolean;
+  hasSupply: boolean;
   bellUsed: boolean;
   killCooldownMs: number;
   canKill: boolean;
-  carrying: boolean; // hauling a bundle of supplies to a ruined ward
   stamina: number; // 0..1
   exhausted: boolean; // hit 0 — must rest to 20% before working again
   blackoutCooldownMs: number;
@@ -106,7 +109,8 @@ export interface TaskView {
   name: string;
   x: number;
   done: boolean;
-  progress: number; // 0..1
+  delivered: boolean; // a kit has arrived from a supply cart
+  progress: number; // 0..1, repair work after delivery
 }
 
 export interface FeedItem {
@@ -123,7 +127,8 @@ export interface Snapshot {
   players: PublicPlayer[];
   bodies: { x: number; color: string; name: string }[];
   keyX: number | null;
-  supplies: { x: number }[];
+  /** Dropped kits can be recovered after a death, cage or voluntary drop. */
+  supplyDrops: number[];
   cages: { x: number; occupant: string | null }[];
   tasks: TaskView[];
   taskBar: { done: number; total: number };
@@ -162,7 +167,7 @@ export interface InputBody {
   playerId: string;
   dir?: number;
   interactHeld?: boolean;
-  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "restart" | "leave";
+  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "restart" | "leave" | "drop_supply";
   chat?: string;
   vote?: string; // playerId | "skip" | "free:<id>"
 }

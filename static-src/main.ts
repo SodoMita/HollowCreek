@@ -231,7 +231,16 @@ function enterRoom(code: string) {
 }
 function leaveToMenu() {
   releaseInputs();
-  beaconLeave();
+  const departingCode = roomCode;
+  const departingServer = server;
+  if (departingCode) {
+    void api("/api/game/leave", { code: departingCode, playerId: getPid() }, departingServer, 5000)
+      .catch(() => {
+        try { navigator.sendBeacon(departingServer + "/api/game/leave",
+          new Blob([JSON.stringify({ code: departingCode, playerId: getPid() })], { type: "application/json" })); }
+        catch { /* still return to the menu */ }
+      }).finally(() => { if ($("menu").style.display !== "none") void refreshRooms(); });
+  }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   snap = null; roomCode = ""; overlayKey = ""; roomError = ""; pollFailures = 0;
   $("game").style.display = "none";
@@ -257,7 +266,7 @@ function showRoomError(message: string) {
     <h2>Cannot enter the town</h2>
     <p class="muted" style="margin-top:12px">${esc(message)}</p>
     <div class="row" style="margin-top:16px;justify-content:center">
-      <button class="chip" data-act="menu">Other towns</button>
+      <button class="chip" data-act="menu" style="border-color:#84624c;padding:10px 12px;flex:1">← Back to towns</button>
     </div>`;
 }
 async function poll() {
@@ -290,7 +299,7 @@ function reveal(hollow: boolean) {
   const r = $("reveal");
   r.querySelector(".r1")!.textContent = hollow ? "You are Hollow" : "Townfolk";
   (r.querySelector(".r1") as HTMLElement).style.color = hollow ? "#ff4a3a" : "#a8c98a";
-  r.querySelector(".r2")!.textContent = hollow ? `Wear their faces. Kill when none watch. ${keyLabel(settingsStore.value.controls.ability)} to strike, ${keyLabel(settingsStore.value.controls.blackout)} to snuff.` : "Finish the town's wards. Find the key. Trust no one.";
+  r.querySelector(".r2")!.textContent = hollow ? `Wear their faces. Kill when none watch. ${keyLabel(settingsStore.value.controls.ability)} to strike, ${keyLabel(settingsStore.value.controls.blackout)} to snuff.` : "Carry kits from supply carts to broken wards; hold E to repair. Find the key. Trust no one.";
   r.style.display = "flex";
   setTimeout(() => { r.style.display = "none"; }, 4500);
 }
@@ -299,7 +308,8 @@ function reveal(hollow: boolean) {
 function renderHud(s: Snapshot) {
   const me = s.players.find((p) => p.id === s.self.id);
   $("copycode").textContent = s.code;
-  $("soulcount").textContent = `${s.playerCount} souls`;
+  $("soulcount").textContent = `${s.playerCount} souls${s.self.hasSupply ? " · kit carried" : ""}`;
+  $("supplydrop").style.display = s.phase === "playing" && s.self.hasSupply ? "inline-block" : "none";
   const role = $("role");
   role.textContent = (!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "The Hollow" : "Townfolk") + (s.self.caged && s.self.alive ? " · Caged" : "");
   role.className = !s.self.alive ? "ghost" : s.self.role;
@@ -310,7 +320,7 @@ function renderHud(s: Snapshot) {
   if (s.phase !== "lobby" && s.self.alive && s.tasks.length) {
     tasks.style.display = "block";
     tasks.innerHTML = `<div class="hd" id="tasktoggle">${s.self.role === "hollow" ? "Town wards (pretend)" : "Town wards · shared"} ${tasksOpen ? "▾" : "▸"}</div>` +
-      (tasksOpen ? s.tasks.map((t) => `<div class="t ${t.done ? "done" : ""}">${t.done ? "✓" : "•"} ${esc(t.name)}${!t.done && t.progress > 0 ? ` <span style="color:var(--amber)">${Math.round(t.progress * 100)}%</span>` : ""}</div>`).join("") : "");
+      (tasksOpen ? s.tasks.map((t) => `<div class="t ${t.done ? "done" : ""}">${t.done ? "✓" : t.delivered ? "▣" : "◇"} ${esc(t.name)}${!t.done ? ` <span style="color:${t.delivered ? "var(--moss)" : "var(--amber)"}">${t.delivered ? t.progress > 0 ? `${Math.round(t.progress * 100)}%` : "repair" : "needs kit"}</span>` : ""}</div>`).join("") : "");
   } else tasks.style.display = "none";
 
   // feed
@@ -382,13 +392,14 @@ function renderHud(s: Snapshot) {
         <h2>${s.round > 0 ? `Night ${s.round + 1} approaches` : "Gathering at dusk"}</h2>
         <p class="muted" style="margin-top:4px">${s.round > 0 ? "The same souls, the same street — new roles when darkness falls" : "Share the town code with your fellow townsfolk"}</p>
         <div class="bigcode">${s.code}</div>
+        <p style="margin-top:10px;color:#c9b8a4;font-size:13px">The wards are broken. Take a kit from a supply cart, carry it to a ward, then hold E to repair it.</p>
         <div class="roster">${s.players.map((p) => `<div class="seat"><span class="dot" style="background:${p.color}"></span><span>${esc(p.name)}</span>${p.isHost ? `<span class="host">host</span>` : ""}</div>`).join("")}</div>
         ${s.self.id === s.hostId
           ? `<button class="big" data-act="start" ${s.playerCount < 4 ? "disabled" : ""}>${s.playerCount < 4 ? "Waiting for more souls… (min 4)" : "Let night fall"}</button>`
           : `<p class="muted" style="margin-top:16px">Waiting for the host to let night fall…</p>`}
         <div class="row" style="margin-top:14px;justify-content:center">
           <button class="chip" data-act="settings">⚙ Settings</button>
-          <button class="chip" data-act="menu">Other towns</button>
+          <button class="chip" data-act="menu" style="border-color:#84624c;padding:10px 12px;flex:1">← Back to towns</button>
         </div>
         <p class="muted">4–10 players · 1–2 of you will be Hollow</p>`;
     } else if (s.phase === "ended") {
@@ -399,7 +410,7 @@ function renderHud(s: Snapshot) {
         ${s.self.id === s.hostId ? `<button class="big" data-act="restart">Gather the same souls again</button>` : `<p class="muted" style="margin-top:14px">The lantern-bearer may gather this town for another night…</p>`}
         <div class="row" style="margin-top:12px;justify-content:center;gap:10px">
           <button class="chip" data-act="settings">⚙ Settings</button>
-          <button class="chip" data-act="menu">Other towns</button>
+          <button class="chip" data-act="menu" style="border-color:#84624c;padding:10px 12px;flex:1">← Back to towns</button>
           <a class="chip" href="${server}/chronicle/${s.code}" target="_blank" style="text-decoration:none">Chronicle</a>
           <a class="chip" href="${server}/stats" target="_blank" style="text-decoration:none">Records</a>
         </div>`;
@@ -493,6 +504,7 @@ $("ability").addEventListener("click", () => send({ action: "ability" }));
 $("snuffbtn").addEventListener("click", () => send({ action: "blackout" }));
 $("talkbtn").addEventListener("click", openChat);
 $("leave").addEventListener("click", leaveToMenu);
+$("supplydrop").addEventListener("click", () => void send({ action: "drop_supply" }));
 $("settings").addEventListener("click", () => settingsDialog.open());
 $("menusettings").addEventListener("click", () => settingsDialog.open());
 $("mute").addEventListener("click", () => {

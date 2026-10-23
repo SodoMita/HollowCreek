@@ -1,9 +1,10 @@
 // Canvas renderer for Hollow Creek — pure drawing, no game logic.
 import {
-  BELL_X, CAGE_XS, MEETING_FROM, MEETING_TO, STATIONS, WORLD_W,
+  BELL_X, CAGE_XS, MEETING_FROM, MEETING_TO, STATIONS, SUPPLY_DEPOTS, WORLD_W,
 } from "./types";
 import type { Snapshot, Station } from "./types";
 import { createDefaultSettings, type GameSettings } from "./settings";
+import { drawBrokenWard, drawKit, drawSupplyCart } from "./ward-art";
 
 interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: string; s: number }
 
@@ -205,6 +206,14 @@ export class Renderer {
       const sx = st.x - cam;
       if (sx > -280 && sx < w + 280) this.drawStation(ctx, st, sx, ground, t, now, snap);
     }
+    for (const depot of SUPPLY_DEPOTS) {
+      const sx = depot - cam;
+      if (sx > -90 && sx < w + 90) drawSupplyCart(ctx, sx, ground);
+    }
+    for (const drop of snap.supplyDrops) {
+      const sx = drop - cam;
+      if (sx > -45 && sx < w + 45) drawKit(ctx, sx, ground, 0.78);
+    }
 
     // --- bell tower ---
     this.drawBellTower(ctx, BELL_X - cam, ground, t, now - snap.bellAt < 4000);
@@ -225,25 +234,6 @@ export class Renderer {
       ctx.beginPath(); ctx.moveTo(kx, ground - 20 + bob); ctx.lineTo(kx, ground - 6 + bob);
       ctx.moveTo(kx, ground - 10 + bob); ctx.lineTo(kx + 6, ground - 10 + bob);
       ctx.moveTo(kx, ground - 6 + bob); ctx.lineTo(kx + 5, ground - 6 + bob); ctx.stroke();
-      ctx.restore();
-    }
-
-    // --- supply bundles waiting to be hauled to the ruined wards ---
-    for (const su of snap.supplies) {
-      const sx = su.x - cam;
-      if (sx < -40 || sx > w + 40) continue;
-      const bob = Math.sin(t * 2 + su.x) * 2;
-      ctx.save();
-      ctx.translate(sx, ground + bob);
-      ctx.fillStyle = "rgba(0,0,0,.35)";
-      ctx.beginPath(); ctx.ellipse(0, 2, 15, 4, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "#4a3524";
-      ctx.fillRect(-11, -17, 22, 17);
-      ctx.strokeStyle = "#241a10"; ctx.lineWidth = 2;
-      ctx.strokeRect(-11, -17, 22, 17);
-      ctx.beginPath(); ctx.moveTo(-11, -17); ctx.lineTo(11, 0); ctx.moveTo(11, -17); ctx.lineTo(-11, 0); ctx.stroke();
-      ctx.fillStyle = "rgba(255,205,90,.85)";
-      ctx.beginPath(); ctx.arc(0, -24, 2.2 + Math.sin(t * 3 + su.x) * 0.8, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
 
@@ -289,23 +279,14 @@ export class Renderer {
       }
       this.drawFigure(ctx, px, ground + floatY, p.color, p.facing, p.moving, ghost, isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t, 1);
       ctx.restore();
+      // A kit stays visible on its carrier until someone delivers it.
+      if (p.hasSupply) drawKit(ctx, px - 23, ground - 16 + floatY, 0.7);
       // key icon
       if (p.hasKey) {
         ctx.fillStyle = "#e8b93c";
         ctx.font = "12px serif";
         ctx.textAlign = "center";
         ctx.fillText("🗝", px + 16, ground - 52 + floatY);
-      }
-      // a bundle on the shoulder while hauling supplies (own load is authoritative)
-      if (p.id === snap.self.id && snap.self.carrying) {
-        ctx.save();
-        ctx.translate(px - 17, ground - 46 + floatY);
-        ctx.fillStyle = "#4a3524";
-        ctx.fillRect(-6, -9, 12, 9);
-        ctx.strokeStyle = "#241a10"; ctx.lineWidth = 1.2;
-        ctx.strokeRect(-6, -9, 12, 9);
-        ctx.beginPath(); ctx.moveTo(-6, -9); ctx.lineTo(6, 0); ctx.moveTo(6, -9); ctx.lineTo(-6, 0); ctx.stroke();
-        ctx.restore();
       }
       // name and speech are optional HUD layers; the figures remain identifiable by color.
       if (this.settings.interface.playerNames) {
@@ -595,14 +576,14 @@ export class Renderer {
     t: number, now: number, snap: Snapshot
   ) {
     const blackout = now < snap.blackoutUntil;
-    // A ward on this round's list that is not yet mended stands in ruins.
-    const ward = snap.tasks.find((tk) => tk.id === st.id);
-    const ruined = !!ward && !ward.done;
+    const task = snap.tasks.find((tk) => tk.id === st.id);
+    const broken = snap.phase === "lobby" || (!!task && !task.done);
+    const supplied = !!task?.delivered;
     const flick = this.settings.graphics.flicker && !this.settings.graphics.reducedMotion && now - snap.flickerAt < 900 ? Math.random() * 0.6 : 0;
     const win = (wx: number, wy: number, ww: number, wh: number) => {
-      const a = blackout || ruined ? 0.04 : Math.max(0.05, 0.75 - flick);
+      const a = blackout || broken ? 0.02 : Math.max(0.05, 0.75 - flick);
       ctx.save();
-      ctx.shadowColor = "rgba(255,151,55,.75)"; this.glow(ctx, 13);
+      ctx.shadowColor = "rgba(255,151,55,.75)"; this.glow(ctx, broken || blackout ? 0 : 13);
       const glass = ctx.createLinearGradient(wx, wy, wx, wy + wh);
       glass.addColorStop(0, `rgba(255,210,120,${a})`);
       glass.addColorStop(1, `rgba(210,91,35,${a * 0.82})`);
@@ -621,9 +602,11 @@ export class Renderer {
       case "pumpkins": {
         ctx.fillStyle = "#241511";
         ctx.fillRect(-70, -70, 140, 70); // shed
-        ctx.beginPath(); ctx.moveTo(-80, -70); ctx.lineTo(0, -105); ctx.lineTo(80, -70); ctx.closePath(); ctx.fill();
+        if (!broken) {
+          ctx.beginPath(); ctx.moveTo(-80, -70); ctx.lineTo(0, -105); ctx.lineTo(80, -70); ctx.closePath(); ctx.fill();
+        }
         win(-20, -50, 18, 20);
-        for (const [px, pr] of [[-45, 12], [-20, 15], [8, 11], [34, 14], [55, 10]] as const) {
+        for (const [px, pr] of (broken ? [] : [[-45, 12], [-20, 15], [8, 11], [34, 14], [55, 10]]) as readonly (readonly [number, number])[]) {
           ctx.fillStyle = "#b05a1a";
           ctx.beginPath(); ctx.ellipse(px, -pr * 0.7, pr, pr * 0.8, 0, 0, Math.PI * 2); ctx.fill();
           ctx.strokeStyle = "#7a3c10"; ctx.lineWidth = 1.5;
@@ -637,7 +620,7 @@ export class Renderer {
         ctx.fillRect(-26, -30, 52, 30);
         ctx.fillStyle = "#241511";
         ctx.fillRect(-30, -78, 6, 50); ctx.fillRect(24, -78, 6, 50);
-        ctx.beginPath(); ctx.moveTo(-38, -76); ctx.lineTo(0, -98); ctx.lineTo(38, -76); ctx.closePath(); ctx.fill();
+        if (!broken) { ctx.beginPath(); ctx.moveTo(-38, -76); ctx.lineTo(0, -98); ctx.lineTo(38, -76); ctx.closePath(); ctx.fill(); }
         ctx.strokeStyle = "#5a4a30"; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(0, -76); ctx.lineTo(0, -44); ctx.stroke();
         ctx.fillStyle = "#4a3a28"; ctx.fillRect(-7, -46, 14, 12);
@@ -648,26 +631,33 @@ export class Renderer {
         ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -85); ctx.moveTo(-30, -62); ctx.lineTo(30, -62); ctx.stroke();
         ctx.fillStyle = "#6b5433";
         ctx.beginPath(); ctx.moveTo(-14, -60); ctx.lineTo(14, -60); ctx.lineTo(9, -25); ctx.lineTo(-9, -25); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#c9a86a";
-        ctx.beginPath(); ctx.arc(0, -92, 11, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#241511";
-        ctx.beginPath(); ctx.moveTo(-16, -98); ctx.lineTo(16, -98); ctx.lineTo(0, -116); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#1a0f0a";
-        ctx.beginPath(); ctx.arc(-4, -93, 1.8, 0, Math.PI * 2); ctx.arc(4, -93, 1.8, 0, Math.PI * 2); ctx.fill();
+        if (!broken) {
+          ctx.fillStyle = "#c9a86a";
+          ctx.beginPath(); ctx.arc(0, -92, 11, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#241511";
+          ctx.beginPath(); ctx.moveTo(-16, -98); ctx.lineTo(16, -98); ctx.lineTo(0, -116); ctx.closePath(); ctx.fill();
+          ctx.fillStyle = "#1a0f0a";
+          ctx.beginPath(); ctx.arc(-4, -93, 1.8, 0, Math.PI * 2); ctx.arc(4, -93, 1.8, 0, Math.PI * 2); ctx.fill();
+        }
         break;
       }
       case "lantern": {
-        if (!blackout && this.settings.graphics.glow) {
+        if (!blackout && !broken && this.settings.graphics.glow) {
           const light = ctx.createRadialGradient(0, -92, 4, 0, -72, 112);
           light.addColorStop(0, "rgba(255,187,83,.22)"); light.addColorStop(1, "rgba(255,145,45,0)");
           ctx.fillStyle = light; ctx.fillRect(-115, -205, 230, 220);
         }
         ctx.fillStyle = "#191420";
-        ctx.fillRect(-3, -110, 6, 110);
-        ctx.fillRect(-14, -112, 28, 5);
-        const glow = blackout ? 0.03 : 0.6 + Math.sin(t * 5) * 0.1 - flick;
+        if (broken) {
+          ctx.strokeStyle = "#191420"; ctx.lineWidth = 6;
+          ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -72); ctx.lineTo(-19, -103); ctx.stroke();
+        } else {
+          ctx.fillRect(-3, -110, 6, 110);
+          ctx.fillRect(-14, -112, 28, 5);
+        }
+        const glow = blackout || broken ? 0.03 : 0.6 + Math.sin(t * 5) * 0.1 - flick;
         ctx.fillStyle = `rgba(255,190,90,${Math.max(0.03, glow)})`;
-        ctx.shadowColor = "rgba(255,180,80,0.9)"; this.glow(ctx, blackout ? 0 : 24);
+        ctx.shadowColor = "rgba(255,180,80,0.9)"; this.glow(ctx, blackout || broken ? 0 : 24);
         ctx.fillRect(-8, -106, 16, 18);
         ctx.shadowBlur = 0;
         ctx.fillStyle = "#191420"; ctx.fillRect(-10, -108, 20, 3);
@@ -690,37 +680,43 @@ export class Renderer {
         ctx.beginPath(); ctx.moveTo(-88, -85); ctx.lineTo(88, -85); ctx.lineTo(60, -115); ctx.lineTo(-60, -115); ctx.closePath(); ctx.fill();
         win(-50, -60, 20, 22); win(28, -60, 20, 22);
         ctx.save();
-        ctx.translate(0, -50); ctx.rotate(t * 0.6);
+        ctx.translate(0, -50); ctx.rotate(broken ? 0 : t * 0.6);
         ctx.strokeStyle = "#4a3826"; ctx.lineWidth = 7;
-        for (let i = 0; i < 4; i++) { ctx.rotate(Math.PI / 2); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -44); ctx.stroke(); }
+        for (let i = 0; i < (broken ? 2 : 4); i++) { ctx.rotate(Math.PI / 2); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -44); ctx.stroke(); }
         ctx.restore();
         ctx.fillStyle = "#0f0a08"; ctx.fillRect(-14, -40, 28, 40);
         break;
       }
       case "graves": {
-        for (const [gx, gh, tilt] of [[-55, 34, -0.08], [-20, 42, 0.05], [18, 30, -0.04], [52, 38, 0.1]] as const) {
-          ctx.save(); ctx.translate(gx, 0); ctx.rotate(tilt);
+        for (const [gx, gh, tilt] of [[-55, 34, -0.28], [-20, 42, 0.3], [18, 30, -0.36], [52, 38, 0.24]] as const) {
+          ctx.save(); ctx.translate(gx, 0); ctx.rotate(broken ? tilt : 0);
           ctx.fillStyle = "#3d3a42";
           ctx.beginPath(); ctx.roundRect(-11, -gh, 22, gh, [10, 10, 0, 0]); ctx.fill();
           ctx.restore();
         }
-        ctx.fillStyle = "#0a0605";
-        ctx.beginPath(); ctx.ellipse(85, -2, 26, 7, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#2a1c12";
-        ctx.beginPath(); ctx.ellipse(108, -8, 14, 9, 0.3, 0, Math.PI * 2); ctx.fill();
+        if (broken) {
+          ctx.fillStyle = "#0a0605";
+          ctx.beginPath(); ctx.ellipse(85, -2, 26, 7, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#2a1c12";
+          ctx.beginPath(); ctx.ellipse(108, -8, 14, 9, 0.3, 0, Math.PI * 2); ctx.fill();
+        } else {
+          ctx.fillStyle = "#493120";
+          ctx.beginPath(); ctx.ellipse(85, -2, 28, 6, 0, 0, Math.PI * 2); ctx.fill();
+        }
         break;
       }
       case "radio": {
         ctx.strokeStyle = "#2c2833"; ctx.lineWidth = 5;
         ctx.beginPath();
-        ctx.moveTo(-34, 0); ctx.lineTo(0, -190); ctx.lineTo(34, 0);
+        ctx.moveTo(-34, 0); ctx.lineTo(broken ? -16 : 0, broken ? -102 : -190);
+        ctx.lineTo(broken ? 38 : 34, broken ? -72 : 0);
         ctx.moveTo(-24, -55); ctx.lineTo(24, -55);
         ctx.moveTo(-15, -110); ctx.lineTo(15, -110);
         ctx.moveTo(-24, -55); ctx.lineTo(15, -110); ctx.moveTo(24, -55); ctx.lineTo(-15, -110);
         ctx.stroke();
-        const blink = Math.sin(t * 3) > 0 ? 0.9 : 0.2;
+        const blink = broken ? 0.03 : Math.sin(t * 3) > 0 ? 0.9 : 0.2;
         ctx.fillStyle = `rgba(255,60,50,${blink})`;
-        ctx.shadowColor = "#ff3c32"; this.glow(ctx, 12);
+        ctx.shadowColor = "#ff3c32"; this.glow(ctx, broken ? 0 : 12);
         ctx.beginPath(); ctx.arc(0, -194, 4, 0, Math.PI * 2); ctx.fill();
         ctx.shadowBlur = 0;
         break;
@@ -735,46 +731,35 @@ export class Renderer {
         break;
       }
     }
-    if (ruined) {
-      // rubble at the foot of the ruin, fallen planks, a sagging beam, thin smoke
-      ctx.fillStyle = "rgba(24,17,14,.92)";
-      ctx.beginPath(); ctx.ellipse(-46, -3, 26, 8, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(48, -2, 30, 9, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(4, -1, 34, 7, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "rgba(52,40,32,.9)";
-      ctx.beginPath(); ctx.ellipse(-38, -8, 9, 5, 0.2, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(41, -7, 11, 6, -0.15, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(10, -6, 8, 5, 0.1, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = "rgba(96,72,50,.85)"; ctx.lineWidth = 4;
-      ctx.beginPath(); ctx.moveTo(-72, 0); ctx.lineTo(-30, -26); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(74, 0); ctx.lineTo(34, -20); ctx.stroke();
-      ctx.strokeStyle = "rgba(60,44,34,.9)"; ctx.lineWidth = 6;
-      ctx.beginPath(); ctx.moveTo(-58, -64); ctx.lineTo(-44, -6); ctx.stroke();
-      const smoke = 0.10 + Math.sin(t * 1.3 + st.x) * 0.03;
-      ctx.fillStyle = `rgba(150,140,135,${smoke.toFixed(3)})`;
-      for (let i = 0; i < 3; i++) {
-        const sy = -70 - i * 26 - ((t * 9 + st.x) % 26);
-        ctx.beginPath(); ctx.arc(-8 + i * 10 + Math.sin(t + i * 2) * 5, sy, 7 + i * 3, 0, Math.PI * 2); ctx.fill();
-      }
-    }
+    if (broken) drawBrokenWard(ctx, st.kind);
     ctx.restore();
 
-    // task marker for own unfinished tasks
-    const myTask = snap.tasks.find((tk) => tk.id === st.id && !tk.done);
-    if (myTask && snap.phase === "playing") {
+    // A kit on the ground marks a ward that is ready for hands-on repair.
+    if (task && !task.done && supplied) drawKit(ctx, x + 85, ground, 0.9);
+
+    // State marker for unfinished wards: missing kit or ready for repair.
+    if (task && !task.done && snap.phase === "playing") {
       const bob = Math.sin(t * 3 + st.x) * 4;
       ctx.save();
-      ctx.fillStyle = "rgba(255,205,90,0.9)";
-      ctx.shadowColor = "#ffcd5a"; this.glow(ctx, 10);
+      ctx.fillStyle = supplied ? "#b3d59a" : "#ffcd5a";
+      ctx.shadowColor = supplied ? "#729a65" : "#ffcd5a"; this.glow(ctx, 8);
       ctx.translate(x, ground - 235 + bob);
       ctx.rotate(Math.PI / 4);
       ctx.fillRect(-7, -7, 14, 14);
       ctx.restore();
-      if (myTask.progress > 0) {
+      ctx.save();
+      ctx.fillStyle = "rgba(12,8,16,.78)";
+      ctx.fillRect(x - 48, ground - 259, 96, 16);
+      ctx.font = "bold 10px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillStyle = supplied ? "#b3d59a" : "#ffcd5a";
+      ctx.fillText(supplied ? "REPAIR" : "NEEDS KIT", x, ground - 247);
+      ctx.restore();
+      if (task.progress > 0) {
         ctx.fillStyle = "rgba(0,0,0,0.5)";
         ctx.fillRect(x - 30, ground - 215, 60, 8);
         ctx.fillStyle = "#ffcd5a";
-        ctx.fillRect(x - 29, ground - 214, 58 * myTask.progress, 6);
+        ctx.fillRect(x - 29, ground - 214, 58 * task.progress, 6);
       }
     }
   }

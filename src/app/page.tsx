@@ -146,8 +146,8 @@ export default function Home() {
           </h1>
           <p className="hc-rise-2 mt-6 max-w-md text-lg leading-relaxed text-[#c9b8a4]">
             The harvest was good. Then the church bell rang on its own, and not
-            everyone who came home was <em>people</em> anymore. Walk the one long
-            street. Mend its ruined wards. Watch your neighbours.
+            everyone who came home was <em>people</em> anymore. The wards lie broken.
+            Bring repair kits from the supply carts, mend the street, and watch your neighbours.
           </p>
           <p className="hc-rise-3 mt-4 max-w-md text-[#8f7d6b]">
             When the bell tolls, walk to the square and vote. The condemned are
@@ -157,7 +157,7 @@ export default function Home() {
           <div className="hc-rise-3 mt-8 grid max-w-lg grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             {[
               [`${keyLabel(settings.controls.left)} / ${keyLabel(settings.controls.right)}`, "walk the street"],
-              [keyLabel(settings.controls.interact), "interact · haul & mend"],
+              [keyLabel(settings.controls.interact), settings.controls.interactMode === "hold" ? "take / deliver kit · hold to repair" : "take / deliver kit · toggle repair"],
               [`${keyLabel(settings.controls.ability)} / ${keyLabel(settings.controls.blackout)}`, "role ability · snuff lights"],
               [keyLabel(settings.controls.chat), "speak (bubble)"],
             ].map(([k, v]) => (
@@ -292,10 +292,10 @@ export default function Home() {
           </div>
 
           <p className="mt-4 text-xs leading-relaxed text-[#6b5a55]">
-            4–10 townsfolk. One or two among you are Hollow. The night leaves the town&rsquo;s wards in ruins —
-            haul supplies to them to mend them, but deeds drain your vigor; stand
-            still to catch your breath. Survive the night and the same souls can gather
-            again — every deed is written into the chronicle.
+            4–10 townsfolk. One or two among you are Hollow. The wards begin broken:
+            carry kits from supply carts, deliver them, then hold E to repair. Anyone living
+            can help. Repairs drain your vigor; stand still to recover. Survive the night
+            and the same souls can gather again.
           </p>
         </div>
       </div>
