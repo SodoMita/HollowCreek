@@ -91,7 +91,12 @@ export function step(s: Session, dt: number): Session {
     if (p > 100) { p = 100; d.dir = -1 } if (p < 0) { p = 0; d.dir = 1 }
     d.pos = p;
   } else if (m === "multi") {
-    d.gears = d.gears.map((g: any) => ({ ...g, pos: (g.pos + g.sp * dt * 46) % 100 }));
+    // a ring's grease dries once it comes back round: each needs oiling again
+    d.gears = d.gears.map((g: any) => {
+      let p = g.pos + g.sp * dt * 46, oiled = g.oiled;
+      if (p >= 100) { p -= 100; oiled = false }
+      return { ...g, pos: p, oiled };
+    });
   } else if (m === "band") {
     const grav = d.held ? 0.55 : -0.75;
     d.level = clamp01(d.level + (grav + (d.held ? (0.5 - d.level) * 1.4 : 0)) * dt);

@@ -51,6 +51,8 @@ if (next.failed) { t.progress = 0.15; player.session = null; }
 `InputBody` gains `minigame?: { act: string; v?: number }`; the legacy
 `interactHeld` path stays so old static clients keep working.
 
+A perfect-play harness (drive every session with ideal inputs, 50ms ticks) completes 14/14; `multi` originally demanded six hits from three rings, which was unwinnable, so a ring's grease now dries once it comes back round.
+
 ## `src/game/tutorial.ts`
 
 Eight feathers, each gated by `featherDone(feather, snapshot)` on real state:
