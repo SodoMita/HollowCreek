@@ -59,6 +59,17 @@ export default function GameClient({ code }: { code: string }) {
     } catch { /* network hiccup — next poll resyncs */ }
   }, [code]);
 
+  const leaveAndBack = useCallback(async () => {
+    try {
+      await fetch("/api/game/leave", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code, playerId: getPid() }),
+      });
+    } catch { /* leaving anyway */ }
+    router.push("/");
+  }, [code, router]);
+
   const getSettingsStore = useCallback(() => {
     if (!settingsStoreRef.current) settingsStoreRef.current = new SettingsStore();
     return settingsStoreRef.current;
@@ -345,7 +356,7 @@ export default function GameClient({ code }: { code: string }) {
                 aria-label="Settings"
                 className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a] sm:py-1.5"
               >⚙</button>
-              <button onClick={() => router.push("/")} className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#e06a5a] sm:px-3 sm:py-1.5"><span className="sm:hidden">✕</span><span className="hidden sm:inline">Leave</span></button>
+              <button onClick={() => void leaveAndBack()} className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#e06a5a] sm:px-3 sm:py-1.5"><span className="sm:hidden">✕</span><span className="hidden sm:inline">Leave</span></button>
             </div>
           </div>
 
@@ -432,6 +443,7 @@ export default function GameClient({ code }: { code: string }) {
                     />
                   </div>
                   <span className={`text-[10px] ${s.self.exhausted ? "text-[#e06a5a]" : "text-[#9c8b7a]"}`}>{s.self.exhausted ? "spent — rest!" : "vigor"}</span>
+                  {s.self.carrying && <span className="rounded bg-[#3a2410]/90 px-1.5 py-0.5 text-[10px] text-[#ffd98a]">📦 hauling supplies</span>}
                 </div>
               )}
               <div className="flex gap-2 sm:gap-3">
@@ -533,7 +545,7 @@ export default function GameClient({ code }: { code: string }) {
                 )}
                 <div className="mt-4 flex justify-center gap-2">
                   <button onClick={() => settingsDialogRef.current?.open()} className="rounded border border-[#3a2733] px-4 py-1.5 text-sm text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]">⚙ Settings</button>
-                  <button onClick={() => router.push("/")} className="rounded border border-[#3a2733] px-4 py-1.5 text-sm text-[#9c8b7a] hover:text-[#e9dfcf]">Other towns</button>
+                  <button onClick={() => void leaveAndBack()} className="rounded border border-[#3a2733] px-4 py-1.5 text-sm text-[#9c8b7a] hover:text-[#e9dfcf]">← Back to crossroads</button>
                 </div>
                 <p className="mt-3 text-xs text-[#6b5a55]">4–10 players · 1–2 of you will be Hollow</p>
               </div>
@@ -552,7 +564,7 @@ export default function GameClient({ code }: { code: string }) {
                 ) : (
                   <>
                     <p className="font-display text-5xl sm:text-7xl text-[#a8c98a]">Townfolk</p>
-                    <p className="mt-3 text-lg text-[#b8c9a4]">Finish your chores. Find the key. Trust no one.</p>
+                    <p className="mt-3 text-lg text-[#b8c9a4]">Haul supplies to the ruined wards. Find the key. Trust no one.</p>
                   </>
                 )}
               </div>
@@ -581,7 +593,7 @@ export default function GameClient({ code }: { code: string }) {
                 )}
                 <div className="mt-3 flex flex-wrap justify-center gap-3">
                   <button onClick={() => settingsDialogRef.current?.open()} className="rounded border border-[#3a2733] px-4 py-2 text-sm text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]">⚙ Settings</button>
-                  <button onClick={() => router.push("/")} className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#c9b8a4] hover:bg-[#2a1a26]"><DoorOpen className="h-4 w-4" /> Other towns</button>
+                  <button onClick={() => void leaveAndBack()} className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#c9b8a4] hover:bg-[#2a1a26]"><DoorOpen className="h-4 w-4" /> Other towns</button>
                   <a href={`/chronicle/${s.code}`} target="_blank" className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#d99a3d] hover:bg-[#2a1a26]"><ScrollText className="h-4 w-4" /> Chronicle</a>
                   <a href="/stats" target="_blank" className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#c9b8a4] hover:bg-[#2a1a26]"><Trophy className="h-4 w-4" /> Records</a>
                 </div>

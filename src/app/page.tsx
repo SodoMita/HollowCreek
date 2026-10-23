@@ -147,7 +147,7 @@ export default function Home() {
           <p className="hc-rise-2 mt-6 max-w-md text-lg leading-relaxed text-[#c9b8a4]">
             The harvest was good. Then the church bell rang on its own, and not
             everyone who came home was <em>people</em> anymore. Walk the one long
-            street. Do your chores. Watch your neighbours.
+            street. Mend its ruined wards. Watch your neighbours.
           </p>
           <p className="hc-rise-3 mt-4 max-w-md text-[#8f7d6b]">
             When the bell tolls, walk to the square and vote. The condemned are
@@ -157,7 +157,7 @@ export default function Home() {
           <div className="hc-rise-3 mt-8 grid max-w-lg grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             {[
               [`${keyLabel(settings.controls.left)} / ${keyLabel(settings.controls.right)}`, "walk the street"],
-              [keyLabel(settings.controls.interact), settings.controls.interactMode === "hold" ? "interact · hold for chores" : "interact · toggle chores"],
+              [keyLabel(settings.controls.interact), "interact · haul & mend"],
               [`${keyLabel(settings.controls.ability)} / ${keyLabel(settings.controls.blackout)}`, "role ability · snuff lights"],
               [keyLabel(settings.controls.chat), "speak (bubble)"],
             ].map(([k, v]) => (
@@ -292,8 +292,8 @@ export default function Home() {
           </div>
 
           <p className="mt-4 text-xs leading-relaxed text-[#6b5a55]">
-            4–10 townsfolk. One or two among you are Hollow. The town&rsquo;s wards are shared —
-            any living soul may work them, but chores and deeds drain your vigor; stand
+            4–10 townsfolk. One or two among you are Hollow. The night leaves the town&rsquo;s wards in ruins —
+            haul supplies to them to mend them, but deeds drain your vigor; stand
             still to catch your breath. Survive the night and the same souls can gather
             again — every deed is written into the chronicle.
           </p>

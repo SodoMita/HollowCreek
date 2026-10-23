@@ -228,6 +228,25 @@ export class Renderer {
       ctx.restore();
     }
 
+    // --- supply bundles waiting to be hauled to the ruined wards ---
+    for (const su of snap.supplies) {
+      const sx = su.x - cam;
+      if (sx < -40 || sx > w + 40) continue;
+      const bob = Math.sin(t * 2 + su.x) * 2;
+      ctx.save();
+      ctx.translate(sx, ground + bob);
+      ctx.fillStyle = "rgba(0,0,0,.35)";
+      ctx.beginPath(); ctx.ellipse(0, 2, 15, 4, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#4a3524";
+      ctx.fillRect(-11, -17, 22, 17);
+      ctx.strokeStyle = "#241a10"; ctx.lineWidth = 2;
+      ctx.strokeRect(-11, -17, 22, 17);
+      ctx.beginPath(); ctx.moveTo(-11, -17); ctx.lineTo(11, 0); ctx.moveTo(11, -17); ctx.lineTo(-11, 0); ctx.stroke();
+      ctx.fillStyle = "rgba(255,205,90,.85)";
+      ctx.beginPath(); ctx.arc(0, -24, 2.2 + Math.sin(t * 3 + su.x) * 0.8, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+
     // --- bodies (crows gather above the dead) ---
     for (const b of snap.bodies) {
       const bx = b.x - cam;
@@ -276,6 +295,17 @@ export class Renderer {
         ctx.font = "12px serif";
         ctx.textAlign = "center";
         ctx.fillText("🗝", px + 16, ground - 52 + floatY);
+      }
+      // a bundle on the shoulder while hauling supplies (own load is authoritative)
+      if (p.id === snap.self.id && snap.self.carrying) {
+        ctx.save();
+        ctx.translate(px - 17, ground - 46 + floatY);
+        ctx.fillStyle = "#4a3524";
+        ctx.fillRect(-6, -9, 12, 9);
+        ctx.strokeStyle = "#241a10"; ctx.lineWidth = 1.2;
+        ctx.strokeRect(-6, -9, 12, 9);
+        ctx.beginPath(); ctx.moveTo(-6, -9); ctx.lineTo(6, 0); ctx.moveTo(6, -9); ctx.lineTo(-6, 0); ctx.stroke();
+        ctx.restore();
       }
       // name and speech are optional HUD layers; the figures remain identifiable by color.
       if (this.settings.interface.playerNames) {
@@ -565,9 +595,12 @@ export class Renderer {
     t: number, now: number, snap: Snapshot
   ) {
     const blackout = now < snap.blackoutUntil;
+    // A ward on this round's list that is not yet mended stands in ruins.
+    const ward = snap.tasks.find((tk) => tk.id === st.id);
+    const ruined = !!ward && !ward.done;
     const flick = this.settings.graphics.flicker && !this.settings.graphics.reducedMotion && now - snap.flickerAt < 900 ? Math.random() * 0.6 : 0;
     const win = (wx: number, wy: number, ww: number, wh: number) => {
-      const a = blackout ? 0.04 : Math.max(0.05, 0.75 - flick);
+      const a = blackout || ruined ? 0.04 : Math.max(0.05, 0.75 - flick);
       ctx.save();
       ctx.shadowColor = "rgba(255,151,55,.75)"; this.glow(ctx, 13);
       const glass = ctx.createLinearGradient(wx, wy, wx, wy + wh);
@@ -700,6 +733,28 @@ export class Renderer {
         for (let i = 1; i < 5; i++) { ctx.beginPath(); ctx.moveTo(-34, -i * 28); ctx.lineTo(34, -i * 28); ctx.stroke(); }
         ctx.fillStyle = "#17100c"; ctx.fillRect(-12, -36, 24, 36);
         break;
+      }
+    }
+    if (ruined) {
+      // rubble at the foot of the ruin, fallen planks, a sagging beam, thin smoke
+      ctx.fillStyle = "rgba(24,17,14,.92)";
+      ctx.beginPath(); ctx.ellipse(-46, -3, 26, 8, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(48, -2, 30, 9, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(4, -1, 34, 7, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "rgba(52,40,32,.9)";
+      ctx.beginPath(); ctx.ellipse(-38, -8, 9, 5, 0.2, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(41, -7, 11, 6, -0.15, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(10, -6, 8, 5, 0.1, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "rgba(96,72,50,.85)"; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(-72, 0); ctx.lineTo(-30, -26); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(74, 0); ctx.lineTo(34, -20); ctx.stroke();
+      ctx.strokeStyle = "rgba(60,44,34,.9)"; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.moveTo(-58, -64); ctx.lineTo(-44, -6); ctx.stroke();
+      const smoke = 0.10 + Math.sin(t * 1.3 + st.x) * 0.03;
+      ctx.fillStyle = `rgba(150,140,135,${smoke.toFixed(3)})`;
+      for (let i = 0; i < 3; i++) {
+        const sy = -70 - i * 26 - ((t * 9 + st.x) % 26);
+        ctx.beginPath(); ctx.arc(-8 + i * 10 + Math.sin(t + i * 2) * 5, sy, 7 + i * 3, 0, Math.PI * 2); ctx.fill();
       }
     }
     ctx.restore();

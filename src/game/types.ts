@@ -28,6 +28,7 @@ export const STAMINA_KILL_COST = 0.35;
 export const STAMINA_BLACKOUT_COST = 0.3;
 export const STAMINA_BELL_COST = 0.15;
 export const STAMINA_UNLOCK_COST = 0.1;
+export const STAMINA_DELIVER_COST = 0.15; // hauling supplies to a ward and mending it
 
 export interface Station {
   id: string;
@@ -91,6 +92,7 @@ export interface SelfInfo {
   bellUsed: boolean;
   killCooldownMs: number;
   canKill: boolean;
+  carrying: boolean; // hauling a bundle of supplies to a ruined ward
   stamina: number; // 0..1
   exhausted: boolean; // hit 0 — must rest to 20% before working again
   blackoutCooldownMs: number;
@@ -121,6 +123,7 @@ export interface Snapshot {
   players: PublicPlayer[];
   bodies: { x: number; color: string; name: string }[];
   keyX: number | null;
+  supplies: { x: number }[];
   cages: { x: number; occupant: string | null }[];
   tasks: TaskView[];
   taskBar: { done: number; total: number };
