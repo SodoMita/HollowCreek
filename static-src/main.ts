@@ -2,6 +2,7 @@
 // Talks to the authoritative server over the same HTTP API as the Next client;
 // reuses the canvas Renderer and generative AudioDirector unchanged.
 import { Renderer } from "../src/game/render";
+import { mountWardUI } from "../src/game/wardui";
 import { AudioDirector } from "../src/game/audio";
 import { SettingsStore, applyDocumentPreferences, keyLabel, matchesControl, type BindableAction } from "../src/game/settings";
 import { SettingsDialog } from "../src/game/settings-ui";
@@ -525,6 +526,14 @@ const canvas = $("cv") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 const renderer = new Renderer();
 renderer.setSettings(settingsStore.value);
+// ward boards — the same game the React client plays
+const wardHost = document.createElement("div");
+document.body.appendChild(wardHost);
+const wardUI = mountWardUI(wardHost, (a, v) => {
+  if (a === "strike") void send({ action: "strike" });
+  else if (a === "tap") void send({ action: "tap", v });
+  else void send({ action: "wardcancel" });
+});
 const vw = () => window.visualViewport?.width ?? window.innerWidth;
 const vh = () => window.visualViewport?.height ?? window.innerHeight;
 function resize() {
@@ -556,6 +565,7 @@ function loop(nowMs: number) {
       });
   }
   renderer.render(ctx, vw(), vh(), snap, displayX, nowMs / 1000, dt);
+  wardUI.update(snap);
 }
 requestAnimationFrame(loop);
 

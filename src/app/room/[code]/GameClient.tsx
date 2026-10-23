@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DoorOpen, Flame, ScrollText, Trophy, Zap } from "lucide-react";
 import { Renderer } from "@/game/render";
+import { mountWardUI, type WardHandle } from "@/game/wardui";
 import { AudioDirector } from "@/game/audio";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
@@ -154,6 +155,7 @@ export default function GameClient({ code }: { code: string }) {
           const s: Snapshot = await r.json();
           if (!alive) return;
           snapRef.current = s;
+          wardRef.current?.update(s);
           setSnap(s);
           audioRef.current?.update(s);
           if (lastPhase.current === "lobby" && s.phase === "playing") {
@@ -184,6 +186,23 @@ export default function GameClient({ code }: { code: string }) {
 
   // ---- input: clients only ever send intent ----
   const lastDirY = useRef(0);
+  // ---- ward boards: the actual work of the town ----
+  const wardHostRef = useRef<HTMLDivElement | null>(null);
+  const wardRef = useRef<WardHandle | null>(null);
+  useEffect(() => {
+    const host = wardHostRef.current;
+    if (!host) return;
+    const handle = mountWardUI(host, (a, v) => {
+      if (a === "strike") void send({ action: "strike" });
+      else if (a === "tap") void send({ action: "tap", v });
+      else void send({ action: "wardcancel" });
+    });
+    wardRef.current = handle;
+    return () => {
+      handle.destroy();
+      wardRef.current = null;
+    };
+  }, [send]);
   const computeDir = useCallback(() => {
     const k = keys.current;
     const dx = (k.has("right") ? 1 : 0) - (k.has("left") ? 1 : 0);
@@ -329,6 +348,7 @@ export default function GameClient({ code }: { code: string }) {
   return (
     <main className="fixed inset-0 h-[100dvh] w-full select-none overflow-hidden bg-[#0b0710]" style={{ touchAction: "none" }}>
       <canvas ref={canvasRef} className="absolute inset-0" />
+      <div ref={wardHostRef} />
 
       {!s && !joinError && (
         <div className="absolute inset-0 flex items-center justify-center">

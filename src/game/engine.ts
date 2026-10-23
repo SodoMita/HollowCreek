@@ -17,6 +17,7 @@ import type {
 } from "./types";
 import { bumpStats } from "./stats";
 import { shuffle } from "./rng";
+import { inBand, makeBoard, sequenceDone, sequenceSoFarGood, type WardBoard } from "./wardplay";
 
 // ---------------------------------------------------------------------------
 // Internal state
@@ -89,6 +90,18 @@ interface Room {
   /** the valley's current mood */
   weather: { kind: WeatherKind; until: number } | null;
   nextWeather: number;
+  /** ward games in progress, by player */
+  wards: Map<string, WardSession>;
+}
+
+interface WardSession {
+  playerId: string;
+  stationId: string;
+  board: WardBoard;
+  startedAt: number;
+  hits: number;
+  taps: number[];
+  lastStrike: number;
 }
 
 const WEATHER_LINES: Record<WeatherKind, string> = {
@@ -267,6 +280,7 @@ function makeRoom(code: string, round = 0, mode: GameMode = "nightwatch"): Room 
     stalker: null,
     weather: null,
     nextWeather: Date.now() + 60_000,
+    wards: new Map(),
     phase: "lobby",
     players: new Map(),
     bodies: [],
@@ -812,6 +826,8 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     p.dirY = ny;
   }
   if (typeof body.interactHeld === "boolean") p.interactHeld = body.interactHeld;
+  // Holding E on a ward opens its board — the ward is played now, not waited out.
+  if (p.interactHeld && room.phase === "playing" && !room.wards.has(p.id)) openWard(room, p);
 
   if (typeof body.creature === "string") {
     const c = validCreature(body.creature);
@@ -932,7 +948,89 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     return { ok: true };
   }
 
+  if (body.action === "ward") return openWard(room, p);
+
+  if (body.action === "wardcancel") {
+    room.wards.delete(p.id);
+    return { ok: true };
+  }
+
+  if (body.action === "strike") {
+    const s = room.wards.get(p.id);
+    if (!s || s.board.kind !== "strike") return { ok: false, error: "No ward open." };
+    const now = Date.now();
+    if (now - s.lastStrike < 150) return { ok: true }; // no mashing
+    s.lastStrike = now;
+    const task = room.pool.find((t) => t.id === s.stationId && !t.done);
+    if (!task) { room.wards.delete(p.id); return { ok: false, error: "That ward is finished." }; }
+    const elapsed = (now - s.startedAt) / 1000;
+    if (inBand(s.board, elapsed, s.hits)) {
+      s.hits += 1;
+      p.stamina = Math.max(0, p.stamina - STAMINA_WORK_DRAIN * 0.9);
+      record(room, p, "ward_hit", { station: s.stationId, hits: s.hits, need: s.board.need });
+      if (s.hits >= s.board.need) finishWard(room, p, task, s);
+    } else {
+      s.hits = Math.max(0, s.hits - 1); // a miss undoes a hit
+      p.stamina = Math.max(0, p.stamina - 0.05);
+      record(room, p, "ward_miss", { station: s.stationId });
+    }
+    return { ok: true };
+  }
+
+  if (body.action === "tap") {
+    const s = room.wards.get(p.id);
+    if (!s || s.board.kind !== "sequence") return { ok: false, error: "No ward open." };
+    const v = typeof body.v === "number" ? Math.max(0, Math.min(3, Math.round(body.v))) : -1;
+    if (v < 0) return { ok: false, error: "Bad tap." };
+    const task = room.pool.find((t) => t.id === s.stationId && !t.done);
+    if (!task) { room.wards.delete(p.id); return { ok: false, error: "That ward is finished." }; }
+    s.taps.push(v);
+    if (!sequenceSoFarGood(s.board, s.taps)) {
+      s.taps = [];
+      p.stamina = Math.max(0, p.stamina - 0.05);
+      record(room, p, "ward_miss", { station: s.stationId });
+      return { ok: true };
+    }
+    p.stamina = Math.max(0, p.stamina - STAMINA_WORK_DRAIN * 0.25);
+    if (sequenceDone(s.board, s.taps)) finishWard(room, p, task, s);
+    return { ok: true };
+  }
+
   return { ok: true };
+}
+
+/** Open the ward board for a player standing at an unfinished ward. */
+function openWard(room: Room, p: P): { ok: boolean; error?: string } {
+  if (room.phase !== "playing" || !p.alive || p.caged) return { ok: false, error: "Not now." };
+  const st = STATIONS.find(
+    (s) => d2(s.x, s.y, p.x, p.y) < INTERACT_RANGE + 30 && room.pool.some((t) => t.id === s.id && !t.done)
+  );
+  if (!st) return { ok: false, error: "No ward here." };
+  const existing = room.wards.get(p.id);
+  if (existing && existing.stationId === st.id) return { ok: true };
+  const board = makeBoard(st.kind, Math.floor(Math.random() * 1e9));
+  room.wards.set(p.id, {
+    playerId: p.id,
+    stationId: st.id,
+    board,
+    startedAt: Date.now(),
+    hits: 0,
+    taps: [],
+    lastStrike: 0,
+  });
+  record(room, p, "ward_open", { station: st.id, kind: board.kind });
+  return { ok: true };
+}
+
+function finishWard(room: Room, p: P, task: TaskState, s: WardSession) {
+  task.progress = 1;
+  task.done = true;
+  room.wards.delete(p.id);
+  const st = STATIONS.find((x) => x.id === task.id);
+  feed(room, `${p.name} finishes the ${st ? st.name.toLowerCase() : "ward"}.`);
+  record(room, p, "task_complete", { task: task.id, kind: s.board.kind });
+  bumpStats(p.id, p.name, { tasksDone: 1 });
+  checkWin(room);
 }
 
 // ---------------------------------------------------------------------------
@@ -990,36 +1088,21 @@ function tick() {
         p.y = clampY(p.y);
         resolveSolids(p);
       }
-      // shared ward work (hold E) — vigor drains, low vigor slows, zero halts
-      let working = false;
-      if (room.phase === "playing" && p.alive && !p.caged && p.role === "crew" && p.interactHeld && !p.moving) {
-        const t = room.pool.find((t) => {
-          if (t.done) return false;
-          const st = STATIONS.find((s) => s.id === t.id)!;
-          return d2(st.x, st.y, p.x, p.y) < INTERACT_RANGE;
-        });
-        if (t && p.stamina > 0 && !p.exhausted) {
-          working = true;
-          const factor = Math.min(1, p.stamina / STAMINA_SLOW_THRESHOLD);
-          t.progress += (TICK_MS / TASK_HOLD_MS) * factor;
-          const cold = room.weather?.kind === "cold" && now < room.weather.until ? 1.35 : 1;
-          p.stamina = Math.max(0, p.stamina - STAMINA_WORK_DRAIN * dt * cold);
-          if (p.stamina <= 0) p.exhausted = true; // must truly rest before working again
-          if (t.progress >= 1) {
-            t.progress = 1;
-            t.done = true;
-            record(room, p, "task_complete", { task: t.id });
-            bumpStats(p.id, p.name, { tasksDone: 1 });
-            checkWin(room);
-          }
+      // a ward board closes if its player drifts away or leaves it too long
+      const ws = room.wards.get(p.id);
+      if (ws) {
+        const st = STATIONS.find((x) => x.id === ws.stationId);
+        if (!st || now - ws.startedAt > 150000 || d2(st.x, st.y, p.x, p.y) > INTERACT_RANGE * 2.2) {
+          room.wards.delete(p.id);
         }
       }
       // vigor returns only while truly idle
-      if (!working && !p.moving) {
+      if (!p.moving) {
         const chill = room.weather?.kind === "cold" && now < room.weather.until ? 0.55 : 1;
         p.stamina = Math.min(1, p.stamina + STAMINA_IDLE_REGEN * dt * chill);
         if (p.exhausted && p.stamina >= 0.2) p.exhausted = false;
       }
+      if (p.stamina <= 0) p.exhausted = true;
     }
 
     // ---------------- the valley's moods ----------------
@@ -1148,11 +1231,9 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     else if (room.phase === "playing" && !me.caged && !me.bellUsed && near(BELL.x, BELL.y)) hint = "Ring the bell";
     else if (room.phase === "playing" && me.alive && !me.caged && nearTask) {
       const st = STATIONS.find((s) => s.id === nearTask.id)!;
-      hint = me.role === "hollow"
-        ? `Hold E — ${st.name} (pretend)`
-        : me.exhausted
-          ? "Spent — stand still and catch your breath"
-          : `Hold E — ${st.name}${me.stamina < STAMINA_SLOW_THRESHOLD ? " (weary, slow)" : ""}`;
+      hint = me.exhausted
+        ? "Spent — stand still and catch your breath"
+        : `Hold E — play the ward: ${st.name}`;
     } else if (room.phase === "playing" && !me.caged) {
       hint =
         room.mode === "nightwatch"
@@ -1207,6 +1288,25 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
         ? { x: room.stalker.x, y: room.stalker.y }
         : null,
     weather: room.weather && now < room.weather.until ? room.weather : null,
+    ward: (() => {
+      const w = room.wards.get(playerId);
+      const st = w ? STATIONS.find((x) => x.id === w.stationId) : undefined;
+      if (!w || !st) return null;
+      return {
+        stationId: w.stationId,
+        name: st.name,
+        kind: w.board.kind,
+        seed: w.board.seed,
+        need: w.board.need,
+        hits: w.hits,
+        taps: w.taps,
+        startedAt: w.startedAt,
+        speed: w.board.speed,
+        half: w.board.half,
+        spin: w.board.spin,
+        seq: w.board.seq,
+      };
+    })(),
     phase: room.phase,
     round: room.round,
     now,

@@ -176,20 +176,7 @@ export class Renderer {
       ctx.fillRect(left, top, right - left, bottom - top);
       ctx.restore();
     }
-    // field furrows — faint bands that give the valley scale
-    ctx.save();
-    ctx.globalAlpha = 0.12;
-    ctx.strokeStyle = "#2a2030";
-    ctx.lineWidth = 26;
-    for (let i = 0; i < 22; i++) {
-      const y = (i * 210) % WORLD_H;
-      if (y < top - 220 || y > bottom + 220) continue;
-      ctx.beginPath();
-      ctx.moveTo(left, y);
-      ctx.bezierCurveTo(left + (right - left) * 0.33, y + 40, left + (right - left) * 0.66, y - 40, right, y + 12);
-      ctx.stroke();
-    }
-    ctx.restore();
+
   }
 
   private drawRoads(ctx: CanvasRenderingContext2D) {
@@ -205,11 +192,9 @@ export class Renderer {
       }
       const last = road[road.length - 1];
       ctx.lineTo(last.x, last.y);
-      ctx.strokeStyle = "rgba(72,58,52,0.75)";
-      ctx.lineWidth = 96;
-      ctx.stroke();
-      ctx.strokeStyle = "rgba(126,104,86,0.30)";
-      ctx.lineWidth = 62;
+      // one tone, one road — the earth is already busy enough
+      ctx.strokeStyle = "rgba(56,45,42,0.55)";
+      ctx.lineWidth = 88;
       ctx.stroke();
     }
   }
@@ -595,23 +580,12 @@ export class Renderer {
       ctx.arc(0, -150, 30, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
       ctx.stroke();
     }
-    if (!done) {
-      // ward marker: a slow oxblood pulse so the valley is legible at a distance
-      const pulse = 0.35 + 0.25 * Math.sin(t * 2 + x * 0.01);
-      ctx.globalAlpha = pulse;
-      ctx.strokeStyle = OXBLOOD;
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.arc(0, 0, 88, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    } else {
-      ctx.strokeStyle = "rgba(127,176,105,0.5)";
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.arc(0, 0, 88, 0, Math.PI * 2);
-      ctx.stroke();
-    }
+    // a plain stake in the ground marks the work; nothing blinks at you
+    ctx.strokeStyle = done ? "rgba(127,176,105,0.45)" : "rgba(123,18,32,0.6)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, 78, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.restore();
   }
 

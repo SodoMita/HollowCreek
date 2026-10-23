@@ -37,6 +37,8 @@ export const STAMINA_UNLOCK_COST = 0.1;
 // "hollow" keeps the hidden-role deduction for a later pass.
 // ---------------------------------------------------------------------------
 
+import type { PlayKind } from "./wardplay";
+
 export type GameMode = "nightwatch" | "hollow";
 /** The valley's moods. Each one changes how the night plays for a while. */
 export type WeatherKind = "fog" | "cold" | "gutter" | "crows";
@@ -278,9 +280,26 @@ export interface FeedItem {
   at: number;
 }
 
+/** The ward board the viewer is currently playing. */
+export interface WardView {
+  stationId: string;
+  name: string;
+  kind: PlayKind;
+  seed: number;
+  need: number;
+  hits: number;
+  taps: number[];
+  startedAt: number;
+  speed: number;
+  half: number;
+  spin: 1 | -1;
+  seq: number[];
+}
+
 export interface Snapshot {
   code: string;
   mode: GameMode;
+  ward: WardView | null;
   phase: Phase;
   round: number;
   now: number;
@@ -334,8 +353,12 @@ export interface InputBody {
   dirX?: number; // -1 | 0 | 1
   dirY?: number; // -1 | 0 | 1
   interactHeld?: boolean;
-  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "restart" | "leave" | "creature";
+  action?:
+    | "interact" | "ability" | "blackout" | "vote" | "start" | "restart" | "leave" | "creature"
+    | "ward" | "strike" | "tap" | "wardcancel";
   chat?: string;
   vote?: string; // playerId | "skip" | "free:<id>"
   creature?: string;
+  /** ward play: which glyph was tapped */
+  v?: number;
 }
