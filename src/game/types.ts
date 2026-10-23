@@ -31,6 +31,20 @@ export const STAMINA_BLACKOUT_COST = 0.3;
 export const STAMINA_BELL_COST = 0.15;
 export const STAMINA_UNLOCK_COST = 0.1;
 
+// ---------------------------------------------------------------------------
+// Modes. "nightwatch" is the one being polished now: no hidden roles at all —
+// every soul in the valley is a townsfolk, and the only enemy is the night.
+// "hollow" keeps the hidden-role deduction for a later pass.
+// ---------------------------------------------------------------------------
+
+export type GameMode = "nightwatch" | "hollow";
+export const NIGHT_MS = 360_000; // six minutes from dusk to dawn
+export const STALKER_SPEED = 112; // the thing in the fog
+export const STALKER_RANGE = 62;
+export const STALKER_REST_MS = 34_000;
+export const STALKER_WAKE_MS = 40_000; // grace before it first stirs
+export const REVIVE_MS = 2600; // standing over a fallen friend
+
 export interface Vec {
   x: number;
   y: number;
@@ -220,6 +234,7 @@ export interface PublicPlayer {
   caged: boolean;
   hasKey: boolean;
   voted: boolean;
+  downed: boolean;
   bubble: { text: string; until: number } | null;
   isHost: boolean;
 }
@@ -240,6 +255,8 @@ export interface SelfInfo {
   teammates: string[]; // other hollow ids (only for hollow)
   myVote: string | null;
   creature: string;
+  downed: boolean;
+  revive: number; // 0..1 — how far a friend has got in picking you back up
 }
 
 export interface TaskView {
@@ -259,9 +276,14 @@ export interface FeedItem {
 
 export interface Snapshot {
   code: string;
+  mode: GameMode;
   phase: Phase;
   round: number;
   now: number;
+  /** ms until dawn — nightwatch only */
+  dawnAt: number;
+  /** the thing in the fog, when it is abroad */
+  stalker: { x: number; y: number } | null;
   self: SelfInfo;
   players: PublicPlayer[];
   bodies: { x: number; y: number; color: string; name: string }[];

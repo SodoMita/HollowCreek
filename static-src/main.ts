@@ -14,6 +14,7 @@ import type { RoomListing, Snapshot, Vec } from "../src/game/types";
 // that owns the town and then stay pinned there. Use one server in production.
 const SERVERS = [
   // the permanent backend for this build (this sandbox)
+  "https://3000-i7o0mkz1zbhtoybt1665u.e2b.app",
   "https://3000-i2c5whq198cydt5gvd416.e2b.app",
   "https://3000-iv1ax3jjgiz1x3ha95746.e2b.app",
   "https://3000-ihrqg7gfricyapy48j4hv.e2b.app",

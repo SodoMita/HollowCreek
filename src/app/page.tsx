@@ -174,7 +174,7 @@ export default function Home() {
     setTimeout(() => setFlash(false), 520);
   };
 
-  const create = async () => {
+  const create = async (mode: "nightwatch" | "hollow" = "nightwatch") => {
     setBusy(true);
     setError(null);
     saveName();
@@ -182,7 +182,7 @@ export default function Home() {
       const res = await fetch("/api/game/create", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ playerId: getPid(), name: name.trim() || "Stranger", creature }),
+        body: JSON.stringify({ playerId: getPid(), name: name.trim() || "Stranger", creature, mode }),
       });
       const data = await res.json();
       if (data.code) {
@@ -225,7 +225,7 @@ export default function Home() {
       {/* poster paper */}
       <div
         className="pointer-events-none fixed inset-0 opacity-[0.16] mix-blend-soft-light"
-        style={{ backgroundImage: "url(images/parchment.jpg)", backgroundSize: "620px" }}
+        style={{ backgroundImage: "url(images/parchment.webp)", backgroundSize: "620px" }}
       />
 
       {/* --- spine rail: the credit block on the poster's spine --- */}
@@ -249,7 +249,7 @@ export default function Home() {
       <section className="relative min-h-[86dvh] w-full overflow-hidden border-b border-[#2a2028] lg:pl-[62px]">
         <div
           className="absolute inset-0 bg-cover bg-center"
-          style={{ backgroundImage: "url(images/poster.jpg)", filter: "saturate(0.72) contrast(1.12)" }}
+          style={{ backgroundImage: "url(images/poster.webp)", filter: "saturate(0.72) contrast(1.12)" }}
         />
         <div className="absolute inset-0 bg-gradient-to-b from-[#0B0A0C]/85 via-[#0B0A0C]/45 to-[#0B0A0C]" />
         <div className="absolute inset-0 bg-[radial-gradient(120%_90%_at_70%_15%,rgba(159,182,198,0.16),transparent_60%)]" />
@@ -270,20 +270,19 @@ export default function Home() {
               underneath — and it is hungry.&rdquo;
             </p>
             <p className="max-w-sm text-[15px] leading-relaxed text-[#9C9287]">
-              A multiplayer horror of townsfolk and things. Walk the whole valley — farm, chapel
-              rise, sawmill, creek and cemetery — finish the wards, find the iron key, ring the
-              bell and cage the Hollow before it wears your face. Authoritative server,20&nbsp;Hz
-              tick, generative score.
+              A horror for many hands. Walk the whole valley — farm, chapel rise, sawmill, creek
+              and cemetery — mend the wards before the fog settles, keep your friends on their
+              feet, and get everyone home when the light comes back.
             </p>
           </div>
           <div className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-3 font-body text-[10px] uppercase tracking-[0.32em] text-[#6f6459]">
-            <span>Server-authoritative</span>
+            <span className="text-[#C2404C]">Tonight&rsquo;s rule — Nightwatch</span>
             <span className="h-px w-10 bg-[#2a2028]" />
-            <span>6 400 × 4 200 world</span>
+            <span>no hidden faces</span>
             <span className="h-px w-10 bg-[#2a2028]" />
-            <span>WebAudio score · no audio files</span>
+            <span>six minutes to dawn</span>
             <span className="h-px w-10 bg-[#2a2028]" />
-            <span>Chronicle of every deed</span>
+            <span>keep everyone on their feet</span>
           </div>
         </div>
       </section>
@@ -297,12 +296,12 @@ export default function Home() {
                 Specimen plate I — creatures of the night
               </p>
               <h2 className="mt-3 font-display text-[clamp(2.2rem,5vw,4.2rem)] leading-none">
-                Take the one nobody else took.
+                The creatures of the night.
               </h2>
             </div>
             <p className="max-w-sm font-body italic text-[15px] leading-relaxed text-[#9C9287]">
-              Other hands already wear the wolf, the wraith and the banshee. The strigoi is
-              unclaimed — a corpse that keeps its name, its appetite and its keys.
+              Other hands already wear the wolf, the wraith and the banshee. The strigoi nobody
+              took — a corpse that keeps its name, its appetite and its keys to the house it left.
             </p>
           </div>
         </div>
@@ -323,7 +322,7 @@ export default function Home() {
         {/* the plate */}
         <div className="mt-12 grid gap-10 px-6 sm:px-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:px-16">
           <figure className="relative overflow-hidden border border-[#2a2028]">
-            <img src="images/strigoi.jpg" alt="Specimen plate: the Strigoi" className="h-full w-full object-cover" />
+            <img src="images/strigoi.webp" alt="Specimen plate: the Strigoi" className="h-full w-full object-cover" />
             <div className="absolute inset-0 bg-gradient-to-t from-[#0B0A0C] via-transparent to-transparent" />
             <figcaption className="absolute bottom-0 left-0 right-0 flex items-end justify-between gap-4 p-5">
               <div>
@@ -366,11 +365,19 @@ export default function Home() {
               />
               <div className="mt-6 flex flex-wrap gap-3">
                 <button
-                  onClick={() => { rise(); void create(); }}
+                  onClick={() => { rise(); void create("nightwatch"); }}
                   disabled={busy}
                   className="group relative flex-1 overflow-hidden border border-[#7B1220] bg-[#7B1220] px-8 py-4 font-display text-2xl tracking-wide text-[#E8DFCF] transition-colors hover:bg-[#96182a] disabled:opacity-50"
                 >
                   RISE
+                </button>
+                <button
+                  onClick={() => { rise(); void create("hollow"); }}
+                  disabled={busy}
+                  title="A later mode — hidden faces among the townsfolk"
+                  className="w-full border border-[#2a2028] px-6 py-2.5 font-body text-[10px] uppercase tracking-[0.32em] text-[#6f6459] transition-colors hover:border-[#7B1220] hover:text-[#E8DFCF] disabled:opacity-50"
+                >
+                  or open a Hollow night (later mode)
                 </button>
                 <div className="flex flex-1 items-stretch border border-[#3a2733]">
                   <input
@@ -449,9 +456,9 @@ export default function Home() {
           <div>
             <p className="font-body text-[10px] uppercase tracking-[0.34em] text-[#6f6459]">Colophon</p>
             <p className="mt-3 max-w-xs text-[13px] leading-relaxed text-[#8b8075]">
-              Set in Cinzel and Fraunces over an ink-black field with a single spot of oxblood.
-              Score synthesised in the browser: wind, bowed drone, music box, bell — currently{" "}
-              {settings.audio.muted ? "muted" : "playing"}.
+              Told in one breath: a valley, a long night, and a town that keeps count of
+              everything. The bell is the only law, and dawn is the only verdict. Music is
+              currently {settings.audio.muted ? "muted" : "playing"}.
             </p>
           </div>
           <div className="flex flex-col gap-2">
@@ -466,8 +473,8 @@ export default function Home() {
           <div className="flex flex-col gap-2">
             <p className="font-body text-[10px] uppercase tracking-[0.34em] text-[#6f6459]">Play</p>
             <p className="text-[13px] leading-relaxed text-[#8b8075]">
-              WASD or arrows to walk · hold E to work a ward · Q to strike or ring the bell ·
-              F to snuff the lanterns · Enter to speak.
+              Walk the valley, mend what the autumn broke, and stand over anyone the fog takes
+              down. Ring the bell when the dark presses in — it buys the town a little more night.
             </p>
           </div>
         </div>

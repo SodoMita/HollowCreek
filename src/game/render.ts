@@ -73,7 +73,7 @@ export class Renderer {
       const img = new Image();
       img.onload = () => { this.groundReady = true; };
       img.onerror = () => { this.groundReady = false; };
-      img.src = "images/ground.jpg";
+      img.src = "images/ground.webp";
       this.ground = img;
     }
   }
@@ -654,6 +654,35 @@ export class Renderer {
       ctx.stroke();
       ctx.restore();
     }
+    // the thing in the fog
+    if (snap.stalker) {
+      ctx.save();
+      ctx.translate(snap.stalker.x, snap.stalker.y);
+      const halo = ctx.createRadialGradient(0, 0, 6, 0, 0, 210);
+      halo.addColorStop(0, "rgba(18,10,26,0.94)");
+      halo.addColorStop(1, "rgba(18,10,26,0)");
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(0, 0, 210, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#0d0a12";
+      ctx.beginPath();
+      ctx.moveTo(-36, 66);
+      ctx.quadraticCurveTo(-48, -28, -19, -62);
+      ctx.lineTo(19, -62);
+      ctx.quadraticCurveTo(48, -28, 36, 66);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = "rgba(123,18,32,0.55)";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.fillStyle = "#C2404C";
+      ctx.beginPath();
+      ctx.ellipse(-9, -36, 5, 7, 0, 0, Math.PI * 2);
+      ctx.ellipse(9, -36, 5, 7, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
     // bodies
     for (const b of snap.bodies) {
       ctx.save();
@@ -698,6 +727,13 @@ export class Renderer {
     const ghost = !p.alive;
     const creature = CREATURES.find((c) => c.id === p.creature) ?? CREATURES[0];
     const bob = this.settings.graphics.reducedMotion || !p.moving ? 0 : Math.sin(t * 9 + pos.x * 0.02) * 5;
+    if (p.downed) {
+      ctx.save();
+      ctx.translate(pos.x, pos.y);
+      this.drawFallen(ctx, snap, p, t);
+      ctx.restore();
+      return;
+    }
     ctx.save();
     ctx.translate(pos.x, pos.y + bob);
     if (ghost) ctx.globalAlpha = 0.42;
@@ -815,6 +851,55 @@ export class Renderer {
       ctx.fillText(text, 0, -164);
     }
     ctx.restore();
+  }
+
+  /** A townsfolk laid out by the fog, waiting for a friend. */
+  private drawFallen(
+    ctx: CanvasRenderingContext2D,
+    snap: Snapshot,
+    p: Snapshot["players"][number],
+    t: number
+  ) {
+    ctx.fillStyle = "rgba(6,5,10,0.6)";
+    ctx.beginPath();
+    ctx.ellipse(6, 30, 76, 26, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.save();
+    ctx.rotate(0.18);
+    const grad = ctx.createLinearGradient(0, -30, 0, 30);
+    grad.addColorStop(0, p.color);
+    grad.addColorStop(1, "#191218");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 62, 26, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#d9cfc0";
+    ctx.beginPath();
+    ctx.arc(52, -12, 19, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    // raise ring
+    const revive = p.id === snap.self.id ? snap.self.revive : 0;
+    ctx.strokeStyle = "rgba(123,18,32,0.85)";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(0, 0, 84, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.max(0.04, revive));
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(159,182,198,0.28)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 84, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.font = "600 15px 'Space Grotesk', system-ui, sans-serif";
+    const label = (p.name + " · DOWN").toUpperCase();
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = "rgba(11,10,12,0.78)";
+    ctx.fillRect(-tw / 2 - 12, -134, tw + 24, 26);
+    ctx.fillStyle = "#C2404C";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, 0, -121);
+    void t;
   }
 
   // ------------------------------------------------------------ atmospherics

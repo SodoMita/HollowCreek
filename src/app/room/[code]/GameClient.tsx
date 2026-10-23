@@ -562,6 +562,20 @@ export default function GameClient({ code }: { code: string }) {
           )}
 
           {/* ---- role reveal ---- */}
+          {s.mode === "nightwatch" && s.phase !== "ended" && (
+            <div className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 border border-[#2a2028] bg-[#0B0A0C]/80 px-5 py-1.5 text-center">
+              <p className="hc-tracked text-[9px] text-[#6f6459]">
+                {s.phase === "playing" ? "nightwatch · dawn in" : "nightwatch · the town gathers"}
+              </p>
+              {s.phase === "playing" && (
+                <p className="font-display text-xl leading-none tabular-nums text-[#E8DFCF]">
+                  {String(Math.floor(Math.max(0, s.dawnAt - s.now) / 60000)).padStart(2, "0")}:
+                  {String(Math.floor((Math.max(0, s.dawnAt - s.now) / 1000) % 60)).padStart(2, "0")}
+                </p>
+              )}
+            </div>
+          )}
+
           {roleBanner && (
             <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/60">
               <div className="text-center">
