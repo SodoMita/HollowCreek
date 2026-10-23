@@ -1,7 +1,7 @@
 // Persistent, client-only preferences. These never change authoritative gameplay.
 export type GraphicsQuality = "low" | "medium" | "high";
 export type InteractMode = "hold" | "toggle";
-export type BindableAction = "left" | "right" | "interact" | "ability" | "blackout" | "chat";
+export type BindableAction = "left" | "right" | "up" | "down" | "interact" | "ability" | "blackout" | "chat";
 
 export interface GameSettings {
   audio: {
@@ -73,6 +73,8 @@ const DEFAULTS: GameSettings = {
   controls: {
     left: "KeyA",
     right: "KeyD",
+    up: "KeyW",
+    down: "KeyS",
     interact: "KeyE",
     ability: "KeyQ",
     blackout: "KeyF",
@@ -82,7 +84,7 @@ const DEFAULTS: GameSettings = {
 };
 
 const STORAGE_KEY = "hc_settings_v1";
-const ACTIONS: BindableAction[] = ["left", "right", "interact", "ability", "blackout", "chat"];
+const ACTIONS: BindableAction[] = ["left", "right", "up", "down", "interact", "ability", "blackout", "chat"];
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const num = (v: unknown, fallback: number, lo = 0, hi = 1) =>
@@ -207,6 +209,8 @@ export function matchesControl(controls: GameSettings["controls"], action: Binda
   if (controls[action] === code) return true;
   const fallback = (action === "left" && code === "ArrowLeft") ||
     (action === "right" && code === "ArrowRight") ||
+    (action === "up" && code === "ArrowUp") ||
+    (action === "down" && code === "ArrowDown") ||
     (action === "ability" && code === "Space");
   if (!fallback) return false;
   return !ACTIONS.some((other) => other !== action && controls[other] === code);

@@ -1,9 +1,28 @@
-@import url("https://fonts.googleapis.com/css2?family=Pirata+One&family=Alegreya:ital,wght@0,400;0,600;0,700;1,400&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,400;1,9..144,600&family=Space+Grotesk:wght@400;500;700&display=swap");
 @import "tailwindcss";
 
 @theme {
-  --font-display: "Pirata One", serif;
-  --font-body: "Alegreya", Georgia, serif;
+  --font-display: "Cinzel", Georgia, serif;
+  --font-body: "Fraunces", Georgia, serif;
+  --font-hud: "Space Grotesk", system-ui, sans-serif;
+
+  --color-ink: #0b0a0c;
+  --color-night: #14101a;
+  --color-bone: #e8dfcf;
+  --color-oxblood: #7b1220;
+  --color-oxblood-lit: #c2404c;
+  --color-moon: #9fb6c6;
+}
+
+/* letterpress poster detail: tracked small caps between hairline rules */
+.hc-tracked {
+  font-family: var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: 0.28em;
+}
+.hc-rule {
+  border-top: 1px solid color-mix(in srgb, #e8dfcf 22%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #e8dfcf 22%, transparent);
 }
 
 @custom-variant short (@media (max-height: 520px));

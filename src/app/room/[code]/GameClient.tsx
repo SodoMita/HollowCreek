@@ -7,8 +7,8 @@ import { Renderer } from "@/game/render";
 import { AudioDirector } from "@/game/audio";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
-import { BELL_X } from "@/game/types";
-import type { Snapshot } from "@/game/types";
+import { BELL_X, CREATURES } from "@/game/types";
+import type { Snapshot, Vec } from "@/game/types";
 
 function getPid(): string {
   let pid = localStorage.getItem("hc_pid");
@@ -31,7 +31,7 @@ export default function GameClient({ code }: { code: string }) {
 
   const snapRef = useRef<Snapshot | null>(null);
   const chatOpenRef = useRef(false);
-  const displayX = useRef(new Map<string, number>());
+  const displayX = useRef(new Map<string, Vec>());
   const keys = useRef(new Set<string>());
   const lastDir = useRef(0);
   const audioRef = useRef<AudioDirector | null>(null);
@@ -128,7 +128,12 @@ export default function GameClient({ code }: { code: string }) {
       const res = await fetch("/api/game/join", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code, playerId: getPid(), name }),
+        body: JSON.stringify({
+          code,
+          playerId: getPid(),
+          name,
+          creature: localStorage.getItem("hc_creature") || undefined,
+        }),
       });
       const data = await res.json();
       if (!alive) return;
@@ -171,10 +176,16 @@ export default function GameClient({ code }: { code: string }) {
   }, [code, send]);
 
   // ---- input: clients only ever send intent ----
+  const lastDirY = useRef(0);
   const computeDir = useCallback(() => {
     const k = keys.current;
-    const d = (k.has("right") ? 1 : 0) - (k.has("left") ? 1 : 0);
-    if (d !== lastDir.current) { lastDir.current = d; void send({ dir: d }); }
+    const dx = (k.has("right") ? 1 : 0) - (k.has("left") ? 1 : 0);
+    const dy = (k.has("down") ? 1 : 0) - (k.has("up") ? 1 : 0);
+    if (dx !== lastDir.current || dy !== lastDirY.current) {
+      lastDir.current = dx;
+      lastDirY.current = dy;
+      void send({ dirX: dx, dirY: dy });
+    }
   }, [send]);
 
   useEffect(() => {
@@ -192,6 +203,8 @@ export default function GameClient({ code }: { code: string }) {
       const bound = (action: BindableAction) => matchesControl(controls, action, e.code);
       if (bound("left")) { keys.current.add("left"); computeDir(); e.preventDefault(); }
       else if (bound("right")) { keys.current.add("right"); computeDir(); e.preventDefault(); }
+      else if (bound("up")) { keys.current.add("up"); computeDir(); e.preventDefault(); }
+      else if (bound("down")) { keys.current.add("down"); computeDir(); e.preventDefault(); }
       else if (bound("interact") && !e.repeat) { interactDown(); e.preventDefault(); }
       else if (bound("ability") && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
       else if (bound("blackout") && !e.repeat) { void send({ action: "blackout" }); e.preventDefault(); }
@@ -202,6 +215,10 @@ export default function GameClient({ code }: { code: string }) {
       const controls = getSettingsStore().value.controls;
       if (matchesControl(controls, "left", e.code)) { keys.current.delete("left"); computeDir(); }
       else if (matchesControl(controls, "right", e.code)) { keys.current.delete("right"); computeDir(); }
+      else if (matchesControl(controls, "up", e.code)) { keys.current.delete("up"); computeDir(); }
+      else if (matchesControl(controls, "down", e.code)) { keys.current.delete("down"); computeDir(); }
+      else if (matchesControl(controls, "up", e.code)) { keys.current.delete("up"); computeDir(); }
+      else if (matchesControl(controls, "down", e.code)) { keys.current.delete("down"); computeDir(); }
       else if (matchesControl(controls, "interact", e.code)) interactUp();
     };
     window.addEventListener("keydown", down);
@@ -250,8 +267,12 @@ export default function GameClient({ code }: { code: string }) {
       if (!s) return;
       for (const p of s.players) {
         const cur = displayX.current.get(p.id);
-        if (cur === undefined || Math.abs(cur - p.x) > 300) displayX.current.set(p.id, p.x);
-        else displayX.current.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 10));
+        if (!cur || Math.hypot(cur.x - p.x, cur.y - p.y) > 320) displayX.current.set(p.id, { x: p.x, y: p.y });
+        else
+          displayX.current.set(p.id, {
+            x: cur.x + (p.x - cur.x) * Math.min(1, dt * 10),
+            y: cur.y + (p.y - cur.y) * Math.min(1, dt * 10),
+          });
       }
       renderer.render(ctx, vw(), vh(), s, displayX.current, nowMs / 1000, dt);
     };
@@ -264,7 +285,7 @@ export default function GameClient({ code }: { code: string }) {
     };
   }, [getSettingsStore]);
 
-  const holdMove = (dir: "left" | "right", on: boolean) => {
+  const holdMove = (dir: "left" | "right" | "up" | "down", on: boolean) => {
     if (on) keys.current.add(dir); else keys.current.delete(dir);
     computeDir();
   };
@@ -544,17 +565,28 @@ export default function GameClient({ code }: { code: string }) {
           {roleBanner && (
             <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/60">
               <div className="text-center">
-                {roleBanner === "hollow" ? (
-                  <>
-                    <p className="font-display text-5xl sm:text-7xl text-[#ff4a3a] drop-shadow-[0_0_30px_rgba(255,60,40,0.6)]">You are Hollow</p>
-                    <p className="mt-3 text-lg text-[#c9a0a0]">Wear their faces. Kill when none watch. {keyLabel(settings.controls.ability)} to strike, {keyLabel(settings.controls.blackout)} to snuff the lights.</p>
-                  </>
-                ) : (
-                  <>
-                    <p className="font-display text-5xl sm:text-7xl text-[#a8c98a]">Townfolk</p>
-                    <p className="mt-3 text-lg text-[#b8c9a4]">Finish your chores. Find the key. Trust no one.</p>
-                  </>
-                )}
+                {(() => {
+                  const spec = CREATURES.find((c) => c.id === s.self.creature) ?? CREATURES[0];
+                  return (
+                    <>
+                      <p className="font-body text-[11px] uppercase tracking-[0.42em] text-[#c9762f]">
+                        You wear the face of the {spec.name}
+                      </p>
+                      {roleBanner === "hollow" ? (
+                        <>
+                          <p className="mt-2 font-display text-5xl sm:text-7xl text-[#ff4a3a] drop-shadow-[0_0_30px_rgba(255,60,40,0.6)]">You are Hollow</p>
+                          <p className="mt-3 text-lg text-[#c9a0a0]">Wear their faces. Kill when none watch. {keyLabel(settings.controls.ability)} to strike, {keyLabel(settings.controls.blackout)} to snuff the lights.</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="mt-2 font-display text-5xl sm:text-7xl text-[#a8c98a]">Townfolk</p>
+                          <p className="mt-3 text-lg text-[#b8c9a4]">Finish your chores. Find the key. Trust no one.</p>
+                        </>
+                      )}
+                      <p className="mt-2 font-body italic text-sm tracking-wide text-[#8b8075]">{spec.latin}</p>
+                    </>
+                  );
+                })()}
               </div>
             </div>
           )}

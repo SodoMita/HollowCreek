@@ -1,31 +1,80 @@
 // Canvas renderer for Hollow Creek — pure drawing, no game logic.
+// A painterly moonlit valley: tiled earth, curved roads, a black creek, real
+// buildings, fog of war, lantern light and a hand-set HUD minimap.
 import {
-  BELL_X, CAGE_XS, MEETING_FROM, MEETING_TO, STATIONS, WORLD_W,
+  BELL, CAGES, CREATURES, OBSTACLES, SQUARE, STATIONS, WORLD_H, WORLD_W,
 } from "./types";
-import type { Snapshot, Station } from "./types";
+import type { Snapshot, Station, Vec } from "./types";
 import { createDefaultSettings, type GameSettings } from "./settings";
 
 interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: string; s: number }
+interface Mist { x: number; y: number; r: number; a: number; vx: number }
 
 const LEAF_COLORS = ["#b4552a", "#c9762f", "#8f3b1f", "#d99a3d", "#7a4a21"];
+const INK = "#0B0A0C";
+const NIGHT = "#14101A";
+const BONE = "#E8DFCF";
+const OXBLOOD = "#7B1220";
+const SILVER = "#9FB6C6";
+
+const hash = (n: number) => {
+  const s = Math.sin(n * 127.1) * 43758.5453;
+  return s - Math.floor(s);
+};
+
+/** Roads of the valley, as world polylines. */
+const ROADS: Vec[][] = [
+  [{ x: 240, y: 2000 }, { x: 1400, y: 2180 }, { x: 2400, y: 2280 }, { x: 3500, y: 2380 }, { x: 4900, y: 2200 }, { x: 6200, y: 2000 }],
+  [{ x: 3500, y: 2380 }, { x: 3300, y: 1500 }, { x: 3560, y: 700 }, { x: 3720, y: 180 }],
+  [{ x: 2400, y: 2280 }, { x: 1600, y: 3100 }, { x: 900, y: 3700 }],
+  [{ x: 4900, y: 2200 }, { x: 5300, y: 3000 }, { x: 5760, y: 3500 }],
+  [{ x: 1400, y: 2180 }, { x: 1100, y: 1300 }, { x: 760, y: 800 }],
+  [{ x: 3500, y: 2380 }, { x: 3800, y: 3200 }, { x: 3960, y: 3700 }],
+];
+
+/** The creek, as a thick world polyline. */
+const CREEK: Vec[] = [
+  { x: -100, y: 3200 }, { x: 900, y: 3320 }, { x: 1800, y: 3560 }, { x: 2600, y: 3420 },
+  { x: 3400, y: 3620 }, { x: 4300, y: 3500 }, { x: 5200, y: 3680 }, { x: 6500, y: 3520 },
+];
 
 export class Renderer {
   private leaves: Leaf[] = [];
+  private mist: Mist[] = [];
   private settings: GameSettings = createDefaultSettings();
-  cameraX = 0;
-  private visionR = 420;
+  private ground: HTMLImageElement | null = null;
+  private groundReady = false;
+  cameraX = WORLD_W / 2;
+  cameraY = WORLD_H / 2;
+  private zoom = 1;
 
   constructor() {
-    for (let i = 0; i < 110; i++) {
+    for (let i = 0; i < 130; i++) {
       this.leaves.push({
         x: Math.random() * WORLD_W,
-        y: Math.random() * 600,
-        vx: -12 - Math.random() * 25,
-        vy: 18 + Math.random() * 30,
+        y: Math.random() * WORLD_H,
+        vx: -16 - Math.random() * 30,
+        vy: 22 + Math.random() * 36,
         r: Math.random() * Math.PI * 2,
         c: LEAF_COLORS[i % LEAF_COLORS.length],
-        s: 3 + Math.random() * 4,
+        s: 3 + Math.random() * 5,
       });
+    }
+    for (let i = 0; i < 26; i++) {
+      this.mist.push({
+        x: Math.random() * WORLD_W,
+        y: Math.random() * WORLD_H,
+        r: 260 + Math.random() * 520,
+        a: 0.05 + Math.random() * 0.08,
+        vx: 4 + Math.random() * 10,
+      });
+    }
+    if (typeof Image !== "undefined") {
+      const img = new Image();
+      img.onload = () => { this.groundReady = true; };
+      img.onerror = () => { this.groundReady = false; };
+      img.src = "images/ground.jpg";
+      this.ground = img;
     }
   }
 
@@ -37,692 +86,902 @@ export class Renderer {
     return this.settings.graphics.quality === "high" ? high : this.settings.graphics.quality === "medium" ? medium : low;
   }
 
-  private glow(ctx: CanvasRenderingContext2D, blur: number) {
-    ctx.shadowBlur = this.settings.graphics.glow ? blur : 0;
-  }
-
   render(
     ctx: CanvasRenderingContext2D,
     w: number,
     h: number,
     snap: Snapshot,
-    displayX: Map<string, number>,
+    display: Map<string, Vec>,
     t: number, // seconds
     dt: number
   ) {
     const graphics = this.settings.graphics;
-    if (graphics.reducedMotion) t = 0;
+    if (graphics.reducedMotion) dt = 0;
     const me = snap.players.find((p) => p.id === snap.self.id);
-    const meX = me ? displayX.get(me.id) ?? me.x : WORLD_W / 2;
-    const targetCam = Math.max(0, Math.min(WORLD_W - w, meX - w / 2));
-    if (graphics.cameraSmoothing) this.cameraX += (targetCam - this.cameraX) * Math.min(1, dt * 6);
-    else this.cameraX = targetCam;
-    if (WORLD_W < w) this.cameraX = (WORLD_W - w) / 2;
-    const cam = this.cameraX;
-    const ground = h * 0.78;
-    const now = snap.now;
+    const selfPos: Vec = me ? display.get(me.id) ?? { x: me.x, y: me.y } : { x: WORLD_W / 2, y: WORLD_H / 2 };
 
-    // --- layered dusk sky ---
-    const sky = ctx.createLinearGradient(0, 0, 0, ground);
-    sky.addColorStop(0, "#090b1b");
-    sky.addColorStop(0.38, "#211329");
-    sky.addColorStop(0.72, "#512534");
-    sky.addColorStop(0.9, "#9a4c2c");
-    sky.addColorStop(1, "#c0743c");
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, w, ground);
-
-    // Deterministic stars: no shimmering random layout between frames.
-    const starCount = this.qualityCount(95, 48, 18);
-    ctx.save();
-    for (let i = 0; i < starCount; i++) {
-      const sx = ((i * 197.3 + 41) % (w + 160)) - 80 - (cam * 0.008) % 40;
-      const sy = 18 + ((i * 83.7) % Math.max(60, ground * 0.52));
-      const radius = 0.45 + (i % 7 === 0 ? 0.85 : 0.25);
-      ctx.globalAlpha = 0.25 + (i % 5) * 0.1;
-      ctx.fillStyle = i % 9 === 0 ? "#ffd9a0" : "#d9d8ed";
-      ctx.beginPath(); ctx.arc(sx, sy, radius, 0, Math.PI * 2); ctx.fill();
+    const zoom = Math.max(0.42, Math.min(1, Math.min(w / 1500, h / 900)));
+    this.zoom = zoom;
+    const targetCam = { x: selfPos.x, y: selfPos.y };
+    if (graphics.cameraSmoothing) {
+      this.cameraX += (targetCam.x - this.cameraX) * Math.min(1, dt * 5);
+      this.cameraY += (targetCam.y - this.cameraY) * Math.min(1, dt * 5);
+    } else {
+      this.cameraX = targetCam.x;
+      this.cameraY = targetCam.y;
     }
+    // gate weave — a hand-cranked projector never sits perfectly still
+    const weave = graphics.reducedMotion ? 0 : Math.sin(t * 0.7) * 2.2 + Math.sin(t * 1.9) * 1.1;
+
+    ctx.save();
+    ctx.fillStyle = NIGHT;
+    ctx.fillRect(0, 0, w, h);
+    ctx.translate(w / 2 + weave, h / 2 - weave * 0.5);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-this.cameraX, -this.cameraY);
+
+    const left = this.cameraX - w / 2 / zoom - 200;
+    const right = this.cameraX + w / 2 / zoom + 200;
+    const top = this.cameraY - h / 2 / zoom - 200;
+    const bottom = this.cameraY + h / 2 / zoom + 200;
+
+    this.drawGround(ctx, left, top, right, bottom, t);
+    this.drawWater(ctx, t);
+    this.drawRoads(ctx);
+    this.drawSquare(ctx, t);
+    this.drawStructures(ctx, left, top, right, bottom);
+    this.drawTrees(ctx, left, top, right, bottom);
+    this.drawStations(ctx, snap, t);
+    this.drawProps(ctx, snap, t);
+
+    // --- players ---
+    for (const p of snap.players) {
+      if (p.x < -1000) continue;
+      const pos = display.get(p.id) ?? { x: p.x, y: p.y };
+      this.drawPlayer(ctx, snap, p, pos, t);
+    }
+
+    // --- atmospherics ---
+    this.drawMist(ctx, left, top, right, bottom);
+    this.drawLeaves(ctx, dt, top, bottom, left, right);
+    this.drawLighting(ctx, w, h, snap, selfPos, zoom, t);
     ctx.restore();
 
-    // Moon with a broad atmospheric halo and crisp crater detail.
-    const mx = w * 0.78 - cam * 0.03;
-    const my = h * 0.18;
-    ctx.save();
-    if (graphics.glow) {
-      const halo = ctx.createRadialGradient(mx, my, 32, mx, my, 145);
-      halo.addColorStop(0, "rgba(244,222,181,.25)");
-      halo.addColorStop(0.45, "rgba(222,191,170,.08)");
-      halo.addColorStop(1, "rgba(222,191,170,0)");
-      ctx.fillStyle = halo; ctx.fillRect(mx - 150, my - 150, 300, 300);
-    }
-    ctx.shadowColor = "rgba(240,225,190,0.8)";
-    this.glow(ctx, 34);
-    const moon = ctx.createRadialGradient(mx - 13, my - 15, 4, mx, my, 45);
-    moon.addColorStop(0, "#fff4d8"); moon.addColorStop(0.7, "#e8ddc0"); moon.addColorStop(1, "#bcae98");
-    ctx.fillStyle = moon;
-    ctx.beginPath(); ctx.arc(mx, my, 42, 0, Math.PI * 2); ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = "rgba(128,119,112,0.25)";
-    for (const [dx, dy, r] of [[-12, -8, 7], [10, 10, 5], [14, -14, 4], [-20, 16, 3]] as const) {
-      ctx.beginPath(); ctx.arc(mx + dx, my + dy, r, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.restore();
+    this.drawMinimap(ctx, w, h, snap, selfPos);
+    this.drawGrain(ctx, w, h, t, graphics.reducedMotion);
+  }
 
-    // Long, slow cloud banks crossing the moon and horizon.
-    if (graphics.quality !== "low") {
+  // ---------------------------------------------------------------- ground
+
+  private drawGround(ctx: CanvasRenderingContext2D, left: number, top: number, right: number, bottom: number, t: number) {
+    ctx.fillStyle = "#171219";
+    ctx.fillRect(left, top, right - left, bottom - top);
+    if (this.groundReady && this.ground) {
+      const tile = 700;
       ctx.save();
-      ctx.fillStyle = "rgba(27,19,36,.22)";
-      for (let i = 0; i < 4; i++) {
-        const cx = ((i * 410 + t * (3 + i)) % (w + 500)) - 250;
-        const cy = 80 + i * 58;
+      ctx.globalAlpha = 0.82;
+      const x0 = Math.floor(left / tile) * tile;
+      const y0 = Math.floor(top / tile) * tile;
+      for (let x = x0; x < right; x += tile) {
+        for (let y = y0; y < bottom; y += tile) {
+          ctx.drawImage(this.ground, x, y, tile, tile);
+        }
+      }
+      ctx.restore();
+      // moon-cool wash so the earth reads as night, not brown
+      ctx.save();
+      ctx.globalCompositeOperation = "multiply";
+      ctx.fillStyle = "rgba(40,34,66,0.55)";
+      ctx.fillRect(left, top, right - left, bottom - top);
+      ctx.restore();
+    }
+    // field furrows — faint bands that give the valley scale
+    ctx.save();
+    ctx.globalAlpha = 0.12;
+    ctx.strokeStyle = "#2a2030";
+    ctx.lineWidth = 26;
+    for (let i = 0; i < 22; i++) {
+      const y = (i * 210) % WORLD_H;
+      if (y < top - 220 || y > bottom + 220) continue;
+      ctx.beginPath();
+      ctx.moveTo(left, y);
+      ctx.bezierCurveTo(left + (right - left) * 0.33, y + 40, left + (right - left) * 0.66, y - 40, right, y + 12);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  private drawRoads(ctx: CanvasRenderingContext2D) {
+    for (const road of ROADS) {
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      ctx.moveTo(road[0].x, road[0].y);
+      for (let i = 1; i < road.length - 1; i++) {
+        const xc = (road[i].x + road[i + 1].x) / 2;
+        const yc = (road[i].y + road[i + 1].y) / 2;
+        ctx.quadraticCurveTo(road[i].x, road[i].y, xc, yc);
+      }
+      const last = road[road.length - 1];
+      ctx.lineTo(last.x, last.y);
+      ctx.strokeStyle = "rgba(72,58,52,0.75)";
+      ctx.lineWidth = 96;
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(126,104,86,0.30)";
+      ctx.lineWidth = 62;
+      ctx.stroke();
+    }
+  }
+
+  private drawWater(ctx: CanvasRenderingContext2D, t: number) {
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(CREEK[0].x, CREEK[0].y);
+    for (let i = 1; i < CREEK.length - 1; i++) {
+      const xc = (CREEK[i].x + CREEK[i + 1].x) / 2;
+      const yc = (CREEK[i].y + CREEK[i + 1].y) / 2;
+      ctx.quadraticCurveTo(CREEK[i].x, CREEK[i].y, xc, yc);
+    }
+    ctx.lineTo(CREEK[CREEK.length - 1].x, CREEK[CREEK.length - 1].y);
+    ctx.strokeStyle = "#07070C";
+    ctx.lineWidth = 190;
+    ctx.stroke();
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    ctx.strokeStyle = SILVER;
+    ctx.lineWidth = 3;
+    for (let k = 0; k < 7; k++) {
+      const off = ((t * 26 + k * 90) % 320) - 160;
+      ctx.setLineDash([120, 220]);
+      ctx.lineDashOffset = off * 2;
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.setLineDash([]);
+  }
+
+  private drawSquare(ctx: CanvasRenderingContext2D, t: number) {
+    const { x, y, w, h } = SQUARE;
+    ctx.save();
+    ctx.fillStyle = "rgba(58,48,52,0.85)";
+    ctx.fillRect(x, y, w, h);
+    // cobbles
+    ctx.globalAlpha = 0.35;
+    ctx.strokeStyle = "#6c5b56";
+    ctx.lineWidth = 2;
+    for (let gy = y + 20; gy < y + h; gy += 46) {
+      const row = Math.floor((gy - y) / 46);
+      for (let gx = x + (row % 2 ? 22 : 0); gx < x + w; gx += 46) {
         ctx.beginPath();
-        ctx.ellipse(cx, cy, 150, 17, -0.05, 0, Math.PI * 2);
-        ctx.ellipse(cx + 95, cy + 5, 105, 12, 0.04, 0, Math.PI * 2);
+        ctx.arc(gx, gy, 20, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+    // hairline rule, poster style
+    ctx.strokeStyle = "rgba(232,223,207,0.35)";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x + 6, y + 6, w - 12, h - 12);
+    ctx.restore();
+    // bell
+    this.drawBell(ctx, BELL.x, BELL.y, t);
+  }
+
+  private drawBell(ctx: CanvasRenderingContext2D, x: number, y: number, t: number) {
+    const toll = Math.max(0, 1 - (Date.now() - (this.lastBell ?? 0)) / 2500);
+    const swing = this.settings.graphics.reducedMotion ? 0 : Math.sin(t * 2.4) * 0.06 + toll * Math.sin(t * 9) * 0.35;
+    ctx.save();
+    ctx.translate(x, y);
+    // post
+    ctx.fillStyle = "#2b2028";
+    ctx.fillRect(-70, -12, 14, -0);
+    ctx.fillRect(-70, -190, 14, 190);
+    ctx.fillRect(56, -190, 14, 190);
+    ctx.fillRect(-70, -200, 140, 16);
+    ctx.rotate(swing);
+    const grad = ctx.createLinearGradient(-46, -190, 46, -80);
+    grad.addColorStop(0, "#d8c48a");
+    grad.addColorStop(0.5, "#8c7233");
+    grad.addColorStop(1, "#4a3a16");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(-46, -100);
+    ctx.quadraticCurveTo(-52, -186, 0, -190);
+    ctx.quadraticCurveTo(52, -186, 46, -100);
+    ctx.lineTo(38, -88);
+    ctx.lineTo(-38, -88);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#2a2114";
+    ctx.fillRect(-38, -92, 76, 10);
+    ctx.restore();
+    void toll;
+  }
+  private lastBell = 0;
+
+  // ------------------------------------------------------------ buildings
+
+  private drawStructures(ctx: CanvasRenderingContext2D, left: number, top: number, right: number, bottom: number) {
+    for (const o of OBSTACLES) {
+      if (o.x + o.w < left || o.x > right || o.y + o.h < top || o.y > bottom) continue;
+      const cx = o.x + o.w / 2;
+      const cy = o.y + o.h / 2;
+      // ground shadow
+      ctx.save();
+      ctx.fillStyle = "rgba(6,5,10,0.55)";
+      ctx.beginPath();
+      ctx.ellipse(cx + 26, cy + 34, o.w * 0.62, o.h * 0.52, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      if (o.kind === "pond") {
+        ctx.save();
+        ctx.fillStyle = "#080A12";
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, o.w / 2, o.h / 2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 0.35;
+        ctx.strokeStyle = SILVER;
+        ctx.lineWidth = 3;
+        for (let i = 0; i < 4; i++) {
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, o.w / 2 - 24 - i * 22, o.h / 2 - 18 - i * 16, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+        continue;
+      }
+      if (o.kind === "hedge") {
+        ctx.fillStyle = "#191b16";
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+        ctx.fillStyle = "#242a1c";
+        for (let i = 0; i < o.h / 60; i++) {
+          ctx.beginPath();
+          ctx.arc(o.x + o.w / 2, o.y + i * 60 + 30, 52, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        continue;
+      }
+
+      const wall = o.kind === "chapel" ? "#2a2430" : o.kind === "ruin" ? "#241f26" : "#2c2029";
+      const roof =
+        o.kind === "chapel" ? "#3a2b3c" :
+        o.kind === "mill" ? "#2f2431" :
+        o.kind === "barn" ? "#3b1d20" : "#241a22";
+      ctx.fillStyle = wall;
+      ctx.fillRect(o.x, o.y + o.h * 0.28, o.w, o.h * 0.72);
+      // roof
+      ctx.fillStyle = roof;
+      ctx.beginPath();
+      ctx.moveTo(o.x - 26, o.y + o.h * 0.3);
+      ctx.lineTo(cx, o.y - o.h * 0.16);
+      ctx.lineTo(o.x + o.w + 26, o.y + o.h * 0.3);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = "rgba(232,223,207,0.10)";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      // windows: a few lit, most dead
+      const cols = Math.max(2, Math.floor(o.w / 130));
+      for (let i = 0; i < cols; i++) {
+        const wx = o.x + 34 + i * ((o.w - 68) / cols);
+        const lit = hash(o.x * 0.01 + i * 7.3) > 0.72;
+        ctx.fillStyle = lit ? "rgba(224,165,42,0.55)" : "rgba(10,8,14,0.9)";
+        ctx.fillRect(wx, o.y + o.h * 0.46, 34, 46);
+      }
+      if (o.kind === "chapel") {
+        ctx.fillStyle = "#3f3346";
+        ctx.fillRect(cx - 34, o.y - o.h * 0.62, 68, o.h * 0.5);
+        ctx.fillStyle = OXBLOOD;
+        ctx.fillRect(cx - 6, o.y - o.h * 0.92, 12, o.h * 0.22);
+        ctx.fillRect(cx - 26, o.y - o.h * 0.82, 52, 12);
+      }
+      if (o.kind === "mill") {
+        ctx.save();
+        ctx.translate(o.x + o.w + 26, o.y + o.h * 0.62);
+        ctx.rotate(Date.now() / 4200);
+        ctx.strokeStyle = "#4b3b46";
+        ctx.lineWidth = 12;
+        for (let i = 0; i < 6; i++) {
+          ctx.rotate(Math.PI / 3);
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(150, 0);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+  }
+
+  private drawTrees(ctx: CanvasRenderingContext2D, left: number, top: number, right: number, bottom: number) {
+    const step = 210;
+    const gx0 = Math.floor(left / step);
+    const gx1 = Math.ceil(right / step);
+    const gy0 = Math.floor(top / step);
+    const gy1 = Math.ceil(bottom / step);
+    const count = this.qualityCount(1, 1, 1);
+    for (let gx = gx0; gx <= gx1; gx++) {
+      for (let gy = gy0; gy <= gy1; gy++) {
+        const seed = gx * 57.13 + gy * 131.7;
+        if (hash(seed) > 0.34 * count) continue;
+        const x = gx * step + hash(seed + 1) * step;
+        const y = gy * step + hash(seed + 2) * step;
+        if (x > SQUARE.x - 120 && x < SQUARE.x + SQUARE.w + 120 && y > SQUARE.y - 120 && y < SQUARE.y + SQUARE.h + 120) continue;
+        let inObstacle = false;
+        for (const o of OBSTACLES) {
+          if (x > o.x - 70 && x < o.x + o.w + 70 && y > o.y - 70 && y < o.y + o.h + 70) { inObstacle = true; break; }
+        }
+        if (inObstacle) continue;
+        const size = 62 + hash(seed + 3) * 52;
+        ctx.fillStyle = "rgba(6,5,10,0.5)";
+        ctx.beginPath();
+        ctx.ellipse(x + 22, y + 26, size * 0.9, size * 0.55, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#241a18";
+        ctx.fillRect(x - 7, y - size * 0.2, 14, size * 0.8);
+        const tone = hash(seed + 4);
+        ctx.fillStyle = tone > 0.66 ? "#2c2216" : tone > 0.33 ? "#241c1c" : "#1c1a20";
+        for (let i = 0; i < 4; i++) {
+          const a = hash(seed + 5 + i) * Math.PI * 2;
+          const r = size * (0.35 + hash(seed + 9 + i) * 0.35);
+          ctx.beginPath();
+          ctx.arc(x + Math.cos(a) * size * 0.42, y - size * 0.5 + Math.sin(a) * size * 0.3, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+  }
+
+  // --------------------------------------------------------------- props
+
+  private drawStations(ctx: CanvasRenderingContext2D, snap: Snapshot, t: number) {
+    for (const task of snap.tasks) {
+      const st = STATIONS.find((s) => s.id === task.id);
+      if (!st) continue;
+      this.drawStationProp(ctx, st, task.done, task.progress, t);
+    }
+  }
+
+  private drawStationProp(ctx: CanvasRenderingContext2D, st: Station, done: boolean, progress: number, t: number) {
+    const { x, y } = st;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = "rgba(6,5,10,0.5)";
+    ctx.beginPath();
+    ctx.ellipse(12, 18, 62, 30, 0, 0, Math.PI * 2);
+    ctx.fill();
+    const lit = done ? "#4d6b4a" : "#5b4a2c";
+    ctx.fillStyle = lit;
+    switch (st.kind) {
+      case "pumpkins":
+        for (let i = 0; i < 5; i++) {
+          ctx.fillStyle = i % 2 ? "#a8631d" : "#8d4f18";
+          ctx.beginPath();
+          ctx.ellipse(-52 + i * 28, 6 + (i % 2) * 10, 22, 17, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      case "well":
+        ctx.fillStyle = "#3a3038";
+        ctx.beginPath();
+        ctx.arc(0, 0, 46, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#0a0910";
+        ctx.beginPath();
+        ctx.arc(0, 0, 30, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#2f2429";
+        ctx.fillRect(-46, -74, 12, 60);
+        ctx.fillRect(34, -74, 12, 60);
+        break;
+      case "scarecrow":
+        ctx.fillStyle = "#3c2c22";
+        ctx.fillRect(-6, -86, 12, 100);
+        ctx.fillRect(-52, -56, 104, 11);
+        ctx.fillStyle = "#6d5b3c";
+        ctx.beginPath();
+        ctx.arc(0, -100, 20, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      case "lantern":
+        ctx.fillStyle = "#2a2229";
+        ctx.fillRect(-5, -110, 10, 116);
+        ctx.fillStyle = done ? "#e0a52a" : "#4a3b22";
+        ctx.fillRect(-18, -132, 36, 34);
+        break;
+      case "chapel":
+        ctx.fillStyle = "#4a3b46";
+        ctx.fillRect(-20, -62, 40, 68);
+        ctx.fillStyle = "#e0a52a";
+        ctx.fillRect(-8, -50, 16, 40);
+        break;
+      case "mill":
+        ctx.fillStyle = "#4b3b46";
+        for (let i = 0; i < 3; i++) {
+          ctx.beginPath();
+          ctx.arc(-34 + i * 34, -10, 22, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      case "graves":
+        for (let i = 0; i < 3; i++) {
+          ctx.fillStyle = "#3b333c";
+          ctx.fillRect(-56 + i * 42, -44, 26, 52);
+          ctx.beginPath();
+          ctx.arc(-43 + i * 42, -44, 13, Math.PI, 0);
+          ctx.fill();
+        }
+        break;
+      case "radio":
+        ctx.strokeStyle = "#5b4b52";
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.moveTo(-40, 12);
+        ctx.lineTo(0, -130);
+        ctx.lineTo(40, 12);
+        ctx.stroke();
+        ctx.fillStyle = OXBLOOD;
+        ctx.beginPath();
+        ctx.arc(0, -136, 9, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      case "silo":
+        ctx.fillStyle = "#3c3038";
+        ctx.fillRect(-40, -96, 80, 104);
+        ctx.beginPath();
+        ctx.moveTo(-46, -96);
+        ctx.lineTo(0, -136);
+        ctx.lineTo(46, -96);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      case "beehive":
+        for (let i = 0; i < 3; i++) {
+          ctx.fillStyle = "#6b5222";
+          ctx.beginPath();
+          ctx.ellipse(-44 + i * 44, -6, 24, 30, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      case "laundry":
+        ctx.strokeStyle = "#5b4b52";
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(-64, -10);
+        ctx.lineTo(-64, -96);
+        ctx.moveTo(64, -10);
+        ctx.lineTo(64, -96);
+        ctx.moveTo(-64, -92);
+        ctx.lineTo(64, -92);
+        ctx.stroke();
+        ctx.fillStyle = "#c8bda6";
+        for (let i = 0; i < 4; i++) ctx.fillRect(-56 + i * 30, -90, 22, 46);
+        break;
+      case "woodpile":
+        ctx.fillStyle = "#4a3526";
+        for (let i = 0; i < 6; i++) {
+          ctx.beginPath();
+          ctx.arc(-44 + (i % 3) * 42, -18 + Math.floor(i / 3) * 34, 20, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      case "gate":
+        ctx.fillStyle = "#3c2c22";
+        ctx.fillRect(-72, -70, 14, 82);
+        ctx.fillRect(58, -70, 14, 82);
+        ctx.fillRect(-72, -62, 158, 12);
+        ctx.fillRect(-72, -22, 158, 12);
+        break;
+      case "bridge":
+        ctx.fillStyle = "#4a3526";
+        ctx.fillRect(-90, -26, 180, 52);
+        ctx.strokeStyle = "#2b1e17";
+        ctx.lineWidth = 5;
+        for (let i = -80; i < 90; i += 26) {
+          ctx.beginPath();
+          ctx.moveTo(i, -26);
+          ctx.lineTo(i, 26);
+          ctx.stroke();
+        }
+        break;
+    }
+    // progress ring
+    if (progress > 0 && !done) {
+      ctx.strokeStyle = "rgba(232,223,207,0.85)";
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.arc(0, -150, 30, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+      ctx.stroke();
+    }
+    if (!done) {
+      // ward marker: a slow oxblood pulse so the valley is legible at a distance
+      const pulse = 0.35 + 0.25 * Math.sin(t * 2 + x * 0.01);
+      ctx.globalAlpha = pulse;
+      ctx.strokeStyle = OXBLOOD;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(0, 0, 88, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.strokeStyle = "rgba(127,176,105,0.5)";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(0, 0, 88, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  private drawProps(ctx: CanvasRenderingContext2D, snap: Snapshot, t: number) {
+    // cages
+    for (const c of snap.cages) {
+      ctx.save();
+      ctx.translate(c.x, c.y);
+      ctx.fillStyle = "rgba(6,5,10,0.55)";
+      ctx.beginPath();
+      ctx.ellipse(10, 26, 66, 30, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#4c4148";
+      ctx.lineWidth = 9;
+      ctx.strokeRect(-48, -70, 96, 104);
+      for (let i = -32; i <= 32; i += 16) {
+        ctx.beginPath();
+        ctx.moveTo(i, -70);
+        ctx.lineTo(i, 34);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    // iron key
+    if (snap.keyPos) {
+      ctx.save();
+      ctx.translate(snap.keyPos.x, snap.keyPos.y);
+      const bob = this.settings.graphics.reducedMotion ? 0 : Math.sin(t * 2.2) * 6;
+      ctx.translate(0, bob);
+      ctx.rotate(-0.5);
+      ctx.strokeStyle = "#c9b273";
+      ctx.lineWidth = 9;
+      ctx.beginPath();
+      ctx.arc(0, -18, 18, 0, Math.PI * 2);
+      ctx.moveTo(0, 0);
+      ctx.lineTo(0, 54);
+      ctx.moveTo(0, 36);
+      ctx.lineTo(22, 36);
+      ctx.moveTo(0, 50);
+      ctx.lineTo(18, 50);
+      ctx.stroke();
+      ctx.restore();
+    }
+    // bodies
+    for (const b of snap.bodies) {
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.fillStyle = "rgba(6,5,10,0.6)";
+      ctx.beginPath();
+      ctx.ellipse(8, 22, 72, 32, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = b.color;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 52, 24, -0.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#2a1013";
+      ctx.beginPath();
+      ctx.ellipse(-32, 8, 30, 16, -0.35, 0, Math.PI * 2);
+      ctx.fill();
+      // crows
+      for (let i = 0; i < 3; i++) {
+        const a = t * 1.1 + i * 2.1;
+        const cx = Math.cos(a) * 92;
+        const cy = -40 + Math.sin(a * 1.4) * 26;
+        ctx.fillStyle = "#0c0a10";
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, 13, 7, Math.sin(a * 3) * 0.6, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
     }
-
-    // --- two layers of hills, then an irregular wooded horizon ---
-    ctx.fillStyle = "#2a1828";
-    ctx.beginPath(); ctx.moveTo(0, ground);
-    for (let sx = 0; sx <= w + 20; sx += 20) {
-      const wx = sx + cam * 0.09;
-      ctx.lineTo(sx, ground - 135 - Math.sin(wx * 0.0021 + 1) * 48 - Math.sin(wx * 0.006) * 22);
-    }
-    ctx.lineTo(w, ground); ctx.fill();
-    ctx.fillStyle = "#1b121d";
-    ctx.beginPath(); ctx.moveTo(0, ground);
-    for (let sx = 0; sx <= w + 20; sx += 20) {
-      const wx = sx + cam * 0.15;
-      ctx.lineTo(sx, ground - 82 - Math.sin(wx * 0.004) * 38 - Math.sin(wx * 0.0013 + 3) * 48);
-    }
-    ctx.lineTo(w, ground); ctx.fill();
-
-    for (let i = 0; i < 60; i++) {
-      const wx = i * 130 + ((i * 97) % 60);
-      const sx = wx - cam * 0.45;
-      if (sx < -90 || sx > w + 90) continue;
-      const th = 74 + ((i * 53) % 56);
-      this.drawTree(ctx, sx, ground, th, i);
-    }
-
-    // --- ground ---
-    const gg = ctx.createLinearGradient(0, ground, 0, h);
-    gg.addColorStop(0, "#2b1a12");
-    gg.addColorStop(0.12, "#1d120c");
-    gg.addColorStop(1, "#0d0806");
-    ctx.fillStyle = gg;
-    ctx.fillRect(0, ground, w, h - ground);
-    // Rutted road, scattered stones, leaf piles, and a broken fence rhythm.
-    ctx.strokeStyle = "rgba(218,164,100,0.13)";
-    ctx.lineWidth = 2;
-    for (const offset of [19, 34]) {
-      ctx.beginPath();
-      for (let sx = 0; sx <= w; sx += 30) {
-        const y = ground + offset + Math.sin((sx + cam) * 0.017) * 2;
-        if (sx === 0) ctx.moveTo(sx, y); else ctx.lineTo(sx, y);
-      }
-      ctx.stroke();
-    }
-    for (let i = 0; i < 50; i++) {
-      const sx = i * 190 + ((i * 71) % 90) - cam;
-      if (sx < -60 || sx > w + 60) continue;
-      ctx.fillStyle = "rgba(160,90,40,0.28)";
-      ctx.beginPath(); ctx.ellipse(sx, ground + 8, 30, 6, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "rgba(205,129,55,.28)";
-      for (let j = 0; j < 4; j++) {
-        ctx.beginPath(); ctx.ellipse(sx - 18 + j * 11, ground + 4 + (j % 2) * 3, 5, 2, j * 0.7, 0, Math.PI * 2); ctx.fill();
-      }
-    }
-    if (graphics.quality !== "low") {
-      ctx.strokeStyle = "rgba(107,75,50,.55)"; ctx.lineWidth = 4;
-      for (let i = 0; i < 24; i++) {
-        const fx = i * 235 - cam;
-        if (fx < -80 || fx > w + 80) continue;
-        const fy = ground + 48 + (i % 3) * 3;
-        ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx - 2, fy - 31); ctx.moveTo(fx + 74, fy); ctx.lineTo(fx + 72, fy - 28);
-        ctx.moveTo(fx - 5, fy - 23); ctx.lineTo(fx + 78, fy - 17); ctx.moveTo(fx - 4, fy - 9); ctx.lineTo(fx + 77, fy - 5); ctx.stroke();
-      }
-      ctx.fillStyle = "rgba(93,103,111,.18)";
-      for (let i = 0; i < 30; i++) {
-        const sx = i * 173 + 60 - cam;
-        if (sx < 0 || sx > w) continue;
-        ctx.beginPath(); ctx.ellipse(sx, ground + 27, 4 + i % 5, 2, 0, 0, Math.PI * 2); ctx.fill();
-      }
-    }
-
-    // meeting square highlight
-    if (snap.phase === "meeting") {
-      const a = 0.08 + Math.sin(t * 3) * 0.03;
-      ctx.fillStyle = `rgba(255,200,100,${a})`;
-      ctx.fillRect(MEETING_FROM - cam, ground - 200, MEETING_TO - MEETING_FROM, 200 + 40);
-    }
-
-    // --- stations / buildings ---
-    for (const st of STATIONS) {
-      const sx = st.x - cam;
-      if (sx > -280 && sx < w + 280) this.drawStation(ctx, st, sx, ground, t, now, snap);
-    }
-
-    // --- bell tower ---
-    this.drawBellTower(ctx, BELL_X - cam, ground, t, now - snap.bellAt < 4000);
-
-    // --- cages (back frame) ---
-    for (const c of snap.cages) this.drawCage(ctx, c.x - cam, ground, false);
-
-    // --- key ---
-    if (snap.keyX !== null) {
-      const kx = snap.keyX - cam;
-      const bob = Math.sin(t * 3) * 4;
-      ctx.save();
-      ctx.shadowColor = "#ffd76a";
-      this.glow(ctx, 16);
-      ctx.strokeStyle = "#e8b93c";
-      ctx.lineWidth = 3.5;
-      ctx.beginPath(); ctx.arc(kx, ground - 26 + bob, 6, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(kx, ground - 20 + bob); ctx.lineTo(kx, ground - 6 + bob);
-      ctx.moveTo(kx, ground - 10 + bob); ctx.lineTo(kx + 6, ground - 10 + bob);
-      ctx.moveTo(kx, ground - 6 + bob); ctx.lineTo(kx + 5, ground - 6 + bob); ctx.stroke();
-      ctx.restore();
-    }
-
-    // --- bodies (crows gather above the dead) ---
-    for (const b of snap.bodies) {
-      const bx = b.x - cam;
-      ctx.fillStyle = "rgba(90,10,10,0.7)";
-      ctx.beginPath(); ctx.ellipse(bx, ground - 2, 30, 7, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.save();
-      ctx.translate(bx, ground - 10);
-      ctx.rotate(Math.PI / 2);
-      this.drawFigure(ctx, 0, 0, b.color, 1, false, false, false, t, 1);
-      ctx.restore();
-      // circling crows
-      ctx.strokeStyle = "#0a0608";
-      ctx.lineWidth = 2.5;
-      for (let i = 0; i < 3; i++) {
-        const a = t * (0.9 + i * 0.2) + i * 2.1;
-        const cx2 = bx + Math.cos(a) * (34 + i * 14);
-        const cy2 = ground - 120 - i * 16 + Math.sin(a * 1.7) * 10;
-        const flap = Math.sin(t * 9 + i * 2) * 4;
-        ctx.beginPath();
-        ctx.moveTo(cx2 - 7, cy2 - flap);
-        ctx.quadraticCurveTo(cx2, cy2 + 3, cx2 + 7, cy2 - flap);
-        ctx.stroke();
-      }
-    }
-
-    // --- players ---
-    const sorted = [...snap.players].sort((a, b) => (a.id === snap.self.id ? 1 : 0) - (b.id === snap.self.id ? 1 : 0));
-    for (const p of sorted) {
-      const px = (displayX.get(p.id) ?? p.x) - cam;
-      if (px < -100 || px > w + 100) continue;
-      const ghost = !p.alive;
-      if (ghost && snap.self.alive) continue; // living can't see ghosts
-      const isMate = snap.self.teammates.includes(p.id);
-      const floatY = ghost ? -14 + Math.sin(t * 2 + p.x) * 5 : 0;
-      ctx.save();
-      if (ghost) ctx.globalAlpha = 0.45;
-      if (!ghost) {
-        ctx.fillStyle = "rgba(0,0,0,.35)";
-        ctx.beginPath(); ctx.ellipse(px, ground + 2, 17, 4, 0, 0, Math.PI * 2); ctx.fill();
-      }
-      this.drawFigure(ctx, px, ground + floatY, p.color, p.facing, p.moving, ghost, isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t, 1);
-      ctx.restore();
-      // key icon
-      if (p.hasKey) {
-        ctx.fillStyle = "#e8b93c";
-        ctx.font = "12px serif";
-        ctx.textAlign = "center";
-        ctx.fillText("🗝", px + 16, ground - 52 + floatY);
-      }
-      // name and speech are optional HUD layers; the figures remain identifiable by color.
-      if (this.settings.interface.playerNames) {
-        ctx.font = "600 12px system-ui, sans-serif";
-        ctx.textAlign = "center";
-        const label = p.name + (snap.phase === "meeting" && p.voted ? " ✓" : "");
-        const width = ctx.measureText(label).width;
-        ctx.fillStyle = "rgba(5,3,8,.55)";
-        ctx.beginPath(); ctx.roundRect(px - width / 2 - 5, ground - 75 + floatY, width + 10, 17, 5); ctx.fill();
-        ctx.fillStyle = p.id === snap.self.id ? "#ffd98a" : isMate ? "#ff7a6a" : "rgba(245,235,220,.96)";
-        ctx.fillText(label, px, ground - 62 + floatY);
-      }
-      if (p.bubble && this.settings.interface.speechBubbles) this.drawBubble(ctx, px, ground - 72 + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
-    }
-
-    // --- cages (front bars) ---
-    for (const c of snap.cages) this.drawCage(ctx, c.x - cam, ground, true);
-
-    // --- falling leaves (quantity follows the detail preset) ---
-    if (graphics.particles) {
-      const count = this.qualityCount(100, 55, 22);
-      for (const l of this.leaves.slice(0, count)) {
-        if (!graphics.reducedMotion) { l.x += l.vx * dt; l.y += l.vy * dt; l.r += dt * 2; }
-        if (l.y > ground + 10) { l.y = -20; l.x = cam + Math.random() * w; }
-        if (l.x < cam - 60) l.x = cam + w + 40;
-        const sx = l.x - cam;
-        if (sx < -20 || sx > w + 20) continue;
-        ctx.save();
-        ctx.translate(sx, l.y * (h / 700));
-        ctx.rotate(l.r);
-        ctx.fillStyle = l.c;
-        ctx.globalAlpha = 0.72;
-        ctx.beginPath(); ctx.ellipse(0, 0, l.s, l.s * 0.5, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = "rgba(40,18,10,.45)"; ctx.lineWidth = 0.7;
-        ctx.beginPath(); ctx.moveTo(-l.s, 0); ctx.lineTo(l.s, 0); ctx.stroke();
-        ctx.restore();
-      }
-    }
-
-    // --- low, layered fog ---
-    if (graphics.fog) {
-      const layers = this.qualityCount(4, 3, 1);
-      for (let i = 0; i < layers; i++) {
-        const fy = ground - 24 - i * 25;
-        const drift = Math.sin(t * 0.24 + i * 2) * 70;
-        const fog = ctx.createLinearGradient(0, fy - 25, 0, fy + 25);
-        fog.addColorStop(0, "rgba(120,110,130,0)");
-        fog.addColorStop(0.5, `rgba(145,132,151,${0.075 + i * 0.018})`);
-        fog.addColorStop(1, "rgba(120,110,130,0)");
-        ctx.fillStyle = fog;
-        ctx.fillRect(drift - 90, fy - 25, w + 180, 50);
-      }
-    }
-
-    // --- lantern-light darkness mask (server-authoritative vision radius) ---
-    const targetR = snap.visionRadius;
-    if (targetR < 1500) {
-      this.visionR += (targetR - this.visionR) * Math.min(1, dt * 3.5);
-      const r = Math.max(80, this.visionR + Math.sin(t * 7.3) * 6); // lantern breathing
-      const cx2 = meX - cam;
-      const cy2 = ground - 50;
-      const dark = ctx.createRadialGradient(cx2, cy2, r * 0.45, cx2, cy2, r);
-      dark.addColorStop(0, "rgba(4,2,8,0)");
-      dark.addColorStop(0.75, "rgba(4,2,8,0.55)");
-      dark.addColorStop(1, "rgba(3,1,6,0.965)");
-      ctx.fillStyle = dark;
-      ctx.fillRect(0, 0, w, h);
-    } else {
-      this.visionR = 420;
-    }
-
-    // --- vignette ---
-    if (graphics.vignette) {
-      const vg = ctx.createRadialGradient(w / 2, h / 2, h * 0.35, w / 2, h / 2, h * 0.95);
-      vg.addColorStop(0, "rgba(0,0,0,0)");
-      vg.addColorStop(1, "rgba(5,2,8,0.72)");
-      ctx.fillStyle = vg;
-      ctx.fillRect(0, 0, w, h);
-    }
-
-    // --- horror flicker (decorative only; never changes authoritative vision) ---
-    const since = now - snap.flickerAt;
-    if (graphics.flicker && !graphics.reducedMotion && since >= 0 && since < 900) {
-      const a = Math.random() < 0.5 ? 0.55 : 0.15;
-      ctx.fillStyle = `rgba(0,0,0,${a * (1 - since / 900)})`;
-      ctx.fillRect(0, 0, w, h);
-    }
+    void snap;
   }
 
-  // -------------------------------------------------------------------------
+  // -------------------------------------------------------------- figures
 
-  private drawTree(ctx: CanvasRenderingContext2D, x: number, ground: number, height: number, seed: number) {
-    const top = ground - height;
-    ctx.save();
-    ctx.strokeStyle = seed % 2 ? "#241718" : "#2c1918";
-    ctx.lineWidth = 6;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(x, ground); ctx.lineTo(x + (seed % 3 - 1) * 3, top + 18);
-    ctx.moveTo(x, top + 45); ctx.lineTo(x - 19, top + 23);
-    ctx.moveTo(x + 1, top + 35); ctx.lineTo(x + 23, top + 10);
-    if (seed % 4 === 0) { ctx.moveTo(x - 8, top + 35); ctx.lineTo(x - 30, top + 39); }
-    ctx.stroke();
-    const palettes = [
-      ["#3a1d1b", "#56251d", "#74321f"],
-      ["#3a2118", "#5c301b", "#85411f"],
-      ["#291a1b", "#43231d", "#613020"],
-    ];
-    const palette = palettes[seed % palettes.length];
-    const clusters = this.qualityCount(8, 6, 4);
-    for (let j = 0; j < clusters; j++) {
-      const angle = j * 2.4 + seed;
-      const cx = x + Math.sin(angle) * (15 + (j % 3) * 6);
-      const cy = top + 9 + Math.cos(angle * 1.3) * 15 + j * 2.2;
-      const radius = 17 + ((seed * 13 + j * 7) % 13);
-      ctx.fillStyle = palette[j % palette.length];
-      ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.fill();
-    }
-    if (this.settings.graphics.quality === "high") {
-      ctx.fillStyle = "rgba(207,105,43,.22)";
-      for (let j = 0; j < 7; j++) {
-        const lx = x - 28 + ((seed * 31 + j * 17) % 58);
-        const ly = top - 9 + ((seed * 19 + j * 23) % 50);
-        ctx.beginPath(); ctx.arc(lx, ly, 2.2, 0, Math.PI * 2); ctx.fill();
-      }
-    }
-    ctx.restore();
-  }
-
-  private drawFigure(
-    ctx: CanvasRenderingContext2D, x: number, groundY: number, color: string,
-    facing: number, moving: boolean, ghost: boolean, redEyes: boolean, t: number, scale: number
+  private drawPlayer(
+    ctx: CanvasRenderingContext2D,
+    snap: Snapshot,
+    p: Snapshot["players"][number],
+    pos: Vec,
+    t: number
   ) {
-    const gait = Math.sin(t * 11 + x * 0.1);
-    const bob = moving ? gait * 1.8 : Math.sin(t * 1.7 + x) * 0.35;
-    const y = groundY + bob;
+    const isSelf = p.id === snap.self.id;
+    const ghost = !p.alive;
+    const creature = CREATURES.find((c) => c.id === p.creature) ?? CREATURES[0];
+    const bob = this.settings.graphics.reducedMotion || !p.moving ? 0 : Math.sin(t * 9 + pos.x * 0.02) * 5;
     ctx.save();
-    ctx.translate(x, y);
-    ctx.scale(facing * scale, scale);
-    ctx.lineCap = "round";
+    ctx.translate(pos.x, pos.y + bob);
+    if (ghost) ctx.globalAlpha = 0.42;
 
-    if (!ghost) {
-      const swing = moving ? gait * 5 : 0;
-      ctx.strokeStyle = "#100d13"; ctx.lineWidth = 5;
-      ctx.beginPath();
-      ctx.moveTo(-4, -14); ctx.lineTo(-4 + swing, -1); ctx.lineTo(-1 + swing, 0);
-      ctx.moveTo(4, -14); ctx.lineTo(4 - swing, -1); ctx.lineTo(7 - swing, 0);
-      ctx.stroke();
-    }
-
-    // Rear sleeve and arm make the walking direction legible at small sizes.
-    ctx.strokeStyle = color; ctx.lineWidth = 6;
-    ctx.beginPath(); ctx.moveTo(-6, -33); ctx.lineTo(-12 - (moving ? gait * 3 : 0), -18); ctx.stroke();
-
-    // Cloak silhouette, hem, and a shaded fold down the trailing side.
-    ctx.fillStyle = color;
+    // shadow
+    ctx.fillStyle = "rgba(6,5,10,0.6)";
     ctx.beginPath();
-    ctx.moveTo(-12, -12);
-    ctx.quadraticCurveTo(-15, -32, -8, -41);
-    ctx.quadraticCurveTo(0, -49, 9, -41);
-    ctx.quadraticCurveTo(15, -30, 12, -12);
-    if (ghost) { ctx.lineTo(8, -5); ctx.lineTo(3, -12); ctx.lineTo(-2, -5); ctx.lineTo(-7, -12); }
-    ctx.closePath(); ctx.fill();
-    ctx.fillStyle = "rgba(5,3,9,.3)";
-    ctx.beginPath();
-    ctx.moveTo(-12, -12); ctx.quadraticCurveTo(-15, -32, -8, -41);
-    ctx.quadraticCurveTo(-4, -34, -5, -12); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = "rgba(255,235,210,.13)"; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(5, -28); ctx.quadraticCurveTo(8, -20, 7, -12); ctx.stroke();
-
-    // Front sleeve and a small metal clasp break up the single-color body.
-    ctx.strokeStyle = color; ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.moveTo(7, -33); ctx.lineTo(13 + (moving ? gait * 3 : 0), -20); ctx.stroke();
-    ctx.fillStyle = "#c5a56a"; ctx.beginPath(); ctx.arc(3, -29, 1.4, 0, Math.PI * 2); ctx.fill();
-
-    // Raised hood rim around a genuinely dark face opening.
-    ctx.fillStyle = color;
-    ctx.beginPath(); ctx.ellipse(2, -38, 11, 10, -0.1, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = "rgba(240,215,190,.16)"; ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.ellipse(3, -37, 8.5, 7.5, -0.1, Math.PI * 0.75, Math.PI * 2.15); ctx.stroke();
-    ctx.fillStyle = "#09070d";
-    ctx.beginPath(); ctx.ellipse(4, -36.5, 7.2, 6.2, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = redEyes ? "#ff5142" : "#eee6ce";
-    ctx.shadowColor = redEyes ? "#ff4a3a" : "#e8e0c8";
-    this.glow(ctx, 5);
-    ctx.beginPath(); ctx.arc(3, -37, 1.5, 0, Math.PI * 2); ctx.arc(8, -37, 1.5, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-  }
-
-  private drawBubble(ctx: CanvasRenderingContext2D, x: number, topY: number, text: string, alpha: number) {
-    ctx.save();
-    ctx.globalAlpha = Math.max(0.15, alpha);
-    ctx.font = "12px system-ui, sans-serif";
-    const words = text.split(" ");
-    const lines: string[] = [];
-    let line = "";
-    for (const wd of words) {
-      const test = line ? line + " " + wd : wd;
-      if (ctx.measureText(test).width > 150 && line) { lines.push(line); line = wd; }
-      else line = test;
-      if (lines.length >= 3) break;
-    }
-    if (line && lines.length < 4) lines.push(line);
-    const bw = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 16;
-    const bh = lines.length * 15 + 10;
-    const bx = x - bw / 2, by = topY - bh;
-    ctx.fillStyle = "rgba(245,240,228,0.95)";
-    ctx.beginPath();
-    ctx.roundRect(bx, by, bw, bh, 8);
-    ctx.moveTo(x - 5, by + bh); ctx.lineTo(x + 5, by + bh); ctx.lineTo(x, by + bh + 7);
+    ctx.ellipse(6, 34, 44, 18, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = "#241a14";
-    ctx.textAlign = "center";
-    lines.forEach((l, i) => ctx.fillText(l, x, by + 17 + i * 15));
-    ctx.restore();
-  }
 
-  private drawCage(ctx: CanvasRenderingContext2D, x: number, ground: number, front: boolean) {
-    const wHalf = 32, top = ground - 96;
-    ctx.save();
-    if (!front) {
-      ctx.fillStyle = "rgba(15,10,14,0.6)";
-      ctx.fillRect(x - wHalf, top, wHalf * 2, 96);
-      ctx.strokeStyle = "#2e2a33";
-      ctx.lineWidth = 3;
-      for (let i = -2; i <= 2; i++) {
-        ctx.beginPath(); ctx.moveTo(x + i * 12, top + 4); ctx.lineTo(x + i * 12, ground); ctx.stroke();
-      }
-    } else {
-      ctx.strokeStyle = "#4a4552";
-      ctx.lineWidth = 3.5;
-      for (let i = -2; i <= 2; i++) {
-        ctx.beginPath(); ctx.moveTo(x + i * 12 + 5, top + 2); ctx.lineTo(x + i * 12 + 5, ground); ctx.stroke();
-      }
-      ctx.strokeStyle = "#57515f";
-      ctx.lineWidth = 5;
-      ctx.strokeRect(x - wHalf, top, wHalf * 2, 96);
-      ctx.beginPath(); ctx.moveTo(x - wHalf, top + 30); ctx.lineTo(x + wHalf, top + 30); ctx.stroke();
-      // hanging chain
-      ctx.strokeStyle = "#3a3542";
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top - 16); ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  private drawBellTower(ctx: CanvasRenderingContext2D, x: number, ground: number, t: number, ringing: boolean) {
-    ctx.save();
-    ctx.strokeStyle = "#241611";
-    ctx.lineWidth = 9;
+    // cloak
+    const grad = ctx.createLinearGradient(0, -60, 0, 34);
+    grad.addColorStop(0, p.color);
+    grad.addColorStop(1, "#191218");
+    ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.moveTo(x - 42, ground); ctx.lineTo(x - 14, ground - 150);
-    ctx.moveTo(x + 42, ground); ctx.lineTo(x + 14, ground - 150);
+    ctx.moveTo(-30, 32);
+    ctx.quadraticCurveTo(-38, -22, -18, -46);
+    ctx.lineTo(18, -46);
+    ctx.quadraticCurveTo(38, -22, 30, 32);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(11,10,12,0.8)";
+    ctx.lineWidth = 3;
     ctx.stroke();
-    ctx.fillStyle = "#1c100c";
+
+    // head + shroud
+    ctx.fillStyle = "#d9cfc0";
     ctx.beginPath();
-    ctx.moveTo(x - 30, ground - 148); ctx.lineTo(x + 30, ground - 148); ctx.lineTo(x, ground - 178);
-    ctx.closePath(); ctx.fill();
-    ctx.fillRect(x - 24, ground - 152, 48, 7);
-    // bell
-    const swing = ringing ? Math.sin(t * 9) * 0.5 : Math.sin(t * 0.8) * 0.04;
-    ctx.translate(x, ground - 143);
-    ctx.rotate(swing);
-    ctx.fillStyle = "#8a6b2a";
+    ctx.arc(0, -66, 22, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#171219";
     ctx.beginPath();
-    ctx.moveTo(-13, 22);
-    ctx.quadraticCurveTo(-13, -2, 0, -4);
-    ctx.quadraticCurveTo(13, -2, 13, 22);
-    ctx.closePath(); ctx.fill();
-    ctx.fillStyle = "#6b5220";
-    ctx.fillRect(-15, 20, 30, 5);
-    ctx.beginPath(); ctx.arc(0, 28, 3.4, 0, Math.PI * 2); ctx.fill();
-    if (ringing) {
-      ctx.strokeStyle = "rgba(255,215,130,0.5)";
-      ctx.lineWidth = 2;
-      for (const r of [26, 38]) { ctx.beginPath(); ctx.arc(0, 12, r, -0.6, 0.6); ctx.stroke(); ctx.beginPath(); ctx.arc(0, 12, r, Math.PI - 0.6, Math.PI + 0.6); ctx.stroke(); }
+    ctx.arc(0, -70, 22, Math.PI * 0.95, Math.PI * 2.05);
+    ctx.fill();
+    // eyes: hollow black, oxblood for the hungry
+    ctx.fillStyle = snap.self.role === "hollow" && p.id === snap.self.id ? OXBLOOD : "#0b0a0c";
+    ctx.beginPath();
+    ctx.ellipse(-8 * p.facing, -66, 4.6, 6.4, 0, 0, Math.PI * 2);
+    ctx.ellipse(9 * p.facing, -66, 4.6, 6.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    if (creature.sigil === "wolf") {
+      ctx.fillStyle = "#171219";
+      ctx.beginPath();
+      ctx.moveTo(-20, -82);
+      ctx.lineTo(-10, -104);
+      ctx.lineTo(-2, -82);
+      ctx.moveTo(20, -82);
+      ctx.lineTo(10, -104);
+      ctx.lineTo(2, -82);
+      ctx.fill();
+    }
+    if (creature.sigil === "banshee") {
+      ctx.strokeStyle = SILVER;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, -66, 32, Math.PI * 1.15, Math.PI * 1.85);
+      ctx.stroke();
+    }
+
+    // host carries the lantern
+    if (p.isHost) {
+      const glow = ctx.createRadialGradient(42 * p.facing, -10, 4, 42 * p.facing, -10, 150);
+      glow.addColorStop(0, "rgba(224,165,42,0.42)");
+      glow.addColorStop(1, "rgba(224,165,42,0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(42 * p.facing, -10, 150, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#e0a52a";
+      ctx.fillRect(34 * p.facing, -30, 16, 22);
+    }
+
+    // name plate — tracked small caps on a bone rule
+    const label = p.name.toUpperCase();
+    ctx.font = "600 15px 'Space Grotesk', system-ui, sans-serif";
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = "rgba(11,10,12,0.72)";
+    ctx.fillRect(-tw / 2 - 12, -124, tw + 24, 26);
+    ctx.fillStyle = isSelf ? "#E8DFCF" : "rgba(232,223,207,0.82)";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, 0, -111);
+    if (p.isHost) {
+      ctx.fillStyle = "#e0a52a";
+      ctx.fillRect(-tw / 2 - 12, -99, tw + 24, 3);
+    }
+
+    if (p.hasKey) {
+      ctx.fillStyle = "#c9b273";
+      ctx.beginPath();
+      ctx.arc(26, -4, 7, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (p.caged) {
+      ctx.strokeStyle = "rgba(159,182,198,0.5)";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(-52, -100, 104, 140);
+    }
+
+    // speech bubble
+    if (p.bubble) {
+      ctx.font = "500 17px 'Space Grotesk', system-ui, sans-serif";
+      const text = p.bubble.text.slice(0, 42);
+      const bw = Math.max(120, ctx.measureText(text).width + 34);
+      ctx.fillStyle = "rgba(232,223,207,0.94)";
+      ctx.fillRect(-bw / 2, -186, bw, 44);
+      ctx.beginPath();
+      ctx.moveTo(-10, -142);
+      ctx.lineTo(12, -142);
+      ctx.lineTo(0, -126);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#14101A";
+      ctx.fillText(text, 0, -164);
     }
     ctx.restore();
-    // rope
-    ctx.strokeStyle = "#5a4a30";
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(x + 6, ground - 120); ctx.lineTo(x + 6 + (ringing ? Math.sin(t * 9) * 6 : 0), ground - 30); ctx.stroke();
   }
 
-  private drawStation(
-    ctx: CanvasRenderingContext2D, st: Station, x: number, ground: number,
-    t: number, now: number, snap: Snapshot
-  ) {
-    const blackout = now < snap.blackoutUntil;
-    const flick = this.settings.graphics.flicker && !this.settings.graphics.reducedMotion && now - snap.flickerAt < 900 ? Math.random() * 0.6 : 0;
-    const win = (wx: number, wy: number, ww: number, wh: number) => {
-      const a = blackout ? 0.04 : Math.max(0.05, 0.75 - flick);
-      ctx.save();
-      ctx.shadowColor = "rgba(255,151,55,.75)"; this.glow(ctx, 13);
-      const glass = ctx.createLinearGradient(wx, wy, wx, wy + wh);
-      glass.addColorStop(0, `rgba(255,210,120,${a})`);
-      glass.addColorStop(1, `rgba(210,91,35,${a * 0.82})`);
-      ctx.fillStyle = glass;
-      ctx.fillRect(wx, wy, ww, wh);
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = "rgba(31,17,15,.9)"; ctx.lineWidth = 2;
-      ctx.strokeRect(wx, wy, ww, wh);
-      ctx.beginPath(); ctx.moveTo(wx + ww / 2, wy); ctx.lineTo(wx + ww / 2, wy + wh); ctx.moveTo(wx, wy + wh / 2); ctx.lineTo(wx + ww, wy + wh / 2); ctx.stroke();
-      ctx.restore();
-    };
+  // ------------------------------------------------------------ atmospherics
+
+  private drawMist(ctx: CanvasRenderingContext2D, left: number, top: number, right: number, bottom: number) {
     ctx.save();
-    ctx.translate(x, ground);
-    ctx.fillStyle = "#1e1310";
-    switch (st.kind) {
-      case "pumpkins": {
-        ctx.fillStyle = "#241511";
-        ctx.fillRect(-70, -70, 140, 70); // shed
-        ctx.beginPath(); ctx.moveTo(-80, -70); ctx.lineTo(0, -105); ctx.lineTo(80, -70); ctx.closePath(); ctx.fill();
-        win(-20, -50, 18, 20);
-        for (const [px, pr] of [[-45, 12], [-20, 15], [8, 11], [34, 14], [55, 10]] as const) {
-          ctx.fillStyle = "#b05a1a";
-          ctx.beginPath(); ctx.ellipse(px, -pr * 0.7, pr, pr * 0.8, 0, 0, Math.PI * 2); ctx.fill();
-          ctx.strokeStyle = "#7a3c10"; ctx.lineWidth = 1.5;
-          ctx.beginPath(); ctx.moveTo(px, -pr * 1.5); ctx.lineTo(px, 0); ctx.stroke();
-          ctx.fillStyle = "#3a5a20"; ctx.fillRect(px - 2, -pr * 1.7, 4, 6);
-        }
-        break;
-      }
-      case "well": {
-        ctx.fillStyle = "#3a3230";
-        ctx.fillRect(-26, -30, 52, 30);
-        ctx.fillStyle = "#241511";
-        ctx.fillRect(-30, -78, 6, 50); ctx.fillRect(24, -78, 6, 50);
-        ctx.beginPath(); ctx.moveTo(-38, -76); ctx.lineTo(0, -98); ctx.lineTo(38, -76); ctx.closePath(); ctx.fill();
-        ctx.strokeStyle = "#5a4a30"; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(0, -76); ctx.lineTo(0, -44); ctx.stroke();
-        ctx.fillStyle = "#4a3a28"; ctx.fillRect(-7, -46, 14, 12);
-        break;
-      }
-      case "scarecrow": {
-        ctx.strokeStyle = "#3a2a18"; ctx.lineWidth = 6;
-        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -85); ctx.moveTo(-30, -62); ctx.lineTo(30, -62); ctx.stroke();
-        ctx.fillStyle = "#6b5433";
-        ctx.beginPath(); ctx.moveTo(-14, -60); ctx.lineTo(14, -60); ctx.lineTo(9, -25); ctx.lineTo(-9, -25); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#c9a86a";
-        ctx.beginPath(); ctx.arc(0, -92, 11, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#241511";
-        ctx.beginPath(); ctx.moveTo(-16, -98); ctx.lineTo(16, -98); ctx.lineTo(0, -116); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#1a0f0a";
-        ctx.beginPath(); ctx.arc(-4, -93, 1.8, 0, Math.PI * 2); ctx.arc(4, -93, 1.8, 0, Math.PI * 2); ctx.fill();
-        break;
-      }
-      case "lantern": {
-        if (!blackout && this.settings.graphics.glow) {
-          const light = ctx.createRadialGradient(0, -92, 4, 0, -72, 112);
-          light.addColorStop(0, "rgba(255,187,83,.22)"); light.addColorStop(1, "rgba(255,145,45,0)");
-          ctx.fillStyle = light; ctx.fillRect(-115, -205, 230, 220);
-        }
-        ctx.fillStyle = "#191420";
-        ctx.fillRect(-3, -110, 6, 110);
-        ctx.fillRect(-14, -112, 28, 5);
-        const glow = blackout ? 0.03 : 0.6 + Math.sin(t * 5) * 0.1 - flick;
-        ctx.fillStyle = `rgba(255,190,90,${Math.max(0.03, glow)})`;
-        ctx.shadowColor = "rgba(255,180,80,0.9)"; this.glow(ctx, blackout ? 0 : 24);
-        ctx.fillRect(-8, -106, 16, 18);
-        ctx.shadowBlur = 0;
-        ctx.fillStyle = "#191420"; ctx.fillRect(-10, -108, 20, 3);
-        break;
-      }
-      case "chapel": {
-        ctx.fillStyle = "#221419";
-        ctx.fillRect(-65, -90, 130, 90);
-        ctx.beginPath(); ctx.moveTo(-72, -90); ctx.lineTo(0, -128); ctx.lineTo(72, -90); ctx.closePath(); ctx.fill();
-        ctx.fillRect(-16, -170, 32, 84);
-        ctx.beginPath(); ctx.moveTo(-20, -168); ctx.lineTo(0, -206); ctx.lineTo(20, -168); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#c9b98a"; ctx.fillRect(-2, -228, 4, 24); ctx.fillRect(-8, -221, 16, 4);
-        win(-44, -66, 14, 28); win(30, -66, 14, 28); win(-6, -156, 12, 20);
-        ctx.fillStyle = "#120a0e"; ctx.fillRect(-12, -44, 24, 44);
-        break;
-      }
-      case "mill": {
-        ctx.fillStyle = "#20140f";
-        ctx.fillRect(-80, -85, 160, 85);
-        ctx.beginPath(); ctx.moveTo(-88, -85); ctx.lineTo(88, -85); ctx.lineTo(60, -115); ctx.lineTo(-60, -115); ctx.closePath(); ctx.fill();
-        win(-50, -60, 20, 22); win(28, -60, 20, 22);
-        ctx.save();
-        ctx.translate(0, -50); ctx.rotate(t * 0.6);
-        ctx.strokeStyle = "#4a3826"; ctx.lineWidth = 7;
-        for (let i = 0; i < 4; i++) { ctx.rotate(Math.PI / 2); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -44); ctx.stroke(); }
-        ctx.restore();
-        ctx.fillStyle = "#0f0a08"; ctx.fillRect(-14, -40, 28, 40);
-        break;
-      }
-      case "graves": {
-        for (const [gx, gh, tilt] of [[-55, 34, -0.08], [-20, 42, 0.05], [18, 30, -0.04], [52, 38, 0.1]] as const) {
-          ctx.save(); ctx.translate(gx, 0); ctx.rotate(tilt);
-          ctx.fillStyle = "#3d3a42";
-          ctx.beginPath(); ctx.roundRect(-11, -gh, 22, gh, [10, 10, 0, 0]); ctx.fill();
-          ctx.restore();
-        }
-        ctx.fillStyle = "#0a0605";
-        ctx.beginPath(); ctx.ellipse(85, -2, 26, 7, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#2a1c12";
-        ctx.beginPath(); ctx.ellipse(108, -8, 14, 9, 0.3, 0, Math.PI * 2); ctx.fill();
-        break;
-      }
-      case "radio": {
-        ctx.strokeStyle = "#2c2833"; ctx.lineWidth = 5;
-        ctx.beginPath();
-        ctx.moveTo(-34, 0); ctx.lineTo(0, -190); ctx.lineTo(34, 0);
-        ctx.moveTo(-24, -55); ctx.lineTo(24, -55);
-        ctx.moveTo(-15, -110); ctx.lineTo(15, -110);
-        ctx.moveTo(-24, -55); ctx.lineTo(15, -110); ctx.moveTo(24, -55); ctx.lineTo(-15, -110);
-        ctx.stroke();
-        const blink = Math.sin(t * 3) > 0 ? 0.9 : 0.2;
-        ctx.fillStyle = `rgba(255,60,50,${blink})`;
-        ctx.shadowColor = "#ff3c32"; this.glow(ctx, 12);
-        ctx.beginPath(); ctx.arc(0, -194, 4, 0, Math.PI * 2); ctx.fill();
-        ctx.shadowBlur = 0;
-        break;
-      }
-      case "silo": {
-        ctx.fillStyle = "#332622";
-        ctx.fillRect(-34, -140, 68, 140);
-        ctx.beginPath(); ctx.arc(0, -140, 34, Math.PI, 0); ctx.fill();
-        ctx.strokeStyle = "rgba(0,0,0,0.3)"; ctx.lineWidth = 2;
-        for (let i = 1; i < 5; i++) { ctx.beginPath(); ctx.moveTo(-34, -i * 28); ctx.lineTo(34, -i * 28); ctx.stroke(); }
-        ctx.fillStyle = "#17100c"; ctx.fillRect(-12, -36, 24, 36);
-        break;
-      }
+    for (const m of this.mist) {
+      if (m.x < left - m.r || m.x > right + m.r || m.y < top - m.r || m.y > bottom + m.r) continue;
+      const grad = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.r);
+      grad.addColorStop(0, `rgba(159,182,198,${m.a})`);
+      grad.addColorStop(1, "rgba(159,182,198,0)");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.restore();
+  }
 
-    // task marker for own unfinished tasks
-    const myTask = snap.tasks.find((tk) => tk.id === st.id && !tk.done);
-    if (myTask && snap.phase === "playing") {
-      const bob = Math.sin(t * 3 + st.x) * 4;
-      ctx.save();
-      ctx.fillStyle = "rgba(255,205,90,0.9)";
-      ctx.shadowColor = "#ffcd5a"; this.glow(ctx, 10);
-      ctx.translate(x, ground - 235 + bob);
-      ctx.rotate(Math.PI / 4);
-      ctx.fillRect(-7, -7, 14, 14);
-      ctx.restore();
-      if (myTask.progress > 0) {
-        ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.fillRect(x - 30, ground - 215, 60, 8);
-        ctx.fillStyle = "#ffcd5a";
-        ctx.fillRect(x - 29, ground - 214, 58 * myTask.progress, 6);
+  private drawLeaves(ctx: CanvasRenderingContext2D, dt: number, top: number, bottom: number, left: number, right: number) {
+    const n = this.qualityCount(this.leaves.length, Math.floor(this.leaves.length * 0.6), Math.floor(this.leaves.length * 0.3));
+    ctx.save();
+    for (let i = 0; i < n; i++) {
+      const l = this.leaves[i];
+      if (dt > 0) {
+        l.x += l.vx * dt;
+        l.y += l.vy * dt;
+        l.r += dt * 1.6;
+        if (l.x < left - 40) l.x = right + 40;
+        if (l.y > bottom + 40) { l.y = top - 40; l.x = left + Math.random() * (right - left); }
       }
+      ctx.save();
+      ctx.translate(l.x, l.y);
+      ctx.rotate(l.r);
+      ctx.fillStyle = l.c;
+      ctx.globalAlpha = 0.75;
+      ctx.fillRect(-l.s, -l.s * 0.5, l.s * 2, l.s);
+      ctx.restore();
     }
+    ctx.restore();
+  }
+
+  private drawLighting(
+    ctx: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    snap: Snapshot,
+    selfPos: Vec,
+    zoom: number,
+    t: number
+  ) {
+    const blackout = Date.now() < snap.blackoutUntil;
+    const radius = (blackout ? Math.min(snap.visionRadius, 260) : snap.visionRadius) * zoom;
+
+    // world-space moon wash
+    ctx.save();
+    const moon = ctx.createLinearGradient(selfPos.x - 900, selfPos.y - 900, selfPos.x + 900, selfPos.y + 900);
+    moon.addColorStop(0, "rgba(159,182,198,0.16)");
+    moon.addColorStop(1, "rgba(20,16,26,0.05)");
+    ctx.fillStyle = moon;
+    ctx.fillRect(selfPos.x - 1600, selfPos.y - 1200, 3200, 2400);
+    ctx.restore();
+
+    // fog of war, drawn in screen space around the player
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const cx = w / 2;
+    const cy = h / 2;
+    const grad = ctx.createRadialGradient(cx, cy, radius * 0.42, cx, cy, radius * 1.35);
+    grad.addColorStop(0, "rgba(10,9,12,0)");
+    grad.addColorStop(0.72, blackout ? "rgba(8,6,12,0.72)" : "rgba(12,9,18,0.42)");
+    grad.addColorStop(1, blackout ? "rgba(6,4,10,0.97)" : "rgba(10,8,16,0.86)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+
+    // vignette
+    const vig = ctx.createRadialGradient(cx, cy, Math.min(w, h) * 0.32, cx, cy, Math.max(w, h) * 0.78);
+    vig.addColorStop(0, "rgba(0,0,0,0)");
+    vig.addColorStop(1, "rgba(6,5,10,0.72)");
+    ctx.fillStyle = vig;
+    ctx.fillRect(0, 0, w, h);
+
+    // oxblood danger bloom — the dread the score is singing about
+    if (snap.danger > 0.02) {
+      const pulse = 0.5 + 0.5 * Math.sin(t * 3.2);
+      const d = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.7);
+      d.addColorStop(0, `rgba(123,18,32,${0.06 * snap.danger})`);
+      d.addColorStop(1, `rgba(123,18,32,${(0.2 + 0.12 * pulse) * snap.danger})`);
+      ctx.fillStyle = d;
+      ctx.fillRect(0, 0, w, h);
+    }
+    ctx.restore();
+    void t;
+  }
+
+  private drawMinimap(ctx: CanvasRenderingContext2D, w: number, h: number, snap: Snapshot, selfPos: Vec) {
+    const mw = Math.min(260, w * 0.34);
+    const mh = mw * (WORLD_H / WORLD_W);
+    const x0 = w - mw - 18;
+    const y0 = h - mh - 18;
+    const sx = mw / WORLD_W;
+    const sy = mh / WORLD_H;
+    ctx.save();
+    ctx.fillStyle = "rgba(11,10,12,0.78)";
+    ctx.fillRect(x0 - 10, y0 - 10, mw + 20, mh + 20);
+    ctx.strokeStyle = "rgba(232,223,207,0.42)";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x0 - 10, y0 - 10, mw + 20, mh + 20);
+    // terrain blocks
+    ctx.fillStyle = "rgba(123,18,32,0.10)";
+    ctx.fillRect(x0, y0, mw, mh);
+    ctx.fillStyle = "rgba(232,223,207,0.14)";
+    for (const o of OBSTACLES) ctx.fillRect(x0 + o.x * sx, y0 + o.y * sy, Math.max(2, o.w * sx), Math.max(2, o.h * sy));
+    // square
+    ctx.strokeStyle = "rgba(224,165,42,0.75)";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x0 + SQUARE.x * sx, y0 + SQUARE.y * sy, SQUARE.w * sx, SQUARE.h * sy);
+    // wards
+    for (const task of snap.tasks) {
+      if (task.done) continue;
+      ctx.fillStyle = "#7B1220";
+      ctx.fillRect(x0 + task.x * sx - 2, y0 + task.y * sy - 2, 4, 4);
+    }
+    // teammates / seen players
+    for (const p of snap.players) {
+      if (p.x < -1000) continue;
+      ctx.fillStyle = p.id === snap.self.id ? "#E8DFCF" : p.color;
+      ctx.beginPath();
+      ctx.arc(x0 + p.x * sx, y0 + p.y * sy, p.id === snap.self.id ? 4 : 2.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // self viewport ring
+    ctx.strokeStyle = "rgba(159,182,198,0.5)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(x0 + selfPos.x * sx, y0 + selfPos.y * sy, snap.visionRadius * sx, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  private grainCanvas: HTMLCanvasElement | null = null;
+  private drawGrain(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, reduced: boolean) {
+    if (reduced || this.settings.graphics.quality === "low") return;
+    if (!this.grainCanvas) {
+      const c = document.createElement("canvas");
+      c.width = 160;
+      c.height = 160;
+      const g = c.getContext("2d");
+      if (!g) return;
+      const img = g.createImageData(160, 160);
+      for (let i = 0; i < img.data.length; i += 4) {
+        const v = 120 + Math.random() * 135;
+        img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+        img.data[i + 3] = 22;
+      }
+      g.putImageData(img, 0, 0);
+      this.grainCanvas = c;
+    }
+    const pattern = ctx.createPattern(this.grainCanvas, "repeat");
+    if (!pattern) return;
+    ctx.save();
+    const shift = Math.floor(t * 12) % 64;
+    pattern.setTransform(new DOMMatrix().translate(shift, -shift));
+    ctx.fillStyle = pattern;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
   }
 }
 
-export const CAGE_POSITIONS = CAGE_XS;
+export const CAGE_POSITIONS = CAGES;
