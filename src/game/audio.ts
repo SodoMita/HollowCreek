@@ -1,48 +1,75 @@
-// Generative WebAudio score for Hollow Creek — no downloaded audio assets.
-// Independent music / ambience / effects buses feed a master compressor.
+// Generative score for Hollow Creek. No audio files: everything is synthesised in
+// the browser and follows the game state. Three buses (music / ambience / effects)
+// feed one master, and every bus honours the volume, mute, adaptive-music and
+// heartbeat settings from the settings store.
+//
+//   ambience  wind: brown noise through a moving bandpass · timber creaks
+//   music     bowed drone on four roots (root + fifth) turning every 17s · a sparse
+//             music-box motif through a feedback delay · a detuned choir that
+//             swells with danger · a sting when the night begins
+//   effects   chapel bell · low heartbeat that quickens with danger · blackout
+//             whoosh · ward chime · fall thud · release tone · footsteps · crow caws
 import type { Snapshot } from "./types";
-import { SettingsStore } from "./settings";
+import { SettingsStore, createDefaultSettings } from "./settings";
 
-const SCALE = [587.33, 698.46, 783.99, 880.0, 1046.5, 1174.66]; // D minor pentatonic
-const CHORDS = [
-  [73.42, 110.0, 146.83, 174.61], // Dm
-  [58.27, 87.31, 116.54, 146.83], // Bb
-  [87.31, 130.81, 174.61, 220.0], // F
-  [55.0, 82.41, 110.0, 130.81], // Am
-];
-// A repeatable sixteen-step identity with small deterministic gaps, rather
-// than unrelated random notes every few seconds.
-const THEME: (number | null)[] = [0, null, 2, 1, null, 3, 2, null, 0, null, 4, 3, 2, 1, null, null];
-const ANSWER: (number | null)[] = [2, null, 3, 4, null, 3, 1, null, 0, 1, 2, null, 1, null, 0, null];
 type Bus = "music" | "ambience" | "effects";
+const BUSES: Bus[] = ["music", "ambience", "effects"];
+
+const DEFAULTS = createDefaultSettings().audio;
+/** Loudness the footsteps / caws / creaks / sting were originally written against. */
+const LEGACY = {
+  music: DEFAULTS.music ** 2,
+  ambience: DEFAULTS.ambience ** 2,
+  effects: DEFAULTS.effects ** 2,
+};
+
+const NOTE = (semis: number) => 55 * Math.pow(2, semis / 12); // A1 = 55 Hz
+const ROOTS = [26, 22, 29, 21]; // semitones above A1: B3 · G3 · D4 · F#3
+const DRONE_STACK = [0, 7, 12, 19];
+const CHOIR_STACK = [0, 7, 12, 15];
+const CHORD_SECONDS = 17;
 
 export class AudioDirector {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private buses: Partial<Record<Bus, GainNode>> = {};
-  private droneGain: GainNode | null = null;
+  private sends: Partial<Record<Bus, GainNode>> = {};
+  private noiseBuf: AudioBuffer | null = null;
+  private musicBox: GainNode | null = null; // music-box + echo input
+  private fxIn: GainNode | null = null; // effects that want the room
   private droneFilter: BiquadFilterNode | null = null;
+  private droneOsc: OscillatorNode[] = [];
+  private choirGain: GainNode | null = null;
+  private choirOsc: OscillatorNode[] = [];
   private windGain: GainNode | null = null;
-  private nextNote = 0;
-  private nextBeat = 0;
-  private nextStep = 0;
-  private nextChord = 0;
-  private nextCreak = 0;
-  private chordIdx = 0;
-  private musicStep = 0;
-  private droneOscs: OscillatorNode[] = [];
-  private echoSend: DelayNode | null = null;
-  private lastFlicker = 0;
-  private lastBell = 0;
-  private previousPhase: Snapshot["phase"] = "lobby";
-  private blackoutActive = false;
+  private windFilter: BiquadFilterNode | null = null;
+  private heartGain: GainNode | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
   private unsubscribe: () => void;
+
+  private chord = 0;
+  private danger = 0;
+  private nextMotif = 0;
+  private nextBell = 0;
+  private nextHeart = 0;
+  private nextStep = 0;
+  private nextCreak = 0;
+
+  private lastBell = 0;
+  private lastFlicker = 0;
+  private blackoutActive = false;
+  private prevPhase: Snapshot["phase"] = "lobby";
+  private lastDone = -1;
+  private lastAlive: boolean | null = null;
+  private lastCaged: boolean | null = null;
 
   constructor(private store: SettingsStore = new SettingsStore()) {
     this.unsubscribe = this.store.subscribe(() => this.applyMix());
   }
 
-  get muted() { return this.store.value.audio.muted; }
+  get muted() {
+    return this.store.value.audio.muted;
+  }
 
   /** Must be called from a user gesture at least once. */
   start() {
@@ -50,91 +77,133 @@ export class AudioDirector {
       if (this.ctx.state === "suspended") void this.ctx.resume();
       return;
     }
+    const AC: typeof AudioContext | undefined =
+      typeof window !== "undefined"
+        ? window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+        : undefined;
+    if (!AC) return;
     try {
-      const ctx = new AudioContext();
+      const ctx = new AC();
       this.ctx = ctx;
-      this.master = ctx.createGain();
-      const compressor = ctx.createDynamicsCompressor();
-      compressor.threshold.value = -15;
-      compressor.knee.value = 16;
-      compressor.ratio.value = 5;
-      compressor.attack.value = 0.008;
-      compressor.release.value = 0.24;
-      this.master.connect(compressor).connect(ctx.destination);
-      for (const name of ["music", "ambience", "effects"] as Bus[]) {
-        const gain = ctx.createGain();
-        gain.connect(this.master);
-        this.buses[name] = gain;
-      }
+      const master = ctx.createGain();
+      this.master = master;
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -18;
+      comp.ratio.value = 3;
+      master.connect(comp);
+      comp.connect(ctx.destination);
 
-      // Wind: a broad noise bed plus a slowly wandering resonant branch.
-      const len = ctx.sampleRate * 4;
-      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-      const data = buf.getChannelData(0);
-      let brown = 0;
-      for (let i = 0; i < len; i++) {
-        const white = Math.random() * 2 - 1;
-        brown = (brown + 0.018 * white) / 1.018;
-        data[i] = Math.max(-1, Math.min(1, brown * 3.2 + white * 0.12));
-      }
-      const noise = ctx.createBufferSource();
-      noise.buffer = buf; noise.loop = true;
-      const bp = ctx.createBiquadFilter();
-      bp.type = "bandpass"; bp.frequency.value = 330; bp.Q.value = 0.55;
-      this.windGain = ctx.createGain();
-      this.windGain.gain.value = 0.085;
-      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.065;
-      const lfoGain = ctx.createGain(); lfoGain.gain.value = 180;
-      lfo.connect(lfoGain).connect(bp.frequency); lfo.start();
-      const breath = ctx.createOscillator(); breath.frequency.value = 0.105;
-      const breathGain = ctx.createGain(); breathGain.gain.value = 0.025;
-      breath.connect(breathGain).connect(this.windGain.gain); breath.start();
-      noise.connect(bp).connect(this.windGain).connect(this.buses.ambience!);
-      noise.start();
+      // hand-made plate reverb, shared by every bus
+      const convolver = ctx.createConvolver();
+      convolver.buffer = this.impulse(ctx, 2.6, 2.4);
+      const wetReturn = ctx.createGain();
+      wetReturn.gain.value = 0.34;
+      convolver.connect(wetReturn);
+      wetReturn.connect(master);
 
-      // Bowed bass and inner voices, low-passed into a single coherent pad.
-      this.droneGain = ctx.createGain();
-      this.droneGain.gain.value = 0.055;
-      this.droneFilter = ctx.createBiquadFilter();
-      this.droneFilter.type = "lowpass";
-      this.droneFilter.frequency.value = 720;
-      this.droneFilter.Q.value = 0.7;
-      this.droneGain.connect(this.droneFilter).connect(this.buses.music!);
-      const gains = [0.46, 0.28, 0.19, 0.12];
-      const detunes = [-3, 3, -5, 5];
-      for (let i = 0; i < 4; i++) {
-        const oscillator = ctx.createOscillator();
-        oscillator.type = i === 0 ? "sawtooth" : "triangle";
-        oscillator.frequency.value = CHORDS[0][i];
-        oscillator.detune.value = detunes[i];
-        const gain = ctx.createGain(); gain.gain.value = gains[i];
-        const tremolo = ctx.createOscillator(); tremolo.frequency.value = 0.11 + i * 0.027;
-        const tremoloGain = ctx.createGain(); tremoloGain.gain.value = gains[i] * 0.28;
-        tremolo.connect(tremoloGain).connect(gain.gain); tremolo.start();
-        oscillator.connect(gain).connect(this.droneGain);
-        oscillator.start();
-        this.droneOscs.push(oscillator);
+      for (const b of BUSES) {
+        const bus = ctx.createGain();
+        bus.connect(master);
+        this.buses[b] = bus;
+        const send = ctx.createGain();
+        send.connect(convolver);
+        this.sends[b] = send;
       }
+      this.noiseBuf = this.noise(ctx, 4);
 
-      // Dark feedback echo used only by the music bus.
-      const delay = ctx.createDelay(1.5);
-      delay.delayTime.value = 0.375;
-      const feedback = ctx.createGain(); feedback.gain.value = 0.3;
-      const lowpass = ctx.createBiquadFilter(); lowpass.type = "lowpass"; lowpass.frequency.value = 1750;
-      const wet = ctx.createGain(); wet.gain.value = 0.24;
-      delay.connect(lowpass).connect(feedback).connect(delay);
-      delay.connect(wet).connect(this.buses.music!);
-      this.echoSend = delay;
+      // ---- wind ----
+      const wind = ctx.createBufferSource();
+      wind.buffer = this.noiseBuf;
+      wind.loop = true;
+      const windFilter = ctx.createBiquadFilter();
+      windFilter.type = "bandpass";
+      windFilter.frequency.value = 420;
+      windFilter.Q.value = 0.7;
+      const windGain = ctx.createGain();
+      windGain.gain.value = 0.16;
+      wind.connect(windFilter);
+      windFilter.connect(windGain);
+      this.out(windGain, "ambience", true);
+      wind.start();
+      this.windFilter = windFilter;
+      this.windGain = windGain;
+
+      // ---- drone: bowed strings, detuned ----
+      const droneFilter = ctx.createBiquadFilter();
+      droneFilter.type = "lowpass";
+      droneFilter.frequency.value = 620;
+      droneFilter.Q.value = 1.4;
+      const droneGain = ctx.createGain();
+      droneGain.gain.value = 0.11;
+      droneFilter.connect(droneGain);
+      this.out(droneGain, "music", true);
+      [0, 0.16, -0.19, 0.31].forEach((detune, i) => {
+        const o = ctx.createOscillator();
+        o.type = i % 2 ? "sawtooth" : "triangle";
+        o.detune.value = detune * 100;
+        o.frequency.value = NOTE(ROOTS[0] + DRONE_STACK[i]);
+        o.connect(droneFilter);
+        o.start();
+        this.droneOsc.push(o);
+      });
+      this.droneFilter = droneFilter;
+
+      // ---- choir (rises with danger) ----
+      const choirFilter = ctx.createBiquadFilter();
+      choirFilter.type = "bandpass";
+      choirFilter.frequency.value = 780;
+      choirFilter.Q.value = 2.6;
+      const choirGain = ctx.createGain();
+      choirGain.gain.value = 0;
+      choirFilter.connect(choirGain);
+      this.out(choirGain, "music", true);
+      [-7, 0, 7, 12].forEach((det, i) => {
+        const o = ctx.createOscillator();
+        o.type = "sawtooth";
+        o.detune.value = det;
+        o.frequency.value = NOTE(ROOTS[0] + 12 + CHOIR_STACK[i]);
+        o.connect(choirFilter);
+        o.start();
+        this.choirOsc.push(o);
+      });
+      this.choirGain = choirGain;
+
+      // ---- music box with feedback delay ----
+      const musicBox = ctx.createGain();
+      musicBox.gain.value = 0.55;
+      const delay = ctx.createDelay(1.2);
+      delay.delayTime.value = 0.38;
+      const fb = ctx.createGain();
+      fb.gain.value = 0.42;
+      const damp = ctx.createBiquadFilter();
+      damp.type = "lowpass";
+      damp.frequency.value = 2200;
+      this.out(musicBox, "music", false);
+      musicBox.connect(delay);
+      delay.connect(damp);
+      damp.connect(fb);
+      fb.connect(delay);
+      this.out(delay, "music", true);
+      this.musicBox = musicBox;
+
+      // ---- heartbeat + room for one-shot effects ----
+      const heartGain = ctx.createGain();
+      heartGain.gain.value = 0;
+      this.out(heartGain, "effects", false);
+      this.heartGain = heartGain;
+      const fxIn = ctx.createGain();
+      this.out(fxIn, "effects", true);
+      this.fxIn = fxIn;
 
       const t = ctx.currentTime;
-      this.nextNote = t + 0.8;
-      this.nextChord = t + 14;
+      this.nextMotif = t + 2.5;
+      this.nextBell = t + 12;
       this.nextCreak = t + 9;
       this.applyMix(true);
+      void ctx.resume();
+      this.timer = setTimeout(this.loop, 250);
     } catch {
-      this.ctx = null;
-      this.master = null;
-      this.buses = {};
+      this.teardown();
     }
   }
 
@@ -146,13 +215,27 @@ export class AudioDirector {
 
   destroy() {
     this.unsubscribe();
-    if (this.ctx) void this.ctx.close();
+    this.teardown();
+  }
+
+  private teardown() {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    try {
+      this.droneOsc.forEach((o) => o.stop());
+      this.choirOsc.forEach((o) => o.stop());
+      if (this.ctx) void this.ctx.close();
+    } catch { /* already closed */ }
     this.ctx = null;
     this.master = null;
     this.buses = {};
-    this.droneOscs = [];
+    this.sends = {};
+    this.droneOsc = [];
+    this.choirOsc = [];
   }
 
+  /** Master and each bus follow the player's mix. The curve is normalised so the
+   *  default sliders sound exactly like the score was mixed. */
   private applyMix(immediate = false) {
     if (!this.ctx || !this.master) return;
     const a = this.store.value.audio;
@@ -162,223 +245,393 @@ export class AudioDirector {
       if (immediate) param.setValueAtTime(value, t);
       else param.setTargetAtTime(value, t, 0.035);
     };
-    set(this.master.gain, a.muted ? 0 : a.master * a.master);
-    set(this.buses.music!.gain, a.music * a.music);
-    set(this.buses.ambience!.gain, a.ambience * a.ambience);
-    set(this.buses.effects!.gain, a.effects * a.effects);
-  }
-
-  private tone(
-    frequency: number, start: number, duration: number, volume: number,
-    type: OscillatorType = "sine", bus: Bus = "effects", echo = false,
-  ) {
-    if (!this.ctx || !this.buses[bus]) return;
-    const oscillator = this.ctx.createOscillator();
-    oscillator.type = type; oscillator.frequency.setValueAtTime(frequency, start);
-    const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, volume), start + Math.min(0.025, duration * 0.15));
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-    oscillator.connect(gain).connect(this.buses[bus]!);
-    if (echo && this.echoSend && bus === "music") gain.connect(this.echoSend);
-    oscillator.start(start); oscillator.stop(start + duration + 0.06);
-  }
-
-  private bell() {
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    for (let strike = 0; strike < 3; strike++) {
-      const start = t + strike * 0.86;
-      // Slightly inharmonic partials make this a struck bell, not a clean chord.
-      this.tone(392, start, 1.9, 0.19, "sine");
-      this.tone(587.7, start, 1.45, 0.085, "sine");
-      this.tone(789.4, start, 1.05, 0.045, "sine");
-      this.tone(1179, start, 0.55, 0.018, "triangle");
+    set(this.master.gain, a.muted ? 0 : (a.master * a.master) / DEFAULTS.master);
+    for (const b of BUSES) {
+      const v = (a[b] * a[b]) / (DEFAULTS[b] * DEFAULTS[b]);
+      set(this.buses[b]!.gain, v);
+      set(this.sends[b]!.gain, v);
     }
   }
 
-  private caw() {
-    if (!this.ctx) return;
+  /** Send a node to a bus, dry and (optionally) into the shared room. */
+  private out(node: AudioNode, bus: Bus, reverb: boolean) {
+    node.connect(this.buses[bus]!);
+    if (reverb) node.connect(this.sends[bus]!);
+  }
+
+  // ------------------------------------------------------------- per-snapshot
+
+  /** Called at ~10Hz with each fresh snapshot. */
+  update(snap: Snapshot) {
     const ctx = this.ctx;
+    if (!ctx) return;
+    const a = this.store.value.audio;
     const t = ctx.currentTime;
-    for (let i = 0; i < 2; i++) {
-      const start = t + i * 0.21;
-      const oscillator = ctx.createOscillator();
-      oscillator.type = "sawtooth";
-      oscillator.frequency.setValueAtTime(730 - i * 80, start);
-      oscillator.frequency.exponentialRampToValueAtTime(390, start + 0.15);
-      const gain = ctx.createGain();
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(0.032, start + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.17);
-      const lowpass = ctx.createBiquadFilter(); lowpass.type = "lowpass"; lowpass.frequency.value = 1550;
-      oscillator.connect(lowpass).connect(gain).connect(this.buses.effects!);
-      oscillator.start(start); oscillator.stop(start + 0.2);
+    const quiet = a.muted;
+    const me = snap.players.find((p) => p.id === snap.self.id);
+    const blackout = snap.now < snap.blackoutUntil;
+    this.danger = snap.danger ?? 0;
+    const tension = a.adaptiveMusic ? this.danger : 0;
+
+    // layers follow the night
+    const idx = Math.floor(t / CHORD_SECONDS) % ROOTS.length;
+    if (idx !== this.chord) {
+      this.chord = idx;
+      this.retune(t);
+    }
+    this.droneFilter?.frequency.setTargetAtTime(420 + 320 * (1 - tension), t, 1.2);
+    this.choirGain?.gain.setTargetAtTime(0.035 * Math.pow(tension, 1.5), t, 0.9);
+    this.heartGain?.gain.setTargetAtTime(a.heartbeat ? 0.32 * this.danger : 0, t, 0.4);
+    this.windGain?.gain.setTargetAtTime(blackout ? 0.26 : 0.16, t, 0.8);
+    this.windFilter?.frequency.setTargetAtTime(blackout ? 240 : 420 + 220 * tension, t, 1.1);
+
+    // Event edges advance even while muted, so unmuting never replays stale sounds.
+    if (snap.bellAt > this.lastBell) {
+      if (!quiet && (this.lastBell !== 0 || Date.now() - snap.bellAt < 4000)) this.toll(1);
+      this.lastBell = snap.bellAt;
+    }
+    if (snap.flickerAt > this.lastFlicker) {
+      if (!quiet && this.lastFlicker !== 0) this.caw();
+      this.lastFlicker = snap.flickerAt;
+    }
+    if (blackout && !this.blackoutActive && !quiet) this.whoosh();
+    this.blackoutActive = blackout;
+    if (this.prevPhase === "lobby" && snap.phase === "playing" && !quiet) this.roleSting(snap.self.role === "hollow");
+    if (this.prevPhase !== "ended" && snap.phase === "ended" && !quiet) this.toll(3);
+    this.prevPhase = snap.phase;
+
+    const done = snap.taskBar.done;
+    if (this.lastDone >= 0 && done > this.lastDone && !quiet) this.chime();
+    this.lastDone = done;
+
+    const alive = snap.self.alive;
+    const caged = snap.self.caged;
+    if (this.lastAlive === true && !alive && !quiet) this.thud();
+    if (this.lastCaged === true && !caged && alive && !quiet) this.riseTone();
+    this.lastAlive = alive;
+    this.lastCaged = caged;
+
+    if (a.effects > 0 && !quiet && me?.moving && alive && t >= this.nextStep) {
+      this.footstep();
+      this.nextStep = t + 0.31;
     }
   }
 
-  private creak() {
-    if (!this.ctx) return;
-    const ctx = this.ctx;
-    const t = ctx.currentTime;
-    const oscillator = ctx.createOscillator();
-    oscillator.type = "sawtooth";
-    oscillator.frequency.setValueAtTime(105, t);
-    oscillator.frequency.exponentialRampToValueAtTime(68, t + 1.1);
-    const filter = ctx.createBiquadFilter(); filter.type = "bandpass"; filter.frequency.value = 420; filter.Q.value = 4;
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.exponentialRampToValueAtTime(0.014, t + 0.15);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + 1.15);
-    oscillator.connect(filter).connect(gain).connect(this.buses.ambience!);
-    oscillator.start(t); oscillator.stop(t + 1.2);
+  private retune(t: number) {
+    const root = ROOTS[this.chord];
+    this.droneOsc.forEach((o, i) => o.frequency.setTargetAtTime(NOTE(root + DRONE_STACK[i]), t, 1.6));
+    this.choirOsc.forEach((o, i) => o.frequency.setTargetAtTime(NOTE(root + 12 + CHOIR_STACK[i]), t, 2.2));
   }
 
-  private whooshDown() {
-    if (!this.ctx) return;
+  // ----------------------------------------------------------------- scheduler
+
+  private loop = () => {
     const ctx = this.ctx;
+    if (!ctx) return;
+    const a = this.store.value.audio;
     const t = ctx.currentTime;
-    const oscillator = ctx.createOscillator();
-    oscillator.type = "sine";
-    oscillator.frequency.setValueAtTime(310, t);
-    oscillator.frequency.exponentialRampToValueAtTime(34, t + 1.35);
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.15, t);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
-    oscillator.connect(gain).connect(this.buses.effects!);
-    oscillator.start(t); oscillator.stop(t + 1.55);
+    if (!a.muted) {
+      if (t >= this.nextMotif) {
+        this.pluckMotif();
+        this.nextMotif = t + 7 + Math.random() * 9;
+      }
+      if (t >= this.nextBell) {
+        this.toll(1);
+        this.nextBell = t + 42 + Math.random() * 70;
+      }
+      if (t >= this.nextCreak && a.ambience > 0) {
+        this.creak();
+        this.nextCreak = t + 11 + Math.random() * 12;
+      }
+      // heartbeat: scheduled ahead on the audio clock so the pulse never jitters
+      if (a.heartbeat && this.danger > 0.05) {
+        if (this.nextHeart < t) this.nextHeart = t + 0.05;
+        while (this.nextHeart < t + 0.35) {
+          this.heart(this.nextHeart);
+          this.nextHeart += 1.3 - 0.7 * this.danger;
+        }
+      }
+    }
+    this.timer = setTimeout(this.loop, 250);
+  };
+
+  // ----------------------------------------------------------------- synthesis
+
+  private pluckMotif() {
+    const ctx = this.ctx;
+    if (!ctx || !this.musicBox) return;
+    const scale = [0, 3, 5, 7, 10, 12, 15, 17];
+    const notes = 2 + Math.floor(Math.random() * 4);
+    for (let i = 0; i < notes; i++) {
+      const semis = scale[Math.floor(Math.random() * scale.length)] + 24;
+      const when = ctx.currentTime + i * (0.32 + Math.random() * 0.22);
+      this.pluck(when, NOTE(semis + 12), 0.16 * (1 - this.danger * 0.35), this.musicBox);
+    }
   }
 
-  private thump(strength: number) {
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    this.tone(52, t, 0.17, 0.13 * strength, "sine");
-    this.tone(47, t + 0.19, 0.14, 0.085 * strength, "sine");
+  private pluck(when: number, freq: number, gain: number, dest: AudioNode) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const o = ctx.createOscillator();
+    o.type = "triangle";
+    o.frequency.value = freq;
+    const o2 = ctx.createOscillator();
+    o2.type = "sine";
+    o2.frequency.value = freq * 2.002;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(gain, when + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 2.4);
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.setValueAtTime(5200, when);
+    lp.frequency.exponentialRampToValueAtTime(900, when + 1.6);
+    o.connect(g);
+    o2.connect(g);
+    g.connect(lp);
+    lp.connect(dest);
+    o.start(when);
+    o2.start(when);
+    o.stop(when + 2.6);
+    o2.stop(when + 2.6);
   }
+
+  private heart(at: number) {
+    const ctx = this.ctx;
+    if (!ctx || !this.heartGain) return;
+    const beat = (when: number, amp: number) => {
+      const o = ctx.createOscillator();
+      o.type = "sine";
+      const g = ctx.createGain();
+      o.frequency.setValueAtTime(72, when);
+      o.frequency.exponentialRampToValueAtTime(38, when + 0.16);
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(amp, when + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.26);
+      o.connect(g);
+      g.connect(this.heartGain!);
+      o.start(when);
+      o.stop(when + 0.3);
+    };
+    beat(at, 1);
+    beat(at + 0.26, 0.62);
+  }
+
+  /** Chapel bell: a stack of inharmonic partials with a long decay. */
+  private toll(times: number) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    for (let k = 0; k < times; k++) {
+      const when = ctx.currentTime + k * 1.9;
+      const partials = [
+        { f: NOTE(26), g: 0.5, d: 6.5 },
+        { f: NOTE(26) * 2.02, g: 0.28, d: 4.2 },
+        { f: NOTE(26) * 2.94, g: 0.18, d: 3.1 },
+        { f: NOTE(26) * 4.16, g: 0.1, d: 2.2 },
+      ];
+      for (const p of partials) {
+        const o = ctx.createOscillator();
+        o.type = "sine";
+        o.frequency.value = p.f * (1 + (Math.random() - 0.5) * 0.004);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, when);
+        g.gain.exponentialRampToValueAtTime(p.g * 0.42, when + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, when + p.d);
+        o.connect(g);
+        this.out(g, "effects", true);
+        o.start(when);
+        o.stop(when + p.d + 0.1);
+      }
+    }
+  }
+
+  private whoosh() {
+    const ctx = this.ctx;
+    if (!ctx || !this.noiseBuf) return;
+    const when = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    const f = ctx.createBiquadFilter();
+    f.type = "bandpass";
+    f.Q.value = 1.1;
+    f.frequency.setValueAtTime(1200, when);
+    f.frequency.exponentialRampToValueAtTime(120, when + 1.5);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(0.5, when + 0.12);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 1.7);
+    src.connect(f);
+    f.connect(g);
+    this.out(g, "effects", true);
+    src.start(when);
+    src.stop(when + 1.8);
+  }
+
+  /** A ward finished: a small bright figure, like a music box catching the light. */
+  private chime() {
+    const ctx = this.ctx;
+    if (!ctx || !this.fxIn) return;
+    const base = ctx.currentTime;
+    [0, 4, 7, 12].forEach((semis, i) => this.pluck(base + i * 0.11, NOTE(semis + 36), 0.13, this.fxIn!));
+  }
+
+  /** Someone is struck down. */
+  private thud() {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const when = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = "sine";
+    o.frequency.setValueAtTime(120, when);
+    o.frequency.exponentialRampToValueAtTime(32, when + 0.7);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(0.55, when + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 0.9);
+    o.connect(g);
+    this.out(g, "effects", true);
+    o.start(when);
+    o.stop(when + 1);
+    this.whoosh();
+  }
+
+  /** Someone is let out of the iron. */
+  private riseTone() {
+    const ctx = this.ctx;
+    if (!ctx || !this.fxIn) return;
+    const when = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = "triangle";
+    o.frequency.setValueAtTime(NOTE(24), when);
+    o.frequency.exponentialRampToValueAtTime(NOTE(36), when + 0.55);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(0.22, when + 0.08);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 1.1);
+    o.connect(g);
+    this.out(g, "effects", true);
+    o.start(when);
+    o.stop(when + 1.2);
+    this.pluck(when + 0.18, NOTE(31), 0.14, this.fxIn);
+  }
+
+  // ---- sounds the game already had, kept at their original loudness ----
 
   private footstep() {
-    if (!this.ctx) return;
     const ctx = this.ctx;
+    if (!ctx) return;
     const t = ctx.currentTime;
     const length = Math.floor(ctx.sampleRate * 0.075);
     const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
     const data = buffer.getChannelData(0);
     for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 2);
-    const source = ctx.createBufferSource(); source.buffer = buffer;
-    const lowpass = ctx.createBiquadFilter(); lowpass.type = "lowpass"; lowpass.frequency.value = 460 + Math.random() * 130;
-    const gain = ctx.createGain(); gain.gain.value = 0.065;
-    source.connect(lowpass).connect(gain).connect(this.buses.effects!);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    const lowpass = ctx.createBiquadFilter();
+    lowpass.type = "lowpass";
+    lowpass.frequency.value = 460 + Math.random() * 130;
+    const gain = ctx.createGain();
+    gain.gain.value = 0.065 * LEGACY.effects;
+    source.connect(lowpass);
+    lowpass.connect(gain);
+    this.out(gain, "effects", false);
     source.start(t);
   }
 
-  private roleSting(hollow: boolean) {
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime + 0.04;
-    const notes = hollow ? [146.83, 155.56, 220] : [293.66, 349.23, 440];
-    notes.forEach((note, i) => this.tone(note, t + i * 0.18, 1.5, 0.065, "triangle", "music", true));
-  }
-
-  private endingSting(hollowWon: boolean) {
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime + 0.08;
-    const notes = hollowWon ? [293.66, 311.13, 220, 146.83] : [293.66, 349.23, 440, 587.33];
-    notes.forEach((note, i) => this.tone(note, t + i * 0.28, 2.1, 0.07, "sine", "music", true));
-  }
-
-  private scheduleMusic(snap: Snapshot, tension: number, meeting: boolean) {
-    if (!this.ctx || this.store.value.audio.music <= 0 || snap.phase === "ended") return;
-    const t = this.ctx.currentTime;
-    if (this.nextNote < t - 1) this.nextNote = t + 0.05;
-    const adaptive = this.store.value.audio.adaptiveMusic;
-    const tempo = adaptive && meeting ? 108 : 74;
-    const stepDuration = 60 / tempo / 2;
-    let scheduled = 0;
-    while (this.nextNote < t + 0.18 && scheduled++ < 4) {
-      const start = Math.max(t + 0.01, this.nextNote);
-      const step = this.musicStep % 16;
-      const phrase = this.chordIdx % 2 === 0 ? THEME : ANSWER;
-      const note = phrase[step];
-      const calmEnough = !adaptive || (snap.danger < 0.68 && snap.phase !== "meeting");
-      if (note !== null && calmEnough && (step % 2 === 0 || snap.phase === "lobby")) {
-        const frequency = SCALE[Math.min(SCALE.length - 1, note + (this.chordIdx === 1 ? -1 : 0))] ?? SCALE[0];
-        this.tone(frequency, start, 1.25, 0.042, "sine", "music", true);
-        this.tone(frequency * 3.005, start, 0.42, 0.006, "sine", "music");
-      }
-      if (step % 8 === 0) {
-        const root = CHORDS[this.chordIdx][0] * 2;
-        this.tone(root, start, 1.7, meeting ? 0.055 : 0.035, "triangle", "music", true);
-      }
-      if (adaptive && meeting && step % 2 === 0) {
-        this.tone(step % 4 === 0 ? 110 : 146.83, start, 0.16, 0.025, "triangle", "music");
-      }
-      if (adaptive && tension > 0.58 && step % 4 === 2) {
-        this.tone(622.25, start, 0.65, 0.012 + tension * 0.014, "sawtooth", "music", true);
-      }
-      this.musicStep++;
-      this.nextNote += stepDuration;
-    }
-  }
-
-  /** Called at ~10Hz with each fresh snapshot. */
-  update(snap: Snapshot) {
-    if (!this.ctx) return;
+  private caw() {
     const ctx = this.ctx;
+    if (!ctx) return;
     const t = ctx.currentTime;
-    const a = this.store.value.audio;
-    const me = snap.players.find((p) => p.id === snap.self.id);
-    const blackout = snap.now < snap.blackoutUntil;
-    const meeting = snap.phase === "meeting";
-    const tension = a.adaptiveMusic ? Math.max(snap.danger, meeting ? 0.34 : 0, blackout ? 0.48 : 0) : 0;
-
-    // Event timestamps advance even while muted, preventing a burst of stale
-    // sounds when the player unmutes later.
-    if (snap.bellAt > this.lastBell) {
-      if (!a.muted && (this.lastBell !== 0 || Date.now() - snap.bellAt < 4000)) this.bell();
-      this.lastBell = snap.bellAt;
+    for (let i = 0; i < 2; i++) {
+      const start = t + i * 0.21;
+      const o = ctx.createOscillator();
+      o.type = "sawtooth";
+      o.frequency.setValueAtTime(730 - i * 80, start);
+      o.frequency.exponentialRampToValueAtTime(390, start + 0.15);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, start);
+      g.gain.exponentialRampToValueAtTime(0.032 * LEGACY.effects, start + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.17);
+      const lowpass = ctx.createBiquadFilter();
+      lowpass.type = "lowpass";
+      lowpass.frequency.value = 1550;
+      o.connect(lowpass);
+      lowpass.connect(g);
+      this.out(g, "effects", false);
+      o.start(start);
+      o.stop(start + 0.2);
     }
-    if (snap.flickerAt > this.lastFlicker) {
-      if (!a.muted && this.lastFlicker !== 0) this.caw();
-      this.lastFlicker = snap.flickerAt;
-    }
-    if (blackout && !this.blackoutActive && !a.muted) this.whooshDown();
-    this.blackoutActive = blackout;
-    if (this.previousPhase === "lobby" && snap.phase === "playing" && !a.muted) this.roleSting(snap.self.role === "hollow");
-    if (this.previousPhase !== "ended" && snap.phase === "ended" && !a.muted) this.endingSting(snap.winner === "hollow");
-    this.previousPhase = snap.phase;
+  }
 
-    if (this.droneGain) this.droneGain.gain.setTargetAtTime(snap.phase === "ended" ? 0.025 : 0.05 + tension * 0.055, t, 0.2);
-    if (this.droneFilter) this.droneFilter.frequency.setTargetAtTime(720 - tension * 390 + (blackout ? -120 : 0), t, 0.25);
-    if (this.windGain) this.windGain.gain.setTargetAtTime(blackout ? 0.14 : 0.075 + tension * 0.025, t, 0.3);
+  private creak() {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = "sawtooth";
+    o.frequency.setValueAtTime(105, t);
+    o.frequency.exponentialRampToValueAtTime(68, t + 1.1);
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.value = 420;
+    filter.Q.value = 4;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.014 * LEGACY.ambience, t + 0.15);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.15);
+    o.connect(filter);
+    filter.connect(g);
+    this.out(g, "ambience", false);
+    o.start(t);
+    o.stop(t + 1.2);
+  }
 
-    if (a.muted) {
-      this.nextNote = t + 0.2;
-      return;
-    }
+  /** Sounds as the night begins; lower and darker for the Hollow. */
+  private roleSting(hollow: boolean) {
+    const ctx = this.ctx;
+    if (!ctx || !this.musicBox) return;
+    const t = ctx.currentTime + 0.04;
+    const notes = hollow ? [146.83, 155.56, 220] : [293.66, 349.23, 440];
+    notes.forEach((freq, i) => {
+      const start = t + i * 0.18;
+      const o = ctx.createOscillator();
+      o.type = "triangle";
+      o.frequency.setValueAtTime(freq, start);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, start);
+      g.gain.exponentialRampToValueAtTime((0.065 * LEGACY.music) / 0.55, start + 0.025);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + 1.5);
+      o.connect(g);
+      g.connect(this.musicBox!);
+      o.start(start);
+      o.stop(start + 1.56);
+    });
+  }
 
-    if (a.heartbeat && snap.danger > 0.12 && snap.self.alive && t >= this.nextBeat) {
-      this.thump(0.35 + snap.danger * 0.65);
-      this.nextBeat = t + (1.5 - snap.danger * 1.0);
-    }
+  // ------------------------------------------------------------------ buffers
 
-    if (t >= this.nextChord) {
-      this.chordIdx = (this.chordIdx + 1) % CHORDS.length;
-      this.droneOscs.forEach((oscillator, i) => {
-        oscillator.frequency.cancelScheduledValues(t);
-        oscillator.frequency.setValueAtTime(oscillator.frequency.value, t);
-        oscillator.frequency.linearRampToValueAtTime(CHORDS[this.chordIdx][i], t + 4.5);
-      });
-      this.nextChord = t + 14;
+  private noise(ctx: AudioContext, seconds: number) {
+    const buf = ctx.createBuffer(1, ctx.sampleRate * seconds, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < data.length; i++) {
+      const white = Math.random() * 2 - 1;
+      last = (last + 0.02 * white) / 1.02;
+      data[i] = last * 3.2;
     }
+    return buf;
+  }
 
-    this.scheduleMusic(snap, tension, meeting);
-
-    if (a.ambience > 0 && t >= this.nextCreak) {
-      this.creak();
-      this.nextCreak = t + 11 + Math.random() * 12;
+  private impulse(ctx: AudioContext, seconds: number, decay: number) {
+    const rate = ctx.sampleRate;
+    const len = Math.floor(rate * seconds);
+    const buf = ctx.createBuffer(2, len, rate);
+    for (let c = 0; c < 2; c++) {
+      const data = buf.getChannelData(c);
+      for (let i = 0; i < len; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+      }
     }
-    if (a.effects > 0 && me?.moving && snap.self.alive && t >= this.nextStep) {
-      this.footstep();
-      this.nextStep = t + 0.31;
-    }
+    return buf;
   }
 }
