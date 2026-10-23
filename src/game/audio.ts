@@ -230,6 +230,18 @@ export class AudioDirector {
       if (snap.phase === "ended") this.toll(3);
       if (blackout) this.whoosh();
     }
+    // one-shots driven by state changes: work finished, someone fell, someone rose
+    const done = snap.taskBar?.done ?? 0;
+    if (done !== this.lastDone) {
+      if (done > this.lastDone) this.chime();
+      this.lastDone = done;
+    }
+    const downed = !!snap.self.downed;
+    if (downed !== this.lastDowned) {
+      if (downed) this.thud();
+      else this.riseTone();
+      this.lastDowned = downed;
+    }
     if (snap.bellAt && snap.bellAt !== this.lastBellAt) {
       this.lastBellAt = snap.bellAt;
       this.toll(1);
@@ -241,6 +253,58 @@ export class AudioDirector {
   }
   private lastBellAt = 0;
   private lastBlackoutAt = 0;
+  private lastDone = 0;
+  private lastDowned = false;
+
+  /** A ward finished: a small bright figure, like a music box catching the light. */
+  private chime() {
+    const n = this.n;
+    if (!n) return;
+    const base = n.ctx.currentTime;
+    [0, 4, 7, 12].forEach((semis, i) => this.pluck(base + i * 0.11, NOTE(semis + 36), 0.13));
+  }
+
+  /** The fog takes someone. */
+  private thud() {
+    const n = this.n;
+    if (!n) return;
+    const when = n.ctx.currentTime;
+    const o = n.ctx.createOscillator();
+    o.type = "sine";
+    o.frequency.setValueAtTime(120, when);
+    o.frequency.exponentialRampToValueAtTime(32, when + 0.7);
+    const g = n.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(0.55, when + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 0.9);
+    o.connect(g);
+    g.connect(n.master);
+    g.connect(n.wet);
+    o.start(when);
+    o.stop(when + 1);
+    this.whoosh();
+  }
+
+  /** A friend is back on their feet. */
+  private riseTone() {
+    const n = this.n;
+    if (!n) return;
+    const when = n.ctx.currentTime;
+    const o = n.ctx.createOscillator();
+    o.type = "triangle";
+    o.frequency.setValueAtTime(NOTE(24), when);
+    o.frequency.exponentialRampToValueAtTime(NOTE(36), when + 0.55);
+    const g = n.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(0.22, when + 0.08);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 1.1);
+    o.connect(g);
+    g.connect(n.master);
+    g.connect(n.wet);
+    o.start(when);
+    o.stop(when + 1.2);
+    this.pluck(when + 0.18, NOTE(31), 0.14);
+  }
 
   // ------------------------------------------------------------- synthesis
 

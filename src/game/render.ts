@@ -142,11 +142,12 @@ export class Renderer {
     }
 
     // --- atmospherics ---
-    this.drawMist(ctx, left, top, right, bottom);
+    this.drawMist(ctx, left, top, right, bottom, snap.weather?.kind === "fog" ? 2.1 : 1);
     this.drawLeaves(ctx, dt, top, bottom, left, right);
     this.drawLighting(ctx, w, h, snap, selfPos, zoom, t);
     ctx.restore();
 
+    this.drawWayfinding(ctx, w, h, snap, selfPos, zoom);
     this.drawMinimap(ctx, w, h, snap, selfPos);
     this.drawGrain(ctx, w, h, t, graphics.reducedMotion);
   }
@@ -904,12 +905,12 @@ export class Renderer {
 
   // ------------------------------------------------------------ atmospherics
 
-  private drawMist(ctx: CanvasRenderingContext2D, left: number, top: number, right: number, bottom: number) {
+  private drawMist(ctx: CanvasRenderingContext2D, left: number, top: number, right: number, bottom: number, boost = 1) {
     ctx.save();
     for (const m of this.mist) {
       if (m.x < left - m.r || m.x > right + m.r || m.y < top - m.r || m.y > bottom + m.r) continue;
       const grad = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.r);
-      grad.addColorStop(0, `rgba(159,182,198,${m.a})`);
+      grad.addColorStop(0, `rgba(159,182,198,${Math.min(0.3, m.a * boost)})`);
       grad.addColorStop(1, "rgba(159,182,198,0)");
       ctx.fillStyle = grad;
       ctx.beginPath();
@@ -952,6 +953,7 @@ export class Renderer {
     t: number
   ) {
     const blackout = Date.now() < snap.blackoutUntil;
+    const foggy = snap.weather?.kind === "fog";
     const radius = (blackout ? Math.min(snap.visionRadius, 260) : snap.visionRadius) * zoom;
 
     // world-space moon wash
@@ -970,8 +972,8 @@ export class Renderer {
     const cy = h / 2;
     const grad = ctx.createRadialGradient(cx, cy, radius * 0.42, cx, cy, radius * 1.35);
     grad.addColorStop(0, "rgba(10,9,12,0)");
-    grad.addColorStop(0.72, blackout ? "rgba(8,6,12,0.72)" : "rgba(12,9,18,0.42)");
-    grad.addColorStop(1, blackout ? "rgba(6,4,10,0.97)" : "rgba(10,8,16,0.86)");
+    grad.addColorStop(0.72, blackout ? "rgba(8,6,12,0.72)" : foggy ? "rgba(14,12,22,0.58)" : "rgba(12,9,18,0.42)");
+    grad.addColorStop(1, blackout ? "rgba(6,4,10,0.97)" : foggy ? "rgba(12,10,20,0.92)" : "rgba(10,8,16,0.86)");
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
 
@@ -993,6 +995,62 @@ export class Renderer {
     }
     ctx.restore();
     void t;
+  }
+
+  /** Where the work is: the three nearest unfinished wards, always on screen. */
+  private drawWayfinding(
+    ctx: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    snap: Snapshot,
+    selfPos: Vec,
+    zoom: number
+  ) {
+    const pending = snap.tasks.filter((t) => !t.done);
+    if (!pending.length || snap.phase === "ended") return;
+    const cx = w / 2;
+    const cy = h / 2;
+    const ring = Math.min(w, h) * 0.34;
+    const items = pending
+      .map((t) => ({ t, d: Math.hypot(t.x - selfPos.x, t.y - selfPos.y) }))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, 3);
+    for (const { t, d } of items) {
+      const sx = cx + (t.x - selfPos.x) * zoom;
+      const sy = cy + (t.y - selfPos.y) * zoom;
+      const onScreen = sx > 80 && sx < w - 80 && sy > 80 && sy < h - 120;
+      const ang = Math.atan2(t.y - selfPos.y, t.x - selfPos.x);
+      const px = onScreen ? sx : cx + Math.cos(ang) * ring;
+      const py = onScreen ? sy : cy + Math.sin(ang) * ring;
+      ctx.save();
+      if (onScreen) {
+        ctx.strokeStyle = "rgba(194,64,76,0.75)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(px, py, 34, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        ctx.translate(px, py);
+        ctx.rotate(ang);
+        ctx.fillStyle = "rgba(123,18,32,0.92)";
+        ctx.beginPath();
+        ctx.moveTo(15, 0);
+        ctx.lineTo(-9, -10);
+        ctx.lineTo(-9, 10);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+      const label = `${Math.round(d / 10)} m`;
+      ctx.font = "500 12px 'Space Grotesk', system-ui, sans-serif";
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = "rgba(11,10,12,0.72)";
+      ctx.fillRect(px - tw / 2 - 7, py + 14, tw + 14, 19);
+      ctx.fillStyle = "#E8DFCF";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, px, py + 24);
+    }
   }
 
   private drawMinimap(ctx: CanvasRenderingContext2D, w: number, h: number, snap: Snapshot, selfPos: Vec) {

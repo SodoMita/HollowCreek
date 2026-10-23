@@ -13,12 +13,11 @@ import type { RoomListing, Snapshot, Vec } from "../src/game/types";
 // The menu probes them in order; room-code joins also discover the backend
 // that owns the town and then stay pinned there. Use one server in production.
 const SERVERS = [
-  // the permanent backend for this build (this sandbox)
+  // the most recent town servers; the client probes them in order and pins the
+  // first one that answers /api/health, so a stale one costs one timeout.
+  "https://3000-i5piktbn7w7iqeh2i097p.e2b.app",
   "https://3000-i7o0mkz1zbhtoybt1665u.e2b.app",
   "https://3000-i2c5whq198cydt5gvd416.e2b.app",
-  "https://3000-iv1ax3jjgiz1x3ha95746.e2b.app",
-  "https://3000-ihrqg7gfricyapy48j4hv.e2b.app",
-  "https://3000-irlhq619hi9cpbud4mpec.e2b.app",
 ];
 const DEFAULT_SERVER = SERVERS[0];
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -389,7 +388,7 @@ function renderHud(s: Snapshot) {
         <div class="bigcode">${s.code}</div>
         <div class="roster">${s.players.map((p) => `<div class="seat"><span class="dot" style="background:${p.color}"></span><span>${esc(p.name)}</span>${p.isHost ? `<span class="host">host</span>` : ""}</div>`).join("")}</div>
         ${s.self.id === s.hostId
-          ? `<button class="big" data-act="start" ${s.playerCount < 4 ? "disabled" : ""}>${s.playerCount < 4 ? "Waiting for more souls… (min 4)" : "Let night fall"}</button>`
+          ? `<button class="big" data-act="start" ${s.playerCount < (s.mode === "nightwatch" ? 1 : 3) ? "disabled" : ""}>${s.playerCount < (s.mode === "nightwatch" ? 1 : 3) ? "Waiting for more souls… (min 3)" : "Let night fall"}</button>`
           : `<p class="muted" style="margin-top:16px">Waiting for the host to let night fall…</p>`}
         <div class="row" style="margin-top:14px;justify-content:center">
           <button class="chip" data-act="settings">⚙ Settings</button>

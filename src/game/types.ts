@@ -38,6 +38,10 @@ export const STAMINA_UNLOCK_COST = 0.1;
 // ---------------------------------------------------------------------------
 
 export type GameMode = "nightwatch" | "hollow";
+/** The valley's moods. Each one changes how the night plays for a while. */
+export type WeatherKind = "fog" | "cold" | "gutter" | "crows";
+export const WEATHER_MS = 42_000;
+export const WEATHER_EVERY_MS = 78_000;
 export const NIGHT_MS = 360_000; // six minutes from dusk to dawn
 export const STALKER_SPEED = 112; // the thing in the fog
 export const STALKER_RANGE = 62;
@@ -284,6 +288,8 @@ export interface Snapshot {
   dawnAt: number;
   /** the thing in the fog, when it is abroad */
   stalker: { x: number; y: number } | null;
+  /** the valley's current mood */
+  weather: { kind: WeatherKind; until: number } | null;
   self: SelfInfo;
   players: PublicPlayer[];
   bodies: { x: number; y: number; color: string; name: string }[];

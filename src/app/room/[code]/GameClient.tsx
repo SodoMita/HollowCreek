@@ -7,7 +7,14 @@ import { Renderer } from "@/game/render";
 import { AudioDirector } from "@/game/audio";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
-import { BELL_X, CREATURES } from "@/game/types";
+import { BELL_X, CREATURES, type WeatherKind } from "@/game/types";
+
+const WEATHER_WORDS: Record<WeatherKind, string> = {
+  fog: "the fog is down",
+  cold: "hard frost",
+  gutter: "lanterns guttering",
+  crows: "crows watching",
+};
 import type { Snapshot, Vec } from "@/game/types";
 
 function getPid(): string {
@@ -530,7 +537,12 @@ export default function GameClient({ code }: { code: string }) {
             <div className="absolute inset-0 flex items-center justify-center bg-[#0b0710]/70 backdrop-blur-sm">
               <div className="hc-rise max-h-[88dvh] w-[min(92vw,440px)] overflow-y-auto rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-4 text-center sm:p-6">
                 <h2 className="font-display text-4xl text-[#e9dfcf]">{s.round > 0 ? `Night ${s.round + 1} approaches` : "Gathering at dusk"}</h2>
-                <p className="mt-1 text-sm text-[#9c8b7a]">{s.round > 0 ? "The same souls, the same street — new roles when darkness falls" : "Share the town code with your fellow townsfolk"}</p>
+                <p className="mt-1 text-sm text-[#9c8b7a]">{s.round > 0 ? "The same souls, the same valley — a new night" : "Share the town code with your fellow townsfolk"}</p>
+                <p className="mx-auto mt-3 max-w-[340px] border-y border-[#2a2028] py-2 text-[12px] leading-relaxed text-[#8b8075]">
+                  {s.mode === "nightwatch"
+                    ? "No hidden faces tonight. Mend every ward before dawn, stand over anyone the fog takes down, and ring the bell when the dark presses in."
+                    : "One of you is Hollow. Mend the wards, find the iron key, and cage the Hollow before they wear every face in town."}
+                </p>
                 <div className="mt-3 font-mono text-5xl tracking-[0.4em] text-[#d99a3d]">{s.code}</div>
                 <div className="mt-5 grid grid-cols-2 gap-2 text-left text-sm">
                   {s.players.map((p) => (
@@ -544,10 +556,12 @@ export default function GameClient({ code }: { code: string }) {
                 {s.self.id === s.hostId ? (
                   <button
                     onClick={() => send({ action: "start" })}
-                    disabled={s.playerCount < 4}
+                    disabled={s.playerCount < (s.mode === "nightwatch" ? 1 : 3)}
                     className="mt-6 w-full rounded bg-[#8f3b1f] py-3 font-display text-2xl text-[#f3e6d0] hover:bg-[#a84a26] disabled:opacity-40"
                   >
-                    {s.playerCount < 4 ? "Waiting for more souls… (min 4)" : "Let night fall"}
+                    {s.playerCount < (s.mode === "nightwatch" ? 1 : 3)
+                      ? "Waiting for more souls… (min 3)"
+                      : "Let night fall"}
                   </button>
                 ) : (
                   <p className="mt-6 text-[#9c8b7a]">Waiting for the host to let night fall…</p>
@@ -565,7 +579,9 @@ export default function GameClient({ code }: { code: string }) {
           {s.mode === "nightwatch" && s.phase !== "ended" && (
             <div className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 border border-[#2a2028] bg-[#0B0A0C]/80 px-5 py-1.5 text-center">
               <p className="hc-tracked text-[9px] text-[#6f6459]">
-                {s.phase === "playing" ? "nightwatch · dawn in" : "nightwatch · the town gathers"}
+                {s.phase === "playing"
+                  ? `nightwatch${s.weather ? ` · ${WEATHER_WORDS[s.weather.kind]}` : ""} · dawn in`
+                  : "nightwatch · the town gathers"}
               </p>
               {s.phase === "playing" && (
                 <p className="font-display text-xl leading-none tabular-nums text-[#E8DFCF]">

@@ -3,6 +3,7 @@ import { gameEvents, roomRows, roomPlayers } from "@/db/schema";
 import { desc, eq } from "drizzle-orm";
 import {
   BELL, BLACKOUT_CD_MS, BLACKOUT_MS, BUBBLE_MS, CAGES, CELL_HALF, CREATURES,
+  WEATHER_EVERY_MS, WEATHER_MS,
   DEFAULT_CREATURE, GHOST_SPEED, INTERACT_RANGE, KILL_COOLDOWN_MS, KILL_RANGE,
   MEETING_MS, NIGHT_MS, OBSTACLES, PLAYER_COLORS, REVIVE_MS, SPEED, SQUARE,
   STALKER_RANGE, STALKER_REST_MS, STALKER_SPEED, STALKER_WAKE_MS,
@@ -12,7 +13,7 @@ import {
   VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW, VISION_MEETING, WORLD_H, WORLD_W,
 } from "./types";
 import type {
-  FeedItem, GameMode, InputBody, Phase, Role, RoomListing, Snapshot, Vec,
+  FeedItem, GameMode, InputBody, Phase, Role, RoomListing, Snapshot, Vec, WeatherKind,
 } from "./types";
 import { bumpStats } from "./stats";
 import { shuffle } from "./rng";
@@ -85,7 +86,17 @@ interface Room {
   dawnAt: number;
   /** the thing in the fog (nightwatch only) */
   stalker: { x: number; y: number; restingUntil: number } | null;
+  /** the valley's current mood */
+  weather: { kind: WeatherKind; until: number } | null;
+  nextWeather: number;
 }
+
+const WEATHER_LINES: Record<WeatherKind, string> = {
+  fog: "The fog comes down thick. No one can see as far as the next wall.",
+  cold: "A hard frost crawls out of the creek. Working takes more out of you tonight.",
+  gutter: "Every lantern in the valley gutters at once, and something in the dark notices.",
+  crows: "Crows settle on every roof and refuse to move. They are watching the lanes.",
+};
 
 const g = globalThis as typeof globalThis & {
   __hollowRooms?: Map<string, Room>;
@@ -254,6 +265,8 @@ function makeRoom(code: string, round = 0, mode: GameMode = "nightwatch"): Room 
     mode,
     dawnAt: 0,
     stalker: null,
+    weather: null,
+    nextWeather: Date.now() + 60_000,
     phase: "lobby",
     players: new Map(),
     bodies: [],
@@ -419,7 +432,11 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
   if (!p) return { ok: false, error: "Unknown soul." };
   if (!p.isHost) return { ok: false, error: "Only the lantern-holder may start the night." };
   const ps = [...room.players.values()];
-  if (ps.length < 3) return { ok: false, error: "The valley needs at least three souls — two would tear each other apart." };
+  // A lone soul may walk the valley in nightwatch (it is how you learn the lanes);
+  // a Hollow night needs at least three, or it ends before it begins.
+  if (ps.length < (room.mode === "nightwatch" ? 1 : 3)) {
+    return { ok: false, error: "The valley needs at least three souls — two would tear each other apart." };
+  }
 
   // Crypto-backed Fisher-Yates: who is Hollow must be genuinely random.
   // nightwatch has no hidden roles at all — the night itself is the enemy
@@ -985,7 +1002,8 @@ function tick() {
           working = true;
           const factor = Math.min(1, p.stamina / STAMINA_SLOW_THRESHOLD);
           t.progress += (TICK_MS / TASK_HOLD_MS) * factor;
-          p.stamina = Math.max(0, p.stamina - STAMINA_WORK_DRAIN * dt);
+          const cold = room.weather?.kind === "cold" && now < room.weather.until ? 1.35 : 1;
+          p.stamina = Math.max(0, p.stamina - STAMINA_WORK_DRAIN * dt * cold);
           if (p.stamina <= 0) p.exhausted = true; // must truly rest before working again
           if (t.progress >= 1) {
             t.progress = 1;
@@ -998,10 +1016,23 @@ function tick() {
       }
       // vigor returns only while truly idle
       if (!working && !p.moving) {
-        p.stamina = Math.min(1, p.stamina + STAMINA_IDLE_REGEN * dt);
+        const chill = room.weather?.kind === "cold" && now < room.weather.until ? 0.55 : 1;
+        p.stamina = Math.min(1, p.stamina + STAMINA_IDLE_REGEN * dt * chill);
         if (p.exhausted && p.stamina >= 0.2) p.exhausted = false;
       }
     }
+
+    // ---------------- the valley's moods ----------------
+    if (room.phase === "playing" && now >= room.nextWeather) {
+      const kinds: WeatherKind[] = ["fog", "cold", "gutter", "crows"];
+      const kind = kinds[Math.floor(Math.random() * kinds.length)];
+      room.weather = { kind, until: now + WEATHER_MS };
+      room.nextWeather = now + WEATHER_EVERY_MS + Math.random() * 40000;
+      feed(room, WEATHER_LINES[kind]);
+      record(room, null, "weather", { kind });
+      if (kind === "gutter" && room.stalker) room.stalker.restingUntil = Math.min(room.stalker.restingUntil, now) ;
+    }
+    if (room.weather && now >= room.weather.until) room.weather = null;
 
     // ---------------- nightwatch: the thing in the fog, and the fallen -------------
     if (room.phase === "playing" && room.mode === "nightwatch") {
@@ -1013,6 +1044,16 @@ function tick() {
         );
         if (helper) q.revive = Math.min(1, q.revive + dt / (REVIVE_MS / 1000));
         else q.revive = Math.max(0, q.revive - dt * 0.5);
+        // nobody coming? they drag themselves up eventually — the night may never
+        // soft-lock a lone soul, but a friend is always faster and costs nothing.
+        if (!helper && now - q.downedAt > 15000) {
+          q.downed = false;
+          q.revive = 0;
+          q.stamina = Math.min(q.stamina, 0.35);
+          feed(room, `${q.name} drags themselves back up. Bruised, and slower for it.`);
+          record(room, q, "self_revive", {});
+          continue;
+        }
         if (q.revive >= 1) {
           q.downed = false;
           q.revive = 0;
@@ -1134,13 +1175,14 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
   // ---- server-side vision: a hacked client cannot wallhack ----
   const blackout = now < room.blackoutUntil;
   const ghostView = !me.alive;
-  const vision = ghostView || room.phase === "lobby" || room.phase === "ended"
+  const foggy = room.weather?.kind === "fog" && now < (room.weather?.until ?? 0);
+  const vision = (ghostView || room.phase === "lobby" || room.phase === "ended"
     ? 99999
     : room.phase === "meeting"
       ? VISION_MEETING
       : me.role === "hollow"
         ? VISION_HOLLOW
-        : blackout ? VISION_BLACKOUT : VISION_CREW;
+        : blackout ? VISION_BLACKOUT : VISION_CREW) * (foggy ? 0.78 : 1);
   const canSee = (x: number, y: number) => ghostView || d2(x, y, me.x, me.y) <= vision;
 
   // proximity dread for the living crew — drives heartbeat / tension audio
@@ -1164,6 +1206,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
       room.stalker && now >= room.stalker.restingUntil && d2(room.stalker.x, room.stalker.y, me.x, me.y) < Math.max(vision, 950)
         ? { x: room.stalker.x, y: room.stalker.y }
         : null,
+    weather: room.weather && now < room.weather.until ? room.weather : null,
     phase: room.phase,
     round: room.round,
     now,
