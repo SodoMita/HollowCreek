@@ -1,0 +1,168 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0a0e0b;
+  --color-pine: #16201a;
+  --color-parchment: #efe6cf;
+  --color-parchment-dim: #c9bfa8;
+  --color-ash: #8f9589;
+  --color-amber: #d7a35f;
+  --color-amber-bright: #f0c784;
+  --color-ember: #b8663f;
+  --color-moss: #7f9b85;
+
+  --font-serif: "Cormorant Garamond", "Iowan Old Style", Georgia, "Times New Roman", serif;
+  --font-sans: "Manrope", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    background: #0a0e0b;
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    background:
+      radial-gradient(ellipse 70% 55% at 78% -8%, rgba(215, 163, 95, 0.065), transparent 62%),
+      radial-gradient(ellipse 60% 50% at 8% 38%, rgba(127, 155, 133, 0.05), transparent 66%),
+      #0a0e0b;
+    color: #efe6cf;
+    font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: rgba(215, 163, 95, 0.32);
+    color: #fff6e4;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  button {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgba(240, 199, 132, 0.8);
+    outline-offset: 3px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0a0e0b;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #2b342b;
+    border: 2px solid #0a0e0b;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #4b4635;
+  }
+}
+
+/* A fixed, barely-there film grain over the whole creek. */
+.grain-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  pointer-events: none;
+  opacity: 0.055;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.65'/></svg>");
+  background-size: 180px 180px;
+}
+
+/* Paper texture for the field-guide plates. */
+.paper-grain {
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  background-image:
+    radial-gradient(ellipse at 20% 10%, rgba(125, 63, 44, 0.07), transparent 55%),
+    radial-gradient(ellipse at 85% 90%, rgba(32, 36, 27, 0.08), transparent 60%),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='0.55' numOctaves='4' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%25' height='100%25' filter='url(%23p)' opacity='0.16'/></svg>");
+  background-size: auto, auto, 200px 200px;
+}
+
+@keyframes seal-pulse {
+  0%,
+  100% {
+    transform: scale(0.94);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.75;
+  }
+}
+
+@keyframes lantern-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -7px, 0);
+  }
+}
+
+@keyframes fog-drift {
+  0% {
+    transform: translate3d(-3%, 0, 0);
+  }
+  100% {
+    transform: translate3d(3%, 0, 0);
+  }
+}
+
+@keyframes fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.lantern-drift {
+  animation: lantern-drift 7s ease-in-out infinite;
+}
+
+.fade-rise {
+  animation: fade-rise 0.5s ease-out both;
+}
+
+/* Keep long-form line lengths comfortable inside parchment plates. */
+.paper-prose p {
+  max-width: 62ch;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
