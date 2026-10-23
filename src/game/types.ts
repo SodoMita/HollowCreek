@@ -138,7 +138,7 @@ export interface Creature {
   name: string;
   latin: string;
   blurb: string;
-  sigil: "strigoi" | "wolf" | "wraith" | "banshee" | "moroii" | "vrykolakas";
+  sigil: "strigoi" | "wolf" | "wraith" | "banshee" | "moroii" | "vrykolakas" | "nightjar";
   accent: string;
   /** Who already wears this face — the identity nobody took is the Strigoi. */
   claimedBy: string | null;
@@ -199,6 +199,16 @@ export const CREATURES: Creature[] = [
     sigil: "vrykolakas",
     accent: "#d35400",
     claimedBy: null,
+  },
+  {
+    id: "nightjar",
+    name: "Nightjar",
+    latin: "Caprimulgus crepusculi",
+    blurb:
+      "The dusk-bird the parish called goatsucker. It flies with its mouth open through the dark and swallows moths and ill omens whole: it does not drink blood, it drinks warnings — which is why it can warn you.",
+    sigil: "nightjar",
+    accent: "#c9762f",
+    claimedBy: "Nightjar",
   },
 ];
 
