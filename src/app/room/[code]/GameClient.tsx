@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { DoorOpen, Flame, ScrollText, Trophy, Zap } from "lucide-react";
 import { Renderer } from "@/game/render";
 import { AudioDirector } from "@/game/audio";
+import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
+import { SettingsDialog } from "@/game/settings-ui";
 import { BELL_X } from "@/game/types";
 import type { Snapshot } from "@/game/types";
 
@@ -25,6 +27,7 @@ export default function GameClient({ code }: { code: string }) {
   const [roleBanner, setRoleBanner] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
+  const [settings, setSettings] = useState<GameSettings>(createDefaultSettings);
 
   const snapRef = useRef<Snapshot | null>(null);
   const chatOpenRef = useRef(false);
@@ -32,6 +35,9 @@ export default function GameClient({ code }: { code: string }) {
   const keys = useRef(new Set<string>());
   const lastDir = useRef(0);
   const audioRef = useRef<AudioDirector | null>(null);
+  const settingsStoreRef = useRef<SettingsStore | null>(null);
+  const settingsDialogRef = useRef<SettingsDialog | null>(null);
+  const interactToggled = useRef(false);
   const lastPhase = useRef<string>("lobby");
   const chatInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -53,13 +59,65 @@ export default function GameClient({ code }: { code: string }) {
     } catch { /* network hiccup — next poll resyncs */ }
   }, [code]);
 
-  const ensureAudio = useCallback(() => {
-    if (!audioRef.current) {
-      audioRef.current = new AudioDirector();
-      setMuted(audioRef.current.muted);
-    }
-    audioRef.current.start();
+  const getSettingsStore = useCallback(() => {
+    if (!settingsStoreRef.current) settingsStoreRef.current = new SettingsStore();
+    return settingsStoreRef.current;
   }, []);
+
+  const stopInteract = useCallback(() => {
+    interactToggled.current = false;
+    void send({ interactHeld: false });
+  }, [send]);
+
+  const releaseInputs = useCallback(() => {
+    keys.current.clear();
+    lastDir.current = 0;
+    interactToggled.current = false;
+    void send({ dir: 0, interactHeld: false });
+  }, [send]);
+
+  const interactDown = useCallback(() => {
+    if (getSettingsStore().value.controls.interactMode === "toggle") {
+      interactToggled.current = !interactToggled.current;
+      void send({ action: "interact", interactHeld: interactToggled.current });
+    } else void send({ action: "interact", interactHeld: true });
+  }, [getSettingsStore, send]);
+
+  const interactUp = useCallback(() => {
+    if (getSettingsStore().value.controls.interactMode === "hold") stopInteract();
+  }, [getSettingsStore, stopInteract]);
+
+  const openChat = useCallback(() => {
+    stopInteract();
+    setChatOpen(true);
+    setTimeout(() => chatInputRef.current?.focus(), 30);
+  }, [stopInteract]);
+
+  useEffect(() => {
+    const store = getSettingsStore();
+    setSettings(store.value);
+    setMuted(store.value.audio.muted);
+    applyDocumentPreferences(store.value);
+    const unsubscribe = store.subscribe((next) => {
+      setSettings(next);
+      setMuted(next.audio.muted);
+      applyDocumentPreferences(next);
+    });
+    const dialog = new SettingsDialog(store, document.body, { onOpen: releaseInputs });
+    settingsDialogRef.current = dialog;
+    return () => {
+      unsubscribe();
+      dialog.destroy();
+      settingsDialogRef.current = null;
+      audioRef.current?.destroy();
+      audioRef.current = null;
+    };
+  }, [getSettingsStore, releaseInputs]);
+
+  const ensureAudio = useCallback(() => {
+    if (!audioRef.current) audioRef.current = new AudioDirector(getSettingsStore());
+    audioRef.current.start();
+  }, [getSettingsStore]);
 
   // ---- join + poll ----
   useEffect(() => {
@@ -123,29 +181,38 @@ export default function GameClient({ code }: { code: string }) {
     const unlockAudio = () => ensureAudio();
     const down = (e: KeyboardEvent) => {
       unlockAudio();
+      if (settingsDialogRef.current?.isOpen) return;
       if (chatOpenRef.current) {
-        if (e.key === "Escape") { setChatOpen(false); }
+        if (e.key === "Escape") setChatOpen(false);
         return;
       }
-      const k = e.key.toLowerCase();
-      if (k === "arrowleft" || k === "a") { keys.current.add("left"); computeDir(); e.preventDefault(); }
-      else if (k === "arrowright" || k === "d") { keys.current.add("right"); computeDir(); e.preventDefault(); }
-      else if (k === "e" && !e.repeat) { void send({ action: "interact", interactHeld: true }); }
-      else if ((k === "q" || k === " ") && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
-      else if (k === "f" && !e.repeat) { void send({ action: "blackout" }); }
-      else if (k === "enter") { setChatOpen(true); setTimeout(() => chatInputRef.current?.focus(), 30); e.preventDefault(); }
+      const target = e.target as HTMLElement | null;
+      if (target && (["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName) || target.isContentEditable)) return;
+      const controls = getSettingsStore().value.controls;
+      const bound = (action: BindableAction) => matchesControl(controls, action, e.code);
+      if (bound("left")) { keys.current.add("left"); computeDir(); e.preventDefault(); }
+      else if (bound("right")) { keys.current.add("right"); computeDir(); e.preventDefault(); }
+      else if (bound("interact") && !e.repeat) { interactDown(); e.preventDefault(); }
+      else if (bound("ability") && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
+      else if (bound("blackout") && !e.repeat) { void send({ action: "blackout" }); e.preventDefault(); }
+      else if (bound("chat") && !e.repeat) { openChat(); e.preventDefault(); }
     };
     const up = (e: KeyboardEvent) => {
-      const k = e.key.toLowerCase();
-      if (k === "arrowleft" || k === "a") { keys.current.delete("left"); computeDir(); }
-      else if (k === "arrowright" || k === "d") { keys.current.delete("right"); computeDir(); }
-      else if (k === "e") { void send({ interactHeld: false }); }
+      if (settingsDialogRef.current?.isOpen) return;
+      const controls = getSettingsStore().value.controls;
+      if (matchesControl(controls, "left", e.code)) { keys.current.delete("left"); computeDir(); }
+      else if (matchesControl(controls, "right", e.code)) { keys.current.delete("right"); computeDir(); }
+      else if (matchesControl(controls, "interact", e.code)) interactUp();
     };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("pointerdown", unlockAudio);
-    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("pointerdown", unlockAudio); };
-  }, [computeDir, send, ensureAudio]);
+    window.addEventListener("blur", releaseInputs);
+    return () => {
+      window.removeEventListener("keydown", down); window.removeEventListener("keyup", up);
+      window.removeEventListener("pointerdown", unlockAudio); window.removeEventListener("blur", releaseInputs);
+    };
+  }, [computeDir, send, ensureAudio, getSettingsStore, interactDown, interactUp, openChat, releaseInputs]);
 
   // ---- render loop ----
   useEffect(() => {
@@ -154,19 +221,24 @@ export default function GameClient({ code }: { code: string }) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     const renderer = new Renderer();
+    const store = getSettingsStore();
+    renderer.setSettings(store.value);
     let raf = 0;
     let last = performance.now();
     // visualViewport: mobile URL bars otherwise clip the bottom controls
     const vw = () => window.visualViewport?.width ?? window.innerWidth;
     const vh = () => window.visualViewport?.height ?? window.innerHeight;
     const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = vw() * dpr;
-      canvas.height = vh() * dpr;
+      const graphics = store.value.graphics;
+      const dprCap = graphics.quality === "high" ? 2 : graphics.quality === "medium" ? 1.5 : 1;
+      const dpr = Math.min(window.devicePixelRatio || 1, dprCap) * graphics.resolution;
+      canvas.width = Math.max(1, Math.round(vw() * dpr));
+      canvas.height = Math.max(1, Math.round(vh() * dpr));
       canvas.style.width = `${vw()}px`;
       canvas.style.height = `${vh()}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
+    const unsubscribe = store.subscribe((next) => { renderer.setSettings(next); resize(); });
     resize();
     window.addEventListener("resize", resize);
     window.visualViewport?.addEventListener("resize", resize);
@@ -185,11 +257,12 @@ export default function GameClient({ code }: { code: string }) {
     };
     raf = requestAnimationFrame(loop);
     return () => {
+      unsubscribe();
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
       window.visualViewport?.removeEventListener("resize", resize);
     };
-  }, []);
+  }, [getSettingsStore]);
 
   const holdMove = (dir: "left" | "right", on: boolean) => {
     if (on) keys.current.add(dir); else keys.current.delete(dir);
@@ -238,7 +311,7 @@ export default function GameClient({ code }: { code: string }) {
       {s && (
         <>
           {/* ---- top bar ---- */}
-          <div className="absolute left-0 right-0 top-0 flex items-start justify-between gap-2 p-2 pt-[max(0.5rem,env(safe-area-inset-top))] text-xs sm:gap-3 sm:p-3 sm:text-sm">
+          <div className="hc-hud-item hc-hud-fade absolute left-0 right-0 top-0 flex items-start justify-between gap-2 p-2 pt-[max(0.5rem,env(safe-area-inset-top))] text-xs sm:gap-3 sm:p-3 sm:text-sm">
             <div className="min-w-0 rounded border border-[#3a2733]/70 bg-[#140d18]/80 px-2 py-1.5 backdrop-blur sm:px-3 sm:py-2">
               <span className="hidden font-display text-lg text-[#d99a3d] md:inline">Hollow Creek</span>
               <button
@@ -266,13 +339,19 @@ export default function GameClient({ code }: { code: string }) {
                 title={muted ? "Unmute" : "Mute"}
                 className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] sm:py-1.5"
               >{muted ? "🔇" : "🔊"}</button>
+              <button
+                onClick={() => settingsDialogRef.current?.open()}
+                title="Settings"
+                aria-label="Settings"
+                className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a] sm:py-1.5"
+              >⚙</button>
               <button onClick={() => router.push("/")} className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#e06a5a] sm:px-3 sm:py-1.5"><span className="sm:hidden">✕</span><span className="hidden sm:inline">Leave</span></button>
             </div>
           </div>
 
           {/* ---- task list ---- */}
           {s.phase !== "lobby" && s.self.alive && s.tasks.length > 0 && (
-            <div className="absolute left-2 top-12 w-56 max-w-[70vw] rounded border border-[#3a2733]/60 bg-[#140d18]/70 p-2.5 text-xs backdrop-blur sm:left-3 sm:top-20 sm:w-60 sm:p-3">
+            <div className="hc-hud-item hc-hud-fade hc-task-list absolute left-2 top-12 w-56 max-w-[70vw] rounded border border-[#3a2733]/60 bg-[#140d18]/70 p-2.5 text-xs backdrop-blur sm:left-3 sm:top-20 sm:w-60 sm:p-3">
               <button onClick={() => setTasksOpen(!tasksOpen)} className="mb-1.5 flex w-full items-center justify-between uppercase tracking-widest text-[#9c8b7a]">
                 <span>{s.self.role === "hollow" ? "Town wards (pretend)" : "Town wards · shared"}</span>
                 <span className="sm:hidden">{tasksOpen ? "▾" : "▸"}</span>
@@ -290,7 +369,7 @@ export default function GameClient({ code }: { code: string }) {
 
           {/* ---- meeting banner ---- */}
           {s.phase === "meeting" && s.meeting && (
-            <div className="absolute left-1/2 top-11 w-[min(94vw,540px)] -translate-x-1/2 rounded border border-[#d99a3d]/40 bg-[#1c1210]/90 p-2 text-center backdrop-blur sm:top-16 sm:p-3">
+            <div className="hc-hud-item hc-hud-fade absolute left-1/2 top-11 w-[min(94vw,540px)] -translate-x-1/2 rounded border border-[#d99a3d]/40 bg-[#1c1210]/90 p-2 text-center backdrop-blur sm:top-16 sm:p-3">
               <div className="hidden font-display text-2xl text-[#d99a3d] sm:block" style={{ animation: "hc-bell-swing 1s ease-in-out infinite", display: undefined }}>🔔</div>
               <div className="font-display text-base leading-tight text-[#e9dfcf] sm:text-xl">🔔 {s.meeting.reason}</div>
               <div className="mt-1 text-sm text-[#9c8b7a]">
@@ -301,7 +380,7 @@ export default function GameClient({ code }: { code: string }) {
 
           {/* ---- vote panel ---- */}
           {s.phase === "meeting" && s.meeting?.inArea && s.self.alive && (
-            <div className="absolute right-2 top-28 max-h-[44dvh] w-44 overflow-y-auto rounded border border-[#3a2733] bg-[#140d18]/90 p-2 backdrop-blur sm:right-3 sm:top-32 sm:w-56 sm:max-h-[55dvh] sm:p-3">
+            <div className="hc-hud-item hc-hud-fade absolute right-2 top-28 max-h-[44dvh] w-44 overflow-y-auto rounded border border-[#3a2733] bg-[#140d18]/90 p-2 backdrop-blur sm:right-3 sm:top-32 sm:w-56 sm:max-h-[55dvh] sm:p-3">
               <div className="mb-2 font-display text-xl text-[#e9dfcf]">The Verdict</div>
               <div className="flex flex-col gap-1.5">
                 {voteOptions.map((o) => (
@@ -322,7 +401,7 @@ export default function GameClient({ code }: { code: string }) {
           )}
 
           {/* ---- event feed ---- */}
-          <div className="pointer-events-none absolute bottom-24 left-2 w-[min(70vw,360px)] space-y-1 text-xs sm:bottom-32 sm:left-3 sm:text-sm short:hidden">
+          <div className="hc-hud-item hc-hud-fade hc-event-feed pointer-events-none absolute bottom-24 left-2 w-[min(70vw,360px)] space-y-1 text-xs sm:bottom-32 sm:left-3 sm:text-sm short:hidden">
             {s.feed.slice(-5).map((f, i) => (
               <p key={f.at + "" + i} className={`rounded bg-[#0d0810]/60 px-2 py-0.5 italic text-[#c9b8a4] sm:py-1 ${i < 3 ? "hidden sm:block" : ""}`} style={{ opacity: 0.45 + (i / 5) * 0.55 }}>{f.text}</p>
             ))}
@@ -330,18 +409,18 @@ export default function GameClient({ code }: { code: string }) {
 
           {/* ---- status banners ---- */}
           {!s.self.alive && s.phase !== "ended" && (
-            <div className="pointer-events-none absolute left-1/2 top-[7.5rem] sm:top-28 max-w-[92vw] text-center -translate-x-1/2 rounded bg-[#0d0810]/70 px-4 py-1.5 text-sm text-[#9aa]">
+            <div className="hc-hud-item hc-hud-fade pointer-events-none absolute left-1/2 top-[7.5rem] sm:top-28 max-w-[92vw] text-center -translate-x-1/2 rounded bg-[#0d0810]/70 px-4 py-1.5 text-sm text-[#9aa]">
               You are dead. Drift as a ghost — only the dead can see and hear you.
             </div>
           )}
           {s.self.caged && s.self.alive && (
-            <div className="pointer-events-none absolute left-1/2 top-[7.5rem] sm:top-28 max-w-[92vw] text-center -translate-x-1/2 rounded bg-[#1c1210]/80 px-4 py-1.5 text-sm text-[#d99a3d]">
+            <div className="hc-hud-item hc-hud-fade pointer-events-none absolute left-1/2 top-[7.5rem] sm:top-28 max-w-[92vw] text-center -translate-x-1/2 rounded bg-[#1c1210]/80 px-4 py-1.5 text-sm text-[#d99a3d]">
               The iron is cold. You can still speak and vote — plead for the key.
             </div>
           )}
 
           {/* ---- bottom controls ---- */}
-          <div className="absolute bottom-0 left-0 right-0 flex items-end justify-between gap-2 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <div className="hc-hud-item hc-hud-fade hc-touch-controls absolute bottom-0 left-0 right-0 flex items-end justify-between gap-2 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))]">
             <div className="flex flex-col gap-1.5">
               {s.self.alive && s.phase !== "lobby" && (
                 <div className="flex items-center gap-1.5" title="Vigor — work and deeds drain it; stand still to recover. Low vigor slows chores, zero halts them.">
@@ -363,6 +442,7 @@ export default function GameClient({ code }: { code: string }) {
                   onPointerDown={(e) => { e.preventDefault(); holdMove(d, true); }}
                   onPointerUp={() => holdMove(d, false)}
                   onPointerLeave={() => holdMove(d, false)}
+                  onPointerCancel={() => holdMove(d, false)}
                   onContextMenu={(e) => e.preventDefault()}
                 >{glyph}</button>
               ))}
@@ -370,17 +450,18 @@ export default function GameClient({ code }: { code: string }) {
             </div>
             <div className="flex items-end gap-2 sm:gap-3">
               <button
-                onClick={() => { setChatOpen(true); setTimeout(() => chatInputRef.current?.focus(), 30); }}
+                onClick={openChat}
                 className="h-11 rounded-full border border-[#3a2733] bg-[#140d18]/80 px-3 text-sm text-[#d8c9b4] backdrop-blur hover:bg-[#2a1a26] sm:px-4"
               >💬<span className="hidden sm:inline"> Speak</span></button>
               <div className="flex flex-col items-center gap-1">
-                {s.hint && <span className="max-w-36 sm:max-w-44 rounded bg-[#0d0810]/80 px-2 py-0.5 text-center text-xs text-[#d99a3d]">{s.hint}</span>}
+                {s.hint && <span className="hc-interaction-hint max-w-36 rounded bg-[#0d0810]/80 px-2 py-0.5 text-center text-xs text-[#d99a3d] sm:max-w-44">{s.hint}</span>}
                 <button
-                  onPointerDown={() => send({ action: "interact", interactHeld: true })}
-                  onPointerUp={() => send({ interactHeld: false })}
-                  onPointerLeave={() => send({ interactHeld: false })}
+                  onPointerDown={(e) => { e.preventDefault(); interactDown(); }}
+                  onPointerUp={interactUp}
+                  onPointerLeave={interactUp}
+                  onPointerCancel={interactUp}
                   className={`h-[52px] w-[52px] rounded-full border-2 font-display text-sm sm:h-16 sm:w-16 sm:text-base short:h-12 short:w-12 text-lg backdrop-blur ${s.hint ? "border-[#d99a3d] bg-[#3a2410]/90 text-[#ffd98a]" : "border-[#3a2733] bg-[#140d18]/80 text-[#9c8b7a]"}`}
-                >E</button>
+                >{keyLabel(settings.controls.interact)}</button>
               </div>
               {s.self.role === "hollow" && s.self.alive && s.phase === "playing" && (
                 <div className="flex flex-col items-center gap-1">
@@ -391,7 +472,7 @@ export default function GameClient({ code }: { code: string }) {
                     onClick={() => send({ action: "blackout" })}
                     title="Snuff every lantern (F)"
                     className={`h-[52px] w-[52px] rounded-full border-2 font-display text-sm sm:h-16 sm:w-16 sm:text-base short:h-12 short:w-12 text-base leading-tight backdrop-blur ${s.self.canBlackout ? "border-[#7a6ab0] bg-[#1a1430]/90 text-[#b0a0e0] shadow-[0_0_18px_rgba(120,100,200,0.35)]" : "border-[#3a2733] bg-[#140d18]/80 text-[#6b5a55]"}`}
-                  >Snuff<br /><span className="text-[10px]">F</span></button>
+                  >Snuff<br /><span className="text-[10px]">{keyLabel(settings.controls.blackout)}</span></button>
                 </div>
               )}
               <div className="flex flex-col items-center gap-1">
@@ -409,7 +490,7 @@ export default function GameClient({ code }: { code: string }) {
 
           {/* ---- chat ---- */}
           {chatOpen && (
-            <div className="absolute bottom-20 left-1/2 w-[min(92vw,420px)] sm:bottom-24 -translate-x-1/2">
+            <div className="hc-hud-item absolute bottom-20 left-1/2 w-[min(92vw,420px)] sm:bottom-24 -translate-x-1/2">
               <input
                 ref={chatInputRef}
                 value={chatText}
@@ -450,6 +531,10 @@ export default function GameClient({ code }: { code: string }) {
                 ) : (
                   <p className="mt-6 text-[#9c8b7a]">Waiting for the host to let night fall…</p>
                 )}
+                <div className="mt-4 flex justify-center gap-2">
+                  <button onClick={() => settingsDialogRef.current?.open()} className="rounded border border-[#3a2733] px-4 py-1.5 text-sm text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]">⚙ Settings</button>
+                  <button onClick={() => router.push("/")} className="rounded border border-[#3a2733] px-4 py-1.5 text-sm text-[#9c8b7a] hover:text-[#e9dfcf]">Other towns</button>
+                </div>
                 <p className="mt-3 text-xs text-[#6b5a55]">4–10 players · 1–2 of you will be Hollow</p>
               </div>
             </div>
@@ -462,7 +547,7 @@ export default function GameClient({ code }: { code: string }) {
                 {roleBanner === "hollow" ? (
                   <>
                     <p className="font-display text-5xl sm:text-7xl text-[#ff4a3a] drop-shadow-[0_0_30px_rgba(255,60,40,0.6)]">You are Hollow</p>
-                    <p className="mt-3 text-lg text-[#c9a0a0]">Wear their faces. Kill when none watch. Q to strike.</p>
+                    <p className="mt-3 text-lg text-[#c9a0a0]">Wear their faces. Kill when none watch. {keyLabel(settings.controls.ability)} to strike, {keyLabel(settings.controls.blackout)} to snuff the lights.</p>
                   </>
                 ) : (
                   <>
@@ -494,7 +579,8 @@ export default function GameClient({ code }: { code: string }) {
                     The lantern-bearer may gather this town for another night…
                   </p>
                 )}
-                <div className="mt-3 flex justify-center gap-3">
+                <div className="mt-3 flex flex-wrap justify-center gap-3">
+                  <button onClick={() => settingsDialogRef.current?.open()} className="rounded border border-[#3a2733] px-4 py-2 text-sm text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]">⚙ Settings</button>
                   <button onClick={() => router.push("/")} className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#c9b8a4] hover:bg-[#2a1a26]"><DoorOpen className="h-4 w-4" /> Other towns</button>
                   <a href={`/chronicle/${s.code}`} target="_blank" className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#d99a3d] hover:bg-[#2a1a26]"><ScrollText className="h-4 w-4" /> Chronicle</a>
                   <a href="/stats" target="_blank" className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#c9b8a4] hover:bg-[#2a1a26]"><Trophy className="h-4 w-4" /> Records</a>

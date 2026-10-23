@@ -51,6 +51,8 @@ cp icon-192.png play/icon.png
 
 The archive starts with `index.html`, `game.js`, `favicon.ico`, and the icons.
 There is no nested iframe and no server-side code or database secret in it.
+Audio, graphics, HUD, accessibility, and key-binding preferences are stored only
+in the player's browser under `hc_settings_v1`; they require no backend changes.
 
 For temporary multi-backend tests, the menu probes the configured servers. A
 join by code also tries the other backends when the current one does not know

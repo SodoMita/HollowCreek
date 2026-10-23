@@ -1,10 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, DoorOpen, Flame, Moon, Plus, RefreshCw, Skull, Trophy, Users } from "lucide-react";
 import Link from "next/link";
 import type { RoomListing } from "@/game/types";
+import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, type GameSettings } from "@/game/settings";
+import { SettingsDialog } from "@/game/settings-ui";
 
 function getPid(): string {
   let pid = localStorage.getItem("hc_pid");
@@ -23,9 +25,25 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [rooms, setRooms] = useState<RoomListing[]>([]);
   const [roomsLoaded, setRoomsLoaded] = useState(false);
+  const [settings, setSettings] = useState<GameSettings>(createDefaultSettings);
+  const settingsDialog = useRef<SettingsDialog | null>(null);
 
   useEffect(() => {
     setName(localStorage.getItem("hc_name") ?? "");
+    const store = new SettingsStore();
+    setSettings(store.value);
+    applyDocumentPreferences(store.value);
+    const unsubscribe = store.subscribe((next) => {
+      setSettings(next);
+      applyDocumentPreferences(next);
+    });
+    const dialog = new SettingsDialog(store);
+    settingsDialog.current = dialog;
+    return () => {
+      unsubscribe();
+      dialog.destroy();
+      settingsDialog.current = null;
+    };
   }, []);
 
   const refreshRooms = useCallback(async () => {
@@ -91,7 +109,7 @@ export default function Home() {
       {/* moon */}
       <div className="pointer-events-none absolute right-[12%] top-[10%] h-28 w-28 rounded-full bg-[#e8ddc0] shadow-[0_0_90px_40px_rgba(240,225,190,0.25)]" />
       {/* falling leaves */}
-      {Array.from({ length: 14 }).map((_, i) => (
+      {settings.graphics.particles && Array.from({ length: 14 }).map((_, i) => (
         <span
           key={i}
           className="pointer-events-none absolute top-0 block h-2.5 w-3.5 rounded-[60%_40%_60%_40%]"
@@ -103,10 +121,10 @@ export default function Home() {
         />
       ))}
       {/* fog */}
-      <div
+      {settings.graphics.fog && <div
         className="pointer-events-none absolute bottom-[16%] left-[-10%] h-40 w-[120%] rounded-full bg-[#8a7f95]/10 blur-2xl"
         style={{ animation: "hc-fog-drift 14s ease-in-out infinite" }}
-      />
+      />}
       {/* skyline silhouette */}
       <svg className="pointer-events-none absolute bottom-0 left-0 w-full" viewBox="0 0 1200 260" preserveAspectRatio="none" aria-hidden>
         <path
@@ -138,10 +156,10 @@ export default function Home() {
           </p>
           <div className="hc-rise-3 mt-8 grid max-w-lg grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             {[
-              ["A / D", "walk the street"],
-              ["E", "interact · hold for chores"],
-              ["Q / F", "kill · bell · snuff lights"],
-              ["Enter", "speak (bubble)"],
+              [`${keyLabel(settings.controls.left)} / ${keyLabel(settings.controls.right)}`, "walk the street"],
+              [keyLabel(settings.controls.interact), settings.controls.interactMode === "hold" ? "interact · hold for chores" : "interact · toggle chores"],
+              [`${keyLabel(settings.controls.ability)} / ${keyLabel(settings.controls.blackout)}`, "role ability · snuff lights"],
+              [keyLabel(settings.controls.chat), "speak (bubble)"],
             ].map(([k, v]) => (
               <div key={k} className="rounded border border-[#3a2733] bg-[#160e1a]/80 p-3">
                 <div className="font-mono text-[#d99a3d]">{k}</div>
@@ -153,14 +171,21 @@ export default function Home() {
 
         {/* right: forms */}
         <div className="hc-rise-2 w-full max-w-sm shrink-0 rounded-lg border border-[#3a2733] bg-[#140d18]/90 p-6 shadow-[0_20px_80px_rgba(0,0,0,0.6)] backdrop-blur">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-display text-3xl text-[#e9dfcf]">Enter the town</h2>
-            <Link
-              href="/stats"
-              className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition hover:border-[#c9762f]/40 hover:text-[#d99a3d]"
-            >
-              <Trophy className="h-3.5 w-3.5" /> Hall of Records
-            </Link>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => settingsDialog.current?.open()}
+                className="rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#c9b8a4] transition hover:border-[#c9762f]/40 hover:text-[#ffd98a]"
+                aria-label="Open settings"
+              >⚙ Settings</button>
+              <Link
+                href="/stats"
+                className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition hover:border-[#c9762f]/40 hover:text-[#d99a3d]"
+              >
+                <Trophy className="h-3.5 w-3.5" /> Records
+              </Link>
+            </div>
           </div>
           <label className="mt-5 block text-xs uppercase tracking-widest text-[#9c8b7a]">Your name</label>
           <input

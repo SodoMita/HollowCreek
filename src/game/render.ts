@@ -3,6 +3,7 @@ import {
   BELL_X, CAGE_XS, MEETING_FROM, MEETING_TO, STATIONS, WORLD_W,
 } from "./types";
 import type { Snapshot, Station } from "./types";
+import { createDefaultSettings, type GameSettings } from "./settings";
 
 interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: string; s: number }
 
@@ -10,11 +11,12 @@ const LEAF_COLORS = ["#b4552a", "#c9762f", "#8f3b1f", "#d99a3d", "#7a4a21"];
 
 export class Renderer {
   private leaves: Leaf[] = [];
+  private settings: GameSettings = createDefaultSettings();
   cameraX = 0;
   private visionR = 420;
 
   constructor() {
-    for (let i = 0; i < 70; i++) {
+    for (let i = 0; i < 110; i++) {
       this.leaves.push({
         x: Math.random() * WORLD_W,
         y: Math.random() * 600,
@@ -27,6 +29,18 @@ export class Renderer {
     }
   }
 
+  setSettings(settings: GameSettings) {
+    this.settings = settings;
+  }
+
+  private qualityCount(high: number, medium: number, low: number) {
+    return this.settings.graphics.quality === "high" ? high : this.settings.graphics.quality === "medium" ? medium : low;
+  }
+
+  private glow(ctx: CanvasRenderingContext2D, blur: number) {
+    ctx.shadowBlur = this.settings.graphics.glow ? blur : 0;
+  }
+
   render(
     ctx: CanvasRenderingContext2D,
     w: number,
@@ -36,65 +50,102 @@ export class Renderer {
     t: number, // seconds
     dt: number
   ) {
+    const graphics = this.settings.graphics;
+    if (graphics.reducedMotion) t = 0;
     const me = snap.players.find((p) => p.id === snap.self.id);
     const meX = me ? displayX.get(me.id) ?? me.x : WORLD_W / 2;
     const targetCam = Math.max(0, Math.min(WORLD_W - w, meX - w / 2));
-    this.cameraX += (targetCam - this.cameraX) * Math.min(1, dt * 6);
+    if (graphics.cameraSmoothing) this.cameraX += (targetCam - this.cameraX) * Math.min(1, dt * 6);
+    else this.cameraX = targetCam;
     if (WORLD_W < w) this.cameraX = (WORLD_W - w) / 2;
     const cam = this.cameraX;
     const ground = h * 0.78;
     const now = snap.now;
 
-    // --- sky ---
+    // --- layered dusk sky ---
     const sky = ctx.createLinearGradient(0, 0, 0, ground);
-    sky.addColorStop(0, "#120b1e");
-    sky.addColorStop(0.5, "#33172b");
-    sky.addColorStop(0.85, "#6e3320");
-    sky.addColorStop(1, "#8a4a24");
+    sky.addColorStop(0, "#090b1b");
+    sky.addColorStop(0.38, "#211329");
+    sky.addColorStop(0.72, "#512534");
+    sky.addColorStop(0.9, "#9a4c2c");
+    sky.addColorStop(1, "#c0743c");
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, w, ground);
 
-    // moon
-    const mx = w * 0.78 - cam * 0.03;
+    // Deterministic stars: no shimmering random layout between frames.
+    const starCount = this.qualityCount(95, 48, 18);
     ctx.save();
-    ctx.shadowColor = "rgba(240,225,190,0.8)";
-    ctx.shadowBlur = 60;
-    ctx.fillStyle = "#e8ddc0";
-    ctx.beginPath();
-    ctx.arc(mx, h * 0.18, 42, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = "rgba(180,170,140,0.5)";
-    for (const [dx, dy, r] of [[-12, -8, 7], [10, 10, 5], [14, -14, 4]] as const) {
-      ctx.beginPath(); ctx.arc(mx + dx, h * 0.18 + dy, r, 0, Math.PI * 2); ctx.fill();
+    for (let i = 0; i < starCount; i++) {
+      const sx = ((i * 197.3 + 41) % (w + 160)) - 80 - (cam * 0.008) % 40;
+      const sy = 18 + ((i * 83.7) % Math.max(60, ground * 0.52));
+      const radius = 0.45 + (i % 7 === 0 ? 0.85 : 0.25);
+      ctx.globalAlpha = 0.25 + (i % 5) * 0.1;
+      ctx.fillStyle = i % 9 === 0 ? "#ffd9a0" : "#d9d8ed";
+      ctx.beginPath(); ctx.arc(sx, sy, radius, 0, Math.PI * 2); ctx.fill();
     }
     ctx.restore();
 
-    // --- far hills ---
-    ctx.fillStyle = "#1c1220";
-    ctx.beginPath();
-    ctx.moveTo(0, ground);
-    for (let sx = 0; sx <= w; sx += 20) {
-      const wx = sx + cam * 0.15;
-      ctx.lineTo(sx, ground - 90 - Math.sin(wx * 0.004) * 45 - Math.sin(wx * 0.0013 + 3) * 60);
+    // Moon with a broad atmospheric halo and crisp crater detail.
+    const mx = w * 0.78 - cam * 0.03;
+    const my = h * 0.18;
+    ctx.save();
+    if (graphics.glow) {
+      const halo = ctx.createRadialGradient(mx, my, 32, mx, my, 145);
+      halo.addColorStop(0, "rgba(244,222,181,.25)");
+      halo.addColorStop(0.45, "rgba(222,191,170,.08)");
+      halo.addColorStop(1, "rgba(222,191,170,0)");
+      ctx.fillStyle = halo; ctx.fillRect(mx - 150, my - 150, 300, 300);
     }
-    ctx.lineTo(w, ground);
-    ctx.fill();
+    ctx.shadowColor = "rgba(240,225,190,0.8)";
+    this.glow(ctx, 34);
+    const moon = ctx.createRadialGradient(mx - 13, my - 15, 4, mx, my, 45);
+    moon.addColorStop(0, "#fff4d8"); moon.addColorStop(0.7, "#e8ddc0"); moon.addColorStop(1, "#bcae98");
+    ctx.fillStyle = moon;
+    ctx.beginPath(); ctx.arc(mx, my, 42, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "rgba(128,119,112,0.25)";
+    for (const [dx, dy, r] of [[-12, -8, 7], [10, 10, 5], [14, -14, 4], [-20, 16, 3]] as const) {
+      ctx.beginPath(); ctx.arc(mx + dx, my + dy, r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
 
-    // --- tree line (parallax) ---
+    // Long, slow cloud banks crossing the moon and horizon.
+    if (graphics.quality !== "low") {
+      ctx.save();
+      ctx.fillStyle = "rgba(27,19,36,.22)";
+      for (let i = 0; i < 4; i++) {
+        const cx = ((i * 410 + t * (3 + i)) % (w + 500)) - 250;
+        const cy = 80 + i * 58;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, 150, 17, -0.05, 0, Math.PI * 2);
+        ctx.ellipse(cx + 95, cy + 5, 105, 12, 0.04, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // --- two layers of hills, then an irregular wooded horizon ---
+    ctx.fillStyle = "#2a1828";
+    ctx.beginPath(); ctx.moveTo(0, ground);
+    for (let sx = 0; sx <= w + 20; sx += 20) {
+      const wx = sx + cam * 0.09;
+      ctx.lineTo(sx, ground - 135 - Math.sin(wx * 0.0021 + 1) * 48 - Math.sin(wx * 0.006) * 22);
+    }
+    ctx.lineTo(w, ground); ctx.fill();
+    ctx.fillStyle = "#1b121d";
+    ctx.beginPath(); ctx.moveTo(0, ground);
+    for (let sx = 0; sx <= w + 20; sx += 20) {
+      const wx = sx + cam * 0.15;
+      ctx.lineTo(sx, ground - 82 - Math.sin(wx * 0.004) * 38 - Math.sin(wx * 0.0013 + 3) * 48);
+    }
+    ctx.lineTo(w, ground); ctx.fill();
+
     for (let i = 0; i < 60; i++) {
       const wx = i * 130 + ((i * 97) % 60);
       const sx = wx - cam * 0.45;
-      if (sx < -80 || sx > w + 80) continue;
-      const th = 70 + ((i * 53) % 50);
-      ctx.fillStyle = "#241318";
-      ctx.fillRect(sx - 3, ground - th, 6, th);
-      ctx.fillStyle = i % 3 === 0 ? "#4a2417" : i % 3 === 1 ? "#552d14" : "#3c1f16";
-      ctx.beginPath();
-      ctx.arc(sx, ground - th - 12, 26 + ((i * 31) % 14), 0, Math.PI * 2);
-      ctx.arc(sx - 18, ground - th + 4, 18, 0, Math.PI * 2);
-      ctx.arc(sx + 18, ground - th + 4, 18, 0, Math.PI * 2);
-      ctx.fill();
+      if (sx < -90 || sx > w + 90) continue;
+      const th = 74 + ((i * 53) % 56);
+      this.drawTree(ctx, sx, ground, th, i);
     }
 
     // --- ground ---
@@ -104,15 +155,42 @@ export class Renderer {
     gg.addColorStop(1, "#0d0806");
     ctx.fillStyle = gg;
     ctx.fillRect(0, ground, w, h - ground);
-    // road line + leaf piles
-    ctx.strokeStyle = "rgba(200,150,90,0.12)";
+    // Rutted road, scattered stones, leaf piles, and a broken fence rhythm.
+    ctx.strokeStyle = "rgba(218,164,100,0.13)";
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(0, ground + 26); ctx.lineTo(w, ground + 26); ctx.stroke();
-    ctx.fillStyle = "rgba(160,90,40,0.25)";
+    for (const offset of [19, 34]) {
+      ctx.beginPath();
+      for (let sx = 0; sx <= w; sx += 30) {
+        const y = ground + offset + Math.sin((sx + cam) * 0.017) * 2;
+        if (sx === 0) ctx.moveTo(sx, y); else ctx.lineTo(sx, y);
+      }
+      ctx.stroke();
+    }
     for (let i = 0; i < 50; i++) {
       const sx = i * 190 + ((i * 71) % 90) - cam;
       if (sx < -60 || sx > w + 60) continue;
+      ctx.fillStyle = "rgba(160,90,40,0.28)";
       ctx.beginPath(); ctx.ellipse(sx, ground + 8, 30, 6, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "rgba(205,129,55,.28)";
+      for (let j = 0; j < 4; j++) {
+        ctx.beginPath(); ctx.ellipse(sx - 18 + j * 11, ground + 4 + (j % 2) * 3, 5, 2, j * 0.7, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    if (graphics.quality !== "low") {
+      ctx.strokeStyle = "rgba(107,75,50,.55)"; ctx.lineWidth = 4;
+      for (let i = 0; i < 24; i++) {
+        const fx = i * 235 - cam;
+        if (fx < -80 || fx > w + 80) continue;
+        const fy = ground + 48 + (i % 3) * 3;
+        ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx - 2, fy - 31); ctx.moveTo(fx + 74, fy); ctx.lineTo(fx + 72, fy - 28);
+        ctx.moveTo(fx - 5, fy - 23); ctx.lineTo(fx + 78, fy - 17); ctx.moveTo(fx - 4, fy - 9); ctx.lineTo(fx + 77, fy - 5); ctx.stroke();
+      }
+      ctx.fillStyle = "rgba(93,103,111,.18)";
+      for (let i = 0; i < 30; i++) {
+        const sx = i * 173 + 60 - cam;
+        if (sx < 0 || sx > w) continue;
+        ctx.beginPath(); ctx.ellipse(sx, ground + 27, 4 + i % 5, 2, 0, 0, Math.PI * 2); ctx.fill();
+      }
     }
 
     // meeting square highlight
@@ -123,7 +201,10 @@ export class Renderer {
     }
 
     // --- stations / buildings ---
-    for (const st of STATIONS) this.drawStation(ctx, st, st.x - cam, ground, t, now, snap);
+    for (const st of STATIONS) {
+      const sx = st.x - cam;
+      if (sx > -280 && sx < w + 280) this.drawStation(ctx, st, sx, ground, t, now, snap);
+    }
 
     // --- bell tower ---
     this.drawBellTower(ctx, BELL_X - cam, ground, t, now - snap.bellAt < 4000);
@@ -137,7 +218,7 @@ export class Renderer {
       const bob = Math.sin(t * 3) * 4;
       ctx.save();
       ctx.shadowColor = "#ffd76a";
-      ctx.shadowBlur = 16;
+      this.glow(ctx, 16);
       ctx.strokeStyle = "#e8b93c";
       ctx.lineWidth = 3.5;
       ctx.beginPath(); ctx.arc(kx, ground - 26 + bob, 6, 0, Math.PI * 2); ctx.stroke();
@@ -183,6 +264,10 @@ export class Renderer {
       const floatY = ghost ? -14 + Math.sin(t * 2 + p.x) * 5 : 0;
       ctx.save();
       if (ghost) ctx.globalAlpha = 0.45;
+      if (!ghost) {
+        ctx.fillStyle = "rgba(0,0,0,.35)";
+        ctx.beginPath(); ctx.ellipse(px, ground + 2, 17, 4, 0, 0, Math.PI * 2); ctx.fill();
+      }
       this.drawFigure(ctx, px, ground + floatY, p.color, p.facing, p.moving, ghost, isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t, 1);
       ctx.restore();
       // key icon
@@ -192,44 +277,57 @@ export class Renderer {
         ctx.textAlign = "center";
         ctx.fillText("🗝", px + 16, ground - 52 + floatY);
       }
-      // name
-      ctx.font = "600 12px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillStyle = p.id === snap.self.id ? "#ffd98a" : isMate ? "#ff7a6a" : "rgba(235,225,210,0.9)";
-      ctx.fillText(p.name + (snap.phase === "meeting" && p.voted ? " ✓" : ""), px, ground - 62 + floatY);
-      // speech bubble
-      if (p.bubble) this.drawBubble(ctx, px, ground - 72 + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
+      // name and speech are optional HUD layers; the figures remain identifiable by color.
+      if (this.settings.interface.playerNames) {
+        ctx.font = "600 12px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        const label = p.name + (snap.phase === "meeting" && p.voted ? " ✓" : "");
+        const width = ctx.measureText(label).width;
+        ctx.fillStyle = "rgba(5,3,8,.55)";
+        ctx.beginPath(); ctx.roundRect(px - width / 2 - 5, ground - 75 + floatY, width + 10, 17, 5); ctx.fill();
+        ctx.fillStyle = p.id === snap.self.id ? "#ffd98a" : isMate ? "#ff7a6a" : "rgba(245,235,220,.96)";
+        ctx.fillText(label, px, ground - 62 + floatY);
+      }
+      if (p.bubble && this.settings.interface.speechBubbles) this.drawBubble(ctx, px, ground - 72 + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
     }
 
     // --- cages (front bars) ---
     for (const c of snap.cages) this.drawCage(ctx, c.x - cam, ground, true);
 
-    // --- falling leaves ---
-    for (const l of this.leaves) {
-      l.x += l.vx * dt; l.y += l.vy * dt; l.r += dt * 2;
-      if (l.y > ground + 10) { l.y = -20; l.x = cam + Math.random() * w; }
-      if (l.x < cam - 60) l.x = cam + w + 40;
-      const sx = l.x - cam;
-      if (sx < -20 || sx > w + 20) continue;
-      ctx.save();
-      ctx.translate(sx, l.y * (h / 700));
-      ctx.rotate(l.r);
-      ctx.fillStyle = l.c;
-      ctx.globalAlpha = 0.8;
-      ctx.beginPath(); ctx.ellipse(0, 0, l.s, l.s * 0.5, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
+    // --- falling leaves (quantity follows the detail preset) ---
+    if (graphics.particles) {
+      const count = this.qualityCount(100, 55, 22);
+      for (const l of this.leaves.slice(0, count)) {
+        if (!graphics.reducedMotion) { l.x += l.vx * dt; l.y += l.vy * dt; l.r += dt * 2; }
+        if (l.y > ground + 10) { l.y = -20; l.x = cam + Math.random() * w; }
+        if (l.x < cam - 60) l.x = cam + w + 40;
+        const sx = l.x - cam;
+        if (sx < -20 || sx > w + 20) continue;
+        ctx.save();
+        ctx.translate(sx, l.y * (h / 700));
+        ctx.rotate(l.r);
+        ctx.fillStyle = l.c;
+        ctx.globalAlpha = 0.72;
+        ctx.beginPath(); ctx.ellipse(0, 0, l.s, l.s * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "rgba(40,18,10,.45)"; ctx.lineWidth = 0.7;
+        ctx.beginPath(); ctx.moveTo(-l.s, 0); ctx.lineTo(l.s, 0); ctx.stroke();
+        ctx.restore();
+      }
     }
 
-    // --- fog ---
-    for (let i = 0; i < 3; i++) {
-      const fy = ground - 30 - i * 26;
-      const drift = Math.sin(t * 0.3 + i * 2) * 60;
-      const fog = ctx.createLinearGradient(0, fy - 24, 0, fy + 24);
-      fog.addColorStop(0, "rgba(120,110,130,0)");
-      fog.addColorStop(0.5, `rgba(130,120,140,${0.10 + i * 0.02})`);
-      fog.addColorStop(1, "rgba(120,110,130,0)");
-      ctx.fillStyle = fog;
-      ctx.fillRect(drift - 80, fy - 24, w + 160, 48);
+    // --- low, layered fog ---
+    if (graphics.fog) {
+      const layers = this.qualityCount(4, 3, 1);
+      for (let i = 0; i < layers; i++) {
+        const fy = ground - 24 - i * 25;
+        const drift = Math.sin(t * 0.24 + i * 2) * 70;
+        const fog = ctx.createLinearGradient(0, fy - 25, 0, fy + 25);
+        fog.addColorStop(0, "rgba(120,110,130,0)");
+        fog.addColorStop(0.5, `rgba(145,132,151,${0.075 + i * 0.018})`);
+        fog.addColorStop(1, "rgba(120,110,130,0)");
+        ctx.fillStyle = fog;
+        ctx.fillRect(drift - 90, fy - 25, w + 180, 50);
+      }
     }
 
     // --- lantern-light darkness mask (server-authoritative vision radius) ---
@@ -250,15 +348,17 @@ export class Renderer {
     }
 
     // --- vignette ---
-    const vg = ctx.createRadialGradient(w / 2, h / 2, h * 0.35, w / 2, h / 2, h * 0.95);
-    vg.addColorStop(0, "rgba(0,0,0,0)");
-    vg.addColorStop(1, "rgba(5,2,8,0.75)");
-    ctx.fillStyle = vg;
-    ctx.fillRect(0, 0, w, h);
+    if (graphics.vignette) {
+      const vg = ctx.createRadialGradient(w / 2, h / 2, h * 0.35, w / 2, h / 2, h * 0.95);
+      vg.addColorStop(0, "rgba(0,0,0,0)");
+      vg.addColorStop(1, "rgba(5,2,8,0.72)");
+      ctx.fillStyle = vg;
+      ctx.fillRect(0, 0, w, h);
+    }
 
-    // --- horror flicker ---
+    // --- horror flicker (decorative only; never changes authoritative vision) ---
     const since = now - snap.flickerAt;
-    if (since >= 0 && since < 900) {
+    if (graphics.flicker && !graphics.reducedMotion && since >= 0 && since < 900) {
       const a = Math.random() < 0.5 ? 0.55 : 0.15;
       ctx.fillStyle = `rgba(0,0,0,${a * (1 - since / 900)})`;
       ctx.fillRect(0, 0, w, h);
@@ -267,46 +367,101 @@ export class Renderer {
 
   // -------------------------------------------------------------------------
 
+  private drawTree(ctx: CanvasRenderingContext2D, x: number, ground: number, height: number, seed: number) {
+    const top = ground - height;
+    ctx.save();
+    ctx.strokeStyle = seed % 2 ? "#241718" : "#2c1918";
+    ctx.lineWidth = 6;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(x, ground); ctx.lineTo(x + (seed % 3 - 1) * 3, top + 18);
+    ctx.moveTo(x, top + 45); ctx.lineTo(x - 19, top + 23);
+    ctx.moveTo(x + 1, top + 35); ctx.lineTo(x + 23, top + 10);
+    if (seed % 4 === 0) { ctx.moveTo(x - 8, top + 35); ctx.lineTo(x - 30, top + 39); }
+    ctx.stroke();
+    const palettes = [
+      ["#3a1d1b", "#56251d", "#74321f"],
+      ["#3a2118", "#5c301b", "#85411f"],
+      ["#291a1b", "#43231d", "#613020"],
+    ];
+    const palette = palettes[seed % palettes.length];
+    const clusters = this.qualityCount(8, 6, 4);
+    for (let j = 0; j < clusters; j++) {
+      const angle = j * 2.4 + seed;
+      const cx = x + Math.sin(angle) * (15 + (j % 3) * 6);
+      const cy = top + 9 + Math.cos(angle * 1.3) * 15 + j * 2.2;
+      const radius = 17 + ((seed * 13 + j * 7) % 13);
+      ctx.fillStyle = palette[j % palette.length];
+      ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.fill();
+    }
+    if (this.settings.graphics.quality === "high") {
+      ctx.fillStyle = "rgba(207,105,43,.22)";
+      for (let j = 0; j < 7; j++) {
+        const lx = x - 28 + ((seed * 31 + j * 17) % 58);
+        const ly = top - 9 + ((seed * 19 + j * 23) % 50);
+        ctx.beginPath(); ctx.arc(lx, ly, 2.2, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
   private drawFigure(
     ctx: CanvasRenderingContext2D, x: number, groundY: number, color: string,
     facing: number, moving: boolean, ghost: boolean, redEyes: boolean, t: number, scale: number
   ) {
-    const bob = moving ? Math.sin(t * 11 + x * 0.1) * 2.2 : 0;
+    const gait = Math.sin(t * 11 + x * 0.1);
+    const bob = moving ? gait * 1.8 : Math.sin(t * 1.7 + x) * 0.35;
     const y = groundY + bob;
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(facing * scale, scale);
-    // legs
+    ctx.lineCap = "round";
+
     if (!ghost) {
-      const swing = moving ? Math.sin(t * 11 + x * 0.1) * 5 : 0;
-      ctx.strokeStyle = "#171017";
-      ctx.lineWidth = 5;
+      const swing = moving ? gait * 5 : 0;
+      ctx.strokeStyle = "#100d13"; ctx.lineWidth = 5;
       ctx.beginPath();
-      ctx.moveTo(-4, -14); ctx.lineTo(-4 + swing, 0);
-      ctx.moveTo(4, -14); ctx.lineTo(4 - swing, 0);
+      ctx.moveTo(-4, -14); ctx.lineTo(-4 + swing, -1); ctx.lineTo(-1 + swing, 0);
+      ctx.moveTo(4, -14); ctx.lineTo(4 - swing, -1); ctx.lineTo(7 - swing, 0);
       ctx.stroke();
     }
-    // hooded body
+
+    // Rear sleeve and arm make the walking direction legible at small sizes.
+    ctx.strokeStyle = color; ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.moveTo(-6, -33); ctx.lineTo(-12 - (moving ? gait * 3 : 0), -18); ctx.stroke();
+
+    // Cloak silhouette, hem, and a shaded fold down the trailing side.
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.moveTo(-11, -12);
-    ctx.quadraticCurveTo(-13, -38, 0, -46);
-    ctx.quadraticCurveTo(13, -38, 11, -12);
-    if (ghost) { ctx.lineTo(7, -6); ctx.lineTo(3, -12); ctx.lineTo(-2, -5); ctx.lineTo(-6, -12); }
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = "rgba(0,0,0,0.25)";
-    ctx.beginPath();
-    ctx.moveTo(-11, -12); ctx.quadraticCurveTo(-13, -38, 0, -46); ctx.quadraticCurveTo(-4, -34, -5, -12);
+    ctx.moveTo(-12, -12);
+    ctx.quadraticCurveTo(-15, -32, -8, -41);
+    ctx.quadraticCurveTo(0, -49, 9, -41);
+    ctx.quadraticCurveTo(15, -30, 12, -12);
+    if (ghost) { ctx.lineTo(8, -5); ctx.lineTo(3, -12); ctx.lineTo(-2, -5); ctx.lineTo(-7, -12); }
     ctx.closePath(); ctx.fill();
-    // face void
-    ctx.fillStyle = "#0c0710";
-    ctx.beginPath(); ctx.ellipse(4, -36, 7.5, 6.5, 0, 0, Math.PI * 2); ctx.fill();
-    // eyes
-    ctx.fillStyle = redEyes ? "#ff4a3a" : "#e8e0c8";
+    ctx.fillStyle = "rgba(5,3,9,.3)";
+    ctx.beginPath();
+    ctx.moveTo(-12, -12); ctx.quadraticCurveTo(-15, -32, -8, -41);
+    ctx.quadraticCurveTo(-4, -34, -5, -12); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = "rgba(255,235,210,.13)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(5, -28); ctx.quadraticCurveTo(8, -20, 7, -12); ctx.stroke();
+
+    // Front sleeve and a small metal clasp break up the single-color body.
+    ctx.strokeStyle = color; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.moveTo(7, -33); ctx.lineTo(13 + (moving ? gait * 3 : 0), -20); ctx.stroke();
+    ctx.fillStyle = "#c5a56a"; ctx.beginPath(); ctx.arc(3, -29, 1.4, 0, Math.PI * 2); ctx.fill();
+
+    // Raised hood rim around a genuinely dark face opening.
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.ellipse(2, -38, 11, 10, -0.1, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(240,215,190,.16)"; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.ellipse(3, -37, 8.5, 7.5, -0.1, Math.PI * 0.75, Math.PI * 2.15); ctx.stroke();
+    ctx.fillStyle = "#09070d";
+    ctx.beginPath(); ctx.ellipse(4, -36.5, 7.2, 6.2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = redEyes ? "#ff5142" : "#eee6ce";
     ctx.shadowColor = redEyes ? "#ff4a3a" : "#e8e0c8";
-    ctx.shadowBlur = 5;
-    ctx.beginPath(); ctx.arc(3, -37, 1.6, 0, Math.PI * 2); ctx.arc(8, -37, 1.6, 0, Math.PI * 2); ctx.fill();
+    this.glow(ctx, 5);
+    ctx.beginPath(); ctx.arc(3, -37, 1.5, 0, Math.PI * 2); ctx.arc(8, -37, 1.5, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
   }
 
@@ -409,13 +564,22 @@ export class Renderer {
     ctx: CanvasRenderingContext2D, st: Station, x: number, ground: number,
     t: number, now: number, snap: Snapshot
   ) {
-    if (x < -260 || x > (ctx.canvas.width / (window.devicePixelRatio || 1)) + 260) return;
     const blackout = now < snap.blackoutUntil;
-    const flick = now - snap.flickerAt < 900 ? Math.random() * 0.6 : 0;
+    const flick = this.settings.graphics.flicker && !this.settings.graphics.reducedMotion && now - snap.flickerAt < 900 ? Math.random() * 0.6 : 0;
     const win = (wx: number, wy: number, ww: number, wh: number) => {
       const a = blackout ? 0.04 : Math.max(0.05, 0.75 - flick);
-      ctx.fillStyle = `rgba(255,${170 + Math.sin(t * 2 + wx) * 20},80,${a})`;
+      ctx.save();
+      ctx.shadowColor = "rgba(255,151,55,.75)"; this.glow(ctx, 13);
+      const glass = ctx.createLinearGradient(wx, wy, wx, wy + wh);
+      glass.addColorStop(0, `rgba(255,210,120,${a})`);
+      glass.addColorStop(1, `rgba(210,91,35,${a * 0.82})`);
+      ctx.fillStyle = glass;
       ctx.fillRect(wx, wy, ww, wh);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = "rgba(31,17,15,.9)"; ctx.lineWidth = 2;
+      ctx.strokeRect(wx, wy, ww, wh);
+      ctx.beginPath(); ctx.moveTo(wx + ww / 2, wy); ctx.lineTo(wx + ww / 2, wy + wh); ctx.moveTo(wx, wy + wh / 2); ctx.lineTo(wx + ww, wy + wh / 2); ctx.stroke();
+      ctx.restore();
     };
     ctx.save();
     ctx.translate(x, ground);
@@ -460,12 +624,17 @@ export class Renderer {
         break;
       }
       case "lantern": {
+        if (!blackout && this.settings.graphics.glow) {
+          const light = ctx.createRadialGradient(0, -92, 4, 0, -72, 112);
+          light.addColorStop(0, "rgba(255,187,83,.22)"); light.addColorStop(1, "rgba(255,145,45,0)");
+          ctx.fillStyle = light; ctx.fillRect(-115, -205, 230, 220);
+        }
         ctx.fillStyle = "#191420";
         ctx.fillRect(-3, -110, 6, 110);
         ctx.fillRect(-14, -112, 28, 5);
         const glow = blackout ? 0.03 : 0.6 + Math.sin(t * 5) * 0.1 - flick;
         ctx.fillStyle = `rgba(255,190,90,${Math.max(0.03, glow)})`;
-        ctx.shadowColor = "rgba(255,180,80,0.9)"; ctx.shadowBlur = blackout ? 0 : 24;
+        ctx.shadowColor = "rgba(255,180,80,0.9)"; this.glow(ctx, blackout ? 0 : 24);
         ctx.fillRect(-8, -106, 16, 18);
         ctx.shadowBlur = 0;
         ctx.fillStyle = "#191420"; ctx.fillRect(-10, -108, 20, 3);
@@ -518,7 +687,7 @@ export class Renderer {
         ctx.stroke();
         const blink = Math.sin(t * 3) > 0 ? 0.9 : 0.2;
         ctx.fillStyle = `rgba(255,60,50,${blink})`;
-        ctx.shadowColor = "#ff3c32"; ctx.shadowBlur = 12;
+        ctx.shadowColor = "#ff3c32"; this.glow(ctx, 12);
         ctx.beginPath(); ctx.arc(0, -194, 4, 0, Math.PI * 2); ctx.fill();
         ctx.shadowBlur = 0;
         break;
@@ -541,7 +710,7 @@ export class Renderer {
       const bob = Math.sin(t * 3 + st.x) * 4;
       ctx.save();
       ctx.fillStyle = "rgba(255,205,90,0.9)";
-      ctx.shadowColor = "#ffcd5a"; ctx.shadowBlur = 10;
+      ctx.shadowColor = "#ffcd5a"; this.glow(ctx, 10);
       ctx.translate(x, ground - 235 + bob);
       ctx.rotate(Math.PI / 4);
       ctx.fillRect(-7, -7, 14, 14);

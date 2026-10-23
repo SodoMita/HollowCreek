@@ -26,6 +26,9 @@ F - snuff the lights (Hollow only)
 Enter - speak (your words appear above your head)
 Touchscreen works too. Everything is playable on a phone.
 
+SETTINGS
+Open Settings from the menu, HUD, lobby, or end screen. Adjust master, music, ambience and effects volumes; adaptive music and the proximity heartbeat; render quality and resolution; leaves, fog, glow, vignette, flicker and reduced motion; HUD scale, opacity and optional panels; touch controls; and every keyboard binding. Chores can use hold or toggle input. Settings are saved locally in your browser.
+
 PLAYING WITH FRIENDS
 Open the game on any device, type a name, and found a town. Share the four-letter code. 4 to 10 players, best with 6 or more. One person should keep the page open as the host - whoever joined last holds the lantern and can start each night. Towns remember their people: come back to the same code and you take your old seat.
 
@@ -35,6 +38,6 @@ WHO IS HOLLOW IS ACTUALLY RANDOM
 Roles are dealt with a Fisher-Yates shuffle over the cryptographic RNG, and we measured it rather than assumed it: across hundreds of real games every seat is equally likely to be the Hollow, regardless of who joined first. An earlier version used a sort-based "shuffle" that made the first joiner the Hollow 43% of the time. That is fixed and tested.
 
 CREDITS
-Everything - art, generative score, simulation - is procedural and hand-made. No audio files: the wind, the drone, the music box and the heartbeat are synthesised in your browser as you play, and the music leans on the dread when something is close.
+Everything - art, generative score, simulation - is procedural and hand-made. No audio files: wind, bowed bass, a recurring music-box theme, meeting pulses, role stings and the heartbeat are synthesised in your browser as you play. The score leans into danger, meetings and blackouts, with separate mixer controls for music, ambience and effects.
 
 Hollow Creek is an online multiplayer game. It needs other people - ideally in the same room as you, shouting.

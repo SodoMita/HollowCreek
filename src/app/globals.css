@@ -50,3 +50,17 @@ html, body {
 .hc-rise-1 { animation: hc-rise 0.5s 0.1s ease-out both; }
 .hc-rise-2 { animation: hc-rise 0.5s 0.22s ease-out both; }
 .hc-rise-3 { animation: hc-rise 0.5s 0.34s ease-out both; }
+
+/* Shared live preferences (src/game/settings.ts). Canvas resolution and world
+   effects are applied in TS; these rules cover the DOM HUD in both clients. */
+.hc-hud-item { zoom: var(--hc-ui-scale, 1); }
+.hc-hud-fade { opacity: var(--hc-hud-opacity, 1); }
+.hc-hide-touch-controls .hc-touch-controls,
+.hc-hide-feed .hc-event-feed,
+.hc-hide-tasks .hc-task-list,
+.hc-hide-hints .hc-interaction-hint { display: none !important; }
+.hc-reduced-motion *, .hc-reduced-motion *::before, .hc-reduced-motion *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}

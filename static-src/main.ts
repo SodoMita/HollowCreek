@@ -3,6 +3,8 @@
 // reuses the canvas Renderer and generative AudioDirector unchanged.
 import { Renderer } from "../src/game/render";
 import { AudioDirector } from "../src/game/audio";
+import { SettingsStore, applyDocumentPreferences, keyLabel, matchesControl, type BindableAction } from "../src/game/settings";
+import { SettingsDialog } from "../src/game/settings-ui";
 import { BELL_X } from "../src/game/types";
 import type { RoomListing, Snapshot } from "../src/game/types";
 
@@ -80,8 +82,16 @@ let overlayKey = "";
 const keys = new Set<string>();
 let lastDir = 0;
 const displayX = new Map<string, number>();
-const audio = new AudioDirector();
+const settingsStore = new SettingsStore();
+const audio = new AudioDirector(settingsStore);
+let interactToggled = false;
 let tasksOpen = window.innerWidth > 640;
+const settingsDialog = new SettingsDialog(settingsStore, document.body, { onOpen: releaseInputs });
+settingsStore.subscribe((settings) => {
+  applyDocumentPreferences(settings);
+  $("mute").textContent = settings.audio.muted ? "🔇" : "🔊";
+});
+applyDocumentPreferences(settingsStore.value);
 
 async function api(path: string, body?: unknown, base = server, timeoutMs = 0): Promise<any> {
   const ctl = timeoutMs > 0 ? new AbortController() : undefined;
@@ -220,7 +230,7 @@ function enterRoom(code: string) {
   void poll();
 }
 function leaveToMenu() {
-  void send({ dir: 0, interactHeld: false });
+  releaseInputs();
   beaconLeave();
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   snap = null; roomCode = ""; overlayKey = ""; roomError = ""; pollFailures = 0;
@@ -280,7 +290,7 @@ function reveal(hollow: boolean) {
   const r = $("reveal");
   r.querySelector(".r1")!.textContent = hollow ? "You are Hollow" : "Townfolk";
   (r.querySelector(".r1") as HTMLElement).style.color = hollow ? "#ff4a3a" : "#a8c98a";
-  r.querySelector(".r2")!.textContent = hollow ? "Wear their faces. Kill when none watch. Q to strike, F to snuff the lights." : "Finish the town's wards. Find the key. Trust no one.";
+  r.querySelector(".r2")!.textContent = hollow ? `Wear their faces. Kill when none watch. ${keyLabel(settingsStore.value.controls.ability)} to strike, ${keyLabel(settingsStore.value.controls.blackout)} to snuff.` : "Finish the town's wards. Find the key. Trust no one.";
   r.style.display = "flex";
   setTimeout(() => { r.style.display = "none"; }, 4500);
 }
@@ -347,6 +357,7 @@ function renderHud(s: Snapshot) {
   const hint = $("hint");
   hint.style.display = s.hint ? "block" : "none";
   if (s.hint) hint.textContent = s.hint;
+  $("ebtn").textContent = keyLabel(settingsStore.value.controls.interact);
   $("ebtn").className = `rbtn ${s.hint ? "hot" : ""}`;
   const ab = $("ability");
   ab.textContent = s.abilityLabel;
@@ -354,6 +365,7 @@ function renderHud(s: Snapshot) {
   ab.style.display = s.self.alive ? "block" : "none";
   const snuff = $("snuffbtn");
   snuff.style.display = s.self.role === "hollow" && s.self.alive && s.phase === "playing" ? "block" : "none";
+  snuff.querySelector("small")!.textContent = keyLabel(settingsStore.value.controls.blackout);
   snuff.className = `rbtn snuff ${s.self.canBlackout ? "hot" : ""}`;
   $("cd").textContent = s.self.role === "hollow" && s.self.alive
     ? (s.self.killCooldownMs > 0 ? `${Math.ceil(s.self.killCooldownMs / 1000)}s` : "") + (s.self.blackoutCooldownMs > 0 ? ` 🌑${Math.ceil(s.self.blackoutCooldownMs / 1000)}s` : "")
@@ -374,6 +386,10 @@ function renderHud(s: Snapshot) {
         ${s.self.id === s.hostId
           ? `<button class="big" data-act="start" ${s.playerCount < 4 ? "disabled" : ""}>${s.playerCount < 4 ? "Waiting for more souls… (min 4)" : "Let night fall"}</button>`
           : `<p class="muted" style="margin-top:16px">Waiting for the host to let night fall…</p>`}
+        <div class="row" style="margin-top:14px;justify-content:center">
+          <button class="chip" data-act="settings">⚙ Settings</button>
+          <button class="chip" data-act="menu">Other towns</button>
+        </div>
         <p class="muted">4–10 players · 1–2 of you will be Hollow</p>`;
     } else if (s.phase === "ended") {
       ov.style.display = "flex";
@@ -382,6 +398,7 @@ function renderHud(s: Snapshot) {
         <p style="margin-top:12px;font-style:italic;color:#c9b8a4">${esc(s.winReason ?? "")}</p>
         ${s.self.id === s.hostId ? `<button class="big" data-act="restart">Gather the same souls again</button>` : `<p class="muted" style="margin-top:14px">The lantern-bearer may gather this town for another night…</p>`}
         <div class="row" style="margin-top:12px;justify-content:center;gap:10px">
+          <button class="chip" data-act="settings">⚙ Settings</button>
           <button class="chip" data-act="menu">Other towns</button>
           <a class="chip" href="${server}/chronicle/${s.code}" target="_blank" style="text-decoration:none">Chronicle</a>
           <a class="chip" href="${server}/stats" target="_blank" style="text-decoration:none">Records</a>
@@ -391,12 +408,32 @@ function renderHud(s: Snapshot) {
 }
 
 // -------------------------------------------------------------- inputs ----
+function releaseInputs() {
+  keys.clear();
+  lastDir = 0;
+  interactToggled = false;
+  if (roomCode) void send({ dir: 0, interactHeld: false });
+}
+function stopInteract() {
+  interactToggled = false;
+  if (roomCode) void send({ interactHeld: false });
+}
+function interactDown() {
+  if (settingsStore.value.controls.interactMode === "toggle") {
+    interactToggled = !interactToggled;
+    void send({ action: "interact", interactHeld: interactToggled });
+  } else void send({ action: "interact", interactHeld: true });
+}
+function interactUp() {
+  if (settingsStore.value.controls.interactMode === "hold") stopInteract();
+}
 function computeDir() {
   const d = (keys.has("right") ? 1 : 0) - (keys.has("left") ? 1 : 0);
   if (d !== lastDir) { lastDir = d; void send({ dir: d }); }
 }
 function chatOpen() { return $("chatbox").style.display === "block"; }
 function openChat() {
+  stopInteract();
   $("chatbox").style.display = "block";
   setTimeout(() => $("chatinput").focus(), 30);
 }
@@ -407,25 +444,29 @@ function submitChat() {
   $("chatbox").style.display = "none";
   inp.blur();
 }
+function bound(action: BindableAction, e: KeyboardEvent) {
+  return matchesControl(settingsStore.value.controls, action, e.code);
+}
 window.addEventListener("keydown", (e) => {
   audio.start();
-  if (!roomCode) return;
+  if (settingsDialog.isOpen || !roomCode) return;
   if (chatOpen()) { if (e.key === "Escape") { $("chatbox").style.display = "none"; ($("chatinput") as HTMLInputElement).blur(); } return; }
-  if ((e.target as HTMLElement)?.tagName === "INPUT") return;
-  const k = e.key.toLowerCase();
-  if (k === "arrowleft" || k === "a") { keys.add("left"); computeDir(); e.preventDefault(); }
-  else if (k === "arrowright" || k === "d") { keys.add("right"); computeDir(); e.preventDefault(); }
-  else if (k === "e" && !e.repeat) void send({ action: "interact", interactHeld: true });
-  else if ((k === "q" || k === " ") && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
-  else if (k === "f" && !e.repeat) void send({ action: "blackout" });
-  else if (k === "enter") { openChat(); e.preventDefault(); }
+  const target = e.target as HTMLElement | null;
+  if (target && (["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName) || target.isContentEditable)) return;
+  if (bound("left", e)) { keys.add("left"); computeDir(); e.preventDefault(); }
+  else if (bound("right", e)) { keys.add("right"); computeDir(); e.preventDefault(); }
+  else if (bound("interact", e) && !e.repeat) { interactDown(); e.preventDefault(); }
+  else if (bound("ability", e) && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
+  else if (bound("blackout", e) && !e.repeat) { void send({ action: "blackout" }); e.preventDefault(); }
+  else if (bound("chat", e) && !e.repeat) { openChat(); e.preventDefault(); }
 });
 window.addEventListener("keyup", (e) => {
-  const k = e.key.toLowerCase();
-  if (k === "arrowleft" || k === "a") { keys.delete("left"); computeDir(); }
-  else if (k === "arrowright" || k === "d") { keys.delete("right"); computeDir(); }
-  else if (k === "e") void send({ interactHeld: false });
+  if (settingsDialog.isOpen || !roomCode) return;
+  if (bound("left", e)) { keys.delete("left"); computeDir(); }
+  else if (bound("right", e)) { keys.delete("right"); computeDir(); }
+  else if (bound("interact", e)) interactUp();
 });
+window.addEventListener("blur", releaseInputs);
 $("chatinput").addEventListener("keydown", (e) => { if (e.key === "Enter") submitChat(); e.stopPropagation(); });
 $("chatinput").addEventListener("blur", () => setTimeout(submitChat, 50));
 window.addEventListener("pointerdown", () => audio.start());
@@ -435,26 +476,28 @@ document.querySelectorAll<HTMLElement>("[data-hold]").forEach((b) => {
   const what = b.dataset.hold!;
   const on = (e: Event) => {
     e.preventDefault();
-    if (what === "e") void send({ action: "interact", interactHeld: true });
+    if (what === "e") interactDown();
     else { keys.add(what); computeDir(); }
   };
   const off = () => {
-    if (what === "e") void send({ interactHeld: false });
+    if (what === "e") interactUp();
     else { keys.delete(what); computeDir(); }
   };
   b.addEventListener("pointerdown", on);
   b.addEventListener("pointerup", off);
   b.addEventListener("pointerleave", off);
+  b.addEventListener("pointercancel", off);
   b.addEventListener("contextmenu", (e) => e.preventDefault());
 });
 $("ability").addEventListener("click", () => send({ action: "ability" }));
 $("snuffbtn").addEventListener("click", () => send({ action: "blackout" }));
 $("talkbtn").addEventListener("click", openChat);
 $("leave").addEventListener("click", leaveToMenu);
+$("settings").addEventListener("click", () => settingsDialog.open());
+$("menusettings").addEventListener("click", () => settingsDialog.open());
 $("mute").addEventListener("click", () => {
   audio.start();
   audio.setMuted(!audio.muted);
-  $("mute").textContent = audio.muted ? "🔇" : "🔊";
 });
 $("mute").textContent = audio.muted ? "🔇" : "🔊";
 $("copycode").addEventListener("click", () => { void navigator.clipboard?.writeText(roomCode); toast("Town code copied"); });
@@ -465,6 +508,7 @@ document.addEventListener("click", (e) => {
     if (act.dataset.act === "start") void send({ action: "start" });
     else if (act.dataset.act === "restart") void send({ action: "restart" });
     else if (act.dataset.act === "menu") leaveToMenu();
+    else if (act.dataset.act === "settings") settingsDialog.open();
   }
   const v = t.closest("[data-vote]") as HTMLElement | null;
   if (v) void send({ action: "vote", vote: v.dataset.vote });
@@ -475,14 +519,19 @@ document.addEventListener("click", (e) => {
 const canvas = $("cv") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 const renderer = new Renderer();
+renderer.setSettings(settingsStore.value);
 const vw = () => window.visualViewport?.width ?? window.innerWidth;
 const vh = () => window.visualViewport?.height ?? window.innerHeight;
 function resize() {
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = vw() * dpr; canvas.height = vh() * dpr;
+  const graphics = settingsStore.value.graphics;
+  const dprCap = graphics.quality === "high" ? 2 : graphics.quality === "medium" ? 1.5 : 1;
+  const dpr = Math.min(window.devicePixelRatio || 1, dprCap) * graphics.resolution;
+  canvas.width = Math.max(1, Math.round(vw() * dpr));
+  canvas.height = Math.max(1, Math.round(vh() * dpr));
   canvas.style.width = `${vw()}px`; canvas.style.height = `${vh()}px`;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
+settingsStore.subscribe((settings) => { renderer.setSettings(settings); resize(); });
 resize();
 window.addEventListener("resize", resize);
 window.visualViewport?.addEventListener("resize", resize);
