@@ -32,7 +32,6 @@ export const roomPlayers = pgTable(
     code: text("code").notNull(),
     name: text("name").notNull(),
     color: text("color").notNull(),
-    creature: text("creature").notNull().default("strigoi"),
     joinedAt: timestamp("joined_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("room_players_code_idx").on(t.code)]

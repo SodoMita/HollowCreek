@@ -4,19 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DoorOpen, Flame, ScrollText, Trophy, Zap } from "lucide-react";
 import { Renderer } from "@/game/render";
-import { mountWardUI, type WardHandle } from "@/game/wardui";
 import { AudioDirector } from "@/game/audio";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
-import { BELL_X, CREATURES, type WeatherKind } from "@/game/types";
-
-const WEATHER_WORDS: Record<WeatherKind, string> = {
-  fog: "the fog is down",
-  cold: "hard frost",
-  gutter: "lanterns guttering",
-  crows: "crows watching",
-};
-import type { Snapshot, Vec } from "@/game/types";
+import { BELL_X } from "@/game/types";
+import type { Snapshot } from "@/game/types";
 
 function getPid(): string {
   let pid = localStorage.getItem("hc_pid");
@@ -39,7 +31,7 @@ export default function GameClient({ code }: { code: string }) {
 
   const snapRef = useRef<Snapshot | null>(null);
   const chatOpenRef = useRef(false);
-  const displayX = useRef(new Map<string, Vec>());
+  const displayX = useRef(new Map<string, number>());
   const keys = useRef(new Set<string>());
   const lastDir = useRef(0);
   const audioRef = useRef<AudioDirector | null>(null);
@@ -136,12 +128,7 @@ export default function GameClient({ code }: { code: string }) {
       const res = await fetch("/api/game/join", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          code,
-          playerId: getPid(),
-          name,
-          creature: localStorage.getItem("hc_creature") || undefined,
-        }),
+        body: JSON.stringify({ code, playerId: getPid(), name }),
       });
       const data = await res.json();
       if (!alive) return;
@@ -155,7 +142,6 @@ export default function GameClient({ code }: { code: string }) {
           const s: Snapshot = await r.json();
           if (!alive) return;
           snapRef.current = s;
-          wardRef.current?.update(s);
           setSnap(s);
           audioRef.current?.update(s);
           if (lastPhase.current === "lobby" && s.phase === "playing") {
@@ -185,33 +171,10 @@ export default function GameClient({ code }: { code: string }) {
   }, [code, send]);
 
   // ---- input: clients only ever send intent ----
-  const lastDirY = useRef(0);
-  // ---- ward boards: the actual work of the town ----
-  const wardHostRef = useRef<HTMLDivElement | null>(null);
-  const wardRef = useRef<WardHandle | null>(null);
-  useEffect(() => {
-    const host = wardHostRef.current;
-    if (!host) return;
-    const handle = mountWardUI(host, (a, v) => {
-      if (a === "strike") void send({ action: "strike" });
-      else if (a === "tap") void send({ action: "tap", v });
-      else void send({ action: "wardcancel" });
-    });
-    wardRef.current = handle;
-    return () => {
-      handle.destroy();
-      wardRef.current = null;
-    };
-  }, [send]);
   const computeDir = useCallback(() => {
     const k = keys.current;
-    const dx = (k.has("right") ? 1 : 0) - (k.has("left") ? 1 : 0);
-    const dy = (k.has("down") ? 1 : 0) - (k.has("up") ? 1 : 0);
-    if (dx !== lastDir.current || dy !== lastDirY.current) {
-      lastDir.current = dx;
-      lastDirY.current = dy;
-      void send({ dirX: dx, dirY: dy });
-    }
+    const d = (k.has("right") ? 1 : 0) - (k.has("left") ? 1 : 0);
+    if (d !== lastDir.current) { lastDir.current = d; void send({ dir: d }); }
   }, [send]);
 
   useEffect(() => {
@@ -229,8 +192,6 @@ export default function GameClient({ code }: { code: string }) {
       const bound = (action: BindableAction) => matchesControl(controls, action, e.code);
       if (bound("left")) { keys.current.add("left"); computeDir(); e.preventDefault(); }
       else if (bound("right")) { keys.current.add("right"); computeDir(); e.preventDefault(); }
-      else if (bound("up")) { keys.current.add("up"); computeDir(); e.preventDefault(); }
-      else if (bound("down")) { keys.current.add("down"); computeDir(); e.preventDefault(); }
       else if (bound("interact") && !e.repeat) { interactDown(); e.preventDefault(); }
       else if (bound("ability") && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
       else if (bound("blackout") && !e.repeat) { void send({ action: "blackout" }); e.preventDefault(); }
@@ -241,10 +202,6 @@ export default function GameClient({ code }: { code: string }) {
       const controls = getSettingsStore().value.controls;
       if (matchesControl(controls, "left", e.code)) { keys.current.delete("left"); computeDir(); }
       else if (matchesControl(controls, "right", e.code)) { keys.current.delete("right"); computeDir(); }
-      else if (matchesControl(controls, "up", e.code)) { keys.current.delete("up"); computeDir(); }
-      else if (matchesControl(controls, "down", e.code)) { keys.current.delete("down"); computeDir(); }
-      else if (matchesControl(controls, "up", e.code)) { keys.current.delete("up"); computeDir(); }
-      else if (matchesControl(controls, "down", e.code)) { keys.current.delete("down"); computeDir(); }
       else if (matchesControl(controls, "interact", e.code)) interactUp();
     };
     window.addEventListener("keydown", down);
@@ -293,12 +250,8 @@ export default function GameClient({ code }: { code: string }) {
       if (!s) return;
       for (const p of s.players) {
         const cur = displayX.current.get(p.id);
-        if (!cur || Math.hypot(cur.x - p.x, cur.y - p.y) > 320) displayX.current.set(p.id, { x: p.x, y: p.y });
-        else
-          displayX.current.set(p.id, {
-            x: cur.x + (p.x - cur.x) * Math.min(1, dt * 10),
-            y: cur.y + (p.y - cur.y) * Math.min(1, dt * 10),
-          });
+        if (cur === undefined || Math.abs(cur - p.x) > 300) displayX.current.set(p.id, p.x);
+        else displayX.current.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 10));
       }
       renderer.render(ctx, vw(), vh(), s, displayX.current, nowMs / 1000, dt);
     };
@@ -311,7 +264,7 @@ export default function GameClient({ code }: { code: string }) {
     };
   }, [getSettingsStore]);
 
-  const holdMove = (dir: "left" | "right" | "up" | "down", on: boolean) => {
+  const holdMove = (dir: "left" | "right", on: boolean) => {
     if (on) keys.current.add(dir); else keys.current.delete(dir);
     computeDir();
   };
@@ -348,7 +301,6 @@ export default function GameClient({ code }: { code: string }) {
   return (
     <main className="fixed inset-0 h-[100dvh] w-full select-none overflow-hidden bg-[#0b0710]" style={{ touchAction: "none" }}>
       <canvas ref={canvasRef} className="absolute inset-0" />
-      <div ref={wardHostRef} />
 
       {!s && !joinError && (
         <div className="absolute inset-0 flex items-center justify-center">
@@ -557,12 +509,7 @@ export default function GameClient({ code }: { code: string }) {
             <div className="absolute inset-0 flex items-center justify-center bg-[#0b0710]/70 backdrop-blur-sm">
               <div className="hc-rise max-h-[88dvh] w-[min(92vw,440px)] overflow-y-auto rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-4 text-center sm:p-6">
                 <h2 className="font-display text-4xl text-[#e9dfcf]">{s.round > 0 ? `Night ${s.round + 1} approaches` : "Gathering at dusk"}</h2>
-                <p className="mt-1 text-sm text-[#9c8b7a]">{s.round > 0 ? "The same souls, the same valley — a new night" : "Share the town code with your fellow townsfolk"}</p>
-                <p className="mx-auto mt-3 max-w-[340px] border-y border-[#2a2028] py-2 text-[12px] leading-relaxed text-[#8b8075]">
-                  {s.mode === "nightwatch"
-                    ? "No hidden faces tonight. Mend every ward before dawn, stand over anyone the fog takes down, and ring the bell when the dark presses in."
-                    : "One of you is Hollow. Mend the wards, find the iron key, and cage the Hollow before they wear every face in town."}
-                </p>
+                <p className="mt-1 text-sm text-[#9c8b7a]">{s.round > 0 ? "The same souls, the same street — new roles when darkness falls" : "Share the town code with your fellow townsfolk"}</p>
                 <div className="mt-3 font-mono text-5xl tracking-[0.4em] text-[#d99a3d]">{s.code}</div>
                 <div className="mt-5 grid grid-cols-2 gap-2 text-left text-sm">
                   {s.players.map((p) => (
@@ -576,12 +523,10 @@ export default function GameClient({ code }: { code: string }) {
                 {s.self.id === s.hostId ? (
                   <button
                     onClick={() => send({ action: "start" })}
-                    disabled={s.playerCount < (s.mode === "nightwatch" ? 1 : 3)}
+                    disabled={s.playerCount < 4}
                     className="mt-6 w-full rounded bg-[#8f3b1f] py-3 font-display text-2xl text-[#f3e6d0] hover:bg-[#a84a26] disabled:opacity-40"
                   >
-                    {s.playerCount < (s.mode === "nightwatch" ? 1 : 3)
-                      ? "Waiting for more souls… (min 3)"
-                      : "Let night fall"}
+                    {s.playerCount < 4 ? "Waiting for more souls… (min 4)" : "Let night fall"}
                   </button>
                 ) : (
                   <p className="mt-6 text-[#9c8b7a]">Waiting for the host to let night fall…</p>
@@ -596,47 +541,20 @@ export default function GameClient({ code }: { code: string }) {
           )}
 
           {/* ---- role reveal ---- */}
-          {s.mode === "nightwatch" && s.phase !== "ended" && (
-            <div className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 border border-[#2a2028] bg-[#0B0A0C]/80 px-5 py-1.5 text-center">
-              <p className="hc-tracked text-[9px] text-[#6f6459]">
-                {s.phase === "playing"
-                  ? `nightwatch${s.weather ? ` · ${WEATHER_WORDS[s.weather.kind]}` : ""} · dawn in`
-                  : "nightwatch · the town gathers"}
-              </p>
-              {s.phase === "playing" && (
-                <p className="font-display text-xl leading-none tabular-nums text-[#E8DFCF]">
-                  {String(Math.floor(Math.max(0, s.dawnAt - s.now) / 60000)).padStart(2, "0")}:
-                  {String(Math.floor((Math.max(0, s.dawnAt - s.now) / 1000) % 60)).padStart(2, "0")}
-                </p>
-              )}
-            </div>
-          )}
-
           {roleBanner && (
             <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/60">
               <div className="text-center">
-                {(() => {
-                  const spec = CREATURES.find((c) => c.id === s.self.creature) ?? CREATURES[0];
-                  return (
-                    <>
-                      <p className="font-body text-[11px] uppercase tracking-[0.42em] text-[#c9762f]">
-                        You wear the face of the {spec.name}
-                      </p>
-                      {roleBanner === "hollow" ? (
-                        <>
-                          <p className="mt-2 font-display text-5xl sm:text-7xl text-[#ff4a3a] drop-shadow-[0_0_30px_rgba(255,60,40,0.6)]">You are Hollow</p>
-                          <p className="mt-3 text-lg text-[#c9a0a0]">Wear their faces. Kill when none watch. {keyLabel(settings.controls.ability)} to strike, {keyLabel(settings.controls.blackout)} to snuff the lights.</p>
-                        </>
-                      ) : (
-                        <>
-                          <p className="mt-2 font-display text-5xl sm:text-7xl text-[#a8c98a]">Townfolk</p>
-                          <p className="mt-3 text-lg text-[#b8c9a4]">Finish your chores. Find the key. Trust no one.</p>
-                        </>
-                      )}
-                      <p className="mt-2 font-body italic text-sm tracking-wide text-[#8b8075]">{spec.latin}</p>
-                    </>
-                  );
-                })()}
+                {roleBanner === "hollow" ? (
+                  <>
+                    <p className="font-display text-5xl sm:text-7xl text-[#ff4a3a] drop-shadow-[0_0_30px_rgba(255,60,40,0.6)]">You are Hollow</p>
+                    <p className="mt-3 text-lg text-[#c9a0a0]">Wear their faces. Kill when none watch. {keyLabel(settings.controls.ability)} to strike, {keyLabel(settings.controls.blackout)} to snuff the lights.</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="font-display text-5xl sm:text-7xl text-[#a8c98a]">Townfolk</p>
+                    <p className="mt-3 text-lg text-[#b8c9a4]">Finish your chores. Find the key. Trust no one.</p>
+                  </>
+                )}
               </div>
             </div>
           )}

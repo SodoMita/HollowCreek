@@ -15,6 +15,9 @@ await build({
   logLevel: "info",
 });
 copyFileSync("static-src/index.html", "public/play/index.html");
-// one vector mark, no bitmap ladder — smallest thing that scales
-copyFileSync("public/icon.svg", "public/play/icon.svg");
+// icons: canonical ladder lives in public/ (see release/README.md)
+copyFileSync("public/favicon.ico", "public/play/favicon.ico");
+copyFileSync("public/icon-192.png", "public/play/icon.png");
+copyFileSync("public/icon-512.png", "public/play/icon-512.png");
+copyFileSync("public/icon-1024.png", "public/play/icon-1024.png");
 console.log("static client → public/play/ (index.html + game.js + icons)");

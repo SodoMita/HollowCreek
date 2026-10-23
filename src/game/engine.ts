@@ -1,23 +1,17 @@
 import { db } from "@/db";
 import { gameEvents, roomRows, roomPlayers } from "@/db/schema";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, lt } from "drizzle-orm";
 import {
-  BELL, BLACKOUT_CD_MS, BLACKOUT_MS, BUBBLE_MS, CAGES, CELL_HALF, CREATURES,
-  WEATHER_EVERY_MS, WEATHER_MS,
-  DEFAULT_CREATURE, GHOST_SPEED, INTERACT_RANGE, KILL_COOLDOWN_MS, KILL_RANGE,
-  MEETING_MS, NIGHT_MS, OBSTACLES, PLAYER_COLORS, REVIVE_MS, SPEED, SQUARE,
-  STALKER_RANGE, STALKER_REST_MS, STALKER_SPEED, STALKER_WAKE_MS,
-  STAMINA_BELL_COST, STAMINA_BLACKOUT_COST, STAMINA_IDLE_REGEN,
-  STAMINA_KILL_COST, STAMINA_SLOW_THRESHOLD, STAMINA_UNLOCK_COST,
-  STAMINA_WORK_DRAIN, STATIONS, TASK_HOLD_MS, TASKS_PER_CREW, TICK_MS,
-  VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW, VISION_MEETING, WORLD_H, WORLD_W,
-} from "./types";
-import type {
-  FeedItem, GameMode, InputBody, Phase, Role, RoomListing, Snapshot, Vec, WeatherKind,
+  BELL_X, BLACKOUT_CD_MS, BLACKOUT_MS, BUBBLE_MS, CAGE_XS, CELL_HALF, GHOST_SPEED,
+  INTERACT_RANGE, KILL_COOLDOWN_MS, KILL_RANGE, MEETING_FROM, MEETING_MS, MEETING_TO,
+  PLAYER_COLORS, SPEED, STAMINA_BELL_COST, STAMINA_BLACKOUT_COST, STAMINA_IDLE_REGEN,
+  STAMINA_KILL_COST, STAMINA_SLOW_THRESHOLD, STAMINA_UNLOCK_COST, STAMINA_WORK_DRAIN,
+  STATIONS, TASK_HOLD_MS, TICK_MS,
+  VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW, WORLD_W,
 } from "./types";
 import { bumpStats } from "./stats";
 import { shuffle } from "./rng";
-import { inBand, makeBoard, sequenceDone, sequenceSoFarGood, type WardBoard } from "./wardplay";
+import type { FeedItem, InputBody, Phase, Role, RoomListing, Snapshot } from "./types";
 
 // ---------------------------------------------------------------------------
 // Internal state
@@ -29,11 +23,8 @@ interface P {
   id: string;
   name: string;
   color: string;
-  creature: string;
   x: number;
-  y: number;
-  dirX: number; // last INPUT direction (-1 | 0 | 1). Clients never send positions.
-  dirY: number;
+  dir: number; // last INPUT direction (-1 | 0 | 1). Clients never send positions.
   facing: number;
   moving: boolean;
   alive: boolean;
@@ -52,10 +43,6 @@ interface P {
   joinedAt: number;
   vote: string | null;
   isHost: boolean;
-  /** nightwatch: knocked down by the thing in the fog, waiting for a friend */
-  downed: boolean;
-  downedAt: number;
-  revive: number;
   /** true for a seat restored from the database that nobody has claimed yet */
   parked: boolean;
 }
@@ -64,9 +51,9 @@ interface Room {
   code: string;
   phase: Phase;
   players: Map<string, P>;
-  bodies: { x: number; y: number; color: string; name: string; id: string }[];
-  keyPos: Vec | null;
-  cages: { x: number; y: number; occupant: string | null }[];
+  bodies: { x: number; color: string; name: string; id: string }[];
+  keyX: number | null;
+  cages: { x: number; occupant: string | null }[];
   feed: FeedItem[];
   meeting: { endsAt: number; reason: string } | null;
   winner: Role | null;
@@ -81,35 +68,7 @@ interface Room {
   blackoutUntil: number;
   blackoutReadyAt: number;
   round: number;
-  /** "nightwatch" has no hidden roles — every soul is a townsfolk */
-  mode: GameMode;
-  /** timestamp of dawn (nightwatch only) */
-  dawnAt: number;
-  /** the thing in the fog (nightwatch only) */
-  stalker: { x: number; y: number; restingUntil: number } | null;
-  /** the valley's current mood */
-  weather: { kind: WeatherKind; until: number } | null;
-  nextWeather: number;
-  /** ward games in progress, by player */
-  wards: Map<string, WardSession>;
 }
-
-interface WardSession {
-  playerId: string;
-  stationId: string;
-  board: WardBoard;
-  startedAt: number;
-  hits: number;
-  taps: number[];
-  lastStrike: number;
-}
-
-const WEATHER_LINES: Record<WeatherKind, string> = {
-  fog: "The fog comes down thick. No one can see as far as the next wall.",
-  cold: "A hard frost crawls out of the creek. Working takes more out of you tonight.",
-  gutter: "Every lantern in the valley gutters at once, and something in the dark notices.",
-  crows: "Crows settle on every roof and refuse to move. They are watching the lanes.",
-};
 
 const g = globalThis as typeof globalThis & {
   __hollowRooms?: Map<string, Room>;
@@ -119,6 +78,8 @@ const g = globalThis as typeof globalThis & {
 const rooms: Map<string, Room> = g.__hollowRooms ?? new Map();
 g.__hollowRooms = rooms;
 // Concurrent join/state requests after a restart must share one hydration.
+// Otherwise each request can build a room and overwrite the previous one,
+// leaving a player whose join already succeeded as "Unknown soul".
 const roomLoads: Map<string, Promise<Room | undefined>> = g.__hollowRoomLoads ?? new Map();
 g.__hollowRoomLoads = roomLoads;
 
@@ -133,14 +94,15 @@ function record(room: Room, p: P | null, type: string, data: Record<string, unkn
       playerId: p?.id ?? null,
       playerName: p?.name ?? null,
       type,
-      data: { phase: room.phase, x: p ? Math.round(p.x) : undefined, y: p ? Math.round(p.y) : undefined, ...data },
+      data: { phase: room.phase, x: p ? Math.round(p.x) : undefined, ...data },
     })
     .catch((e) => console.error("chronicle write failed", e));
 }
 
 // ---------------------------------------------------------------------------
-// Persistence — writes are queued and flushed on an interval so the tick loop
-// never waits on the database.
+// Persistence — the same players repeat in the same room even across a server
+// restart. Writes are queued and flushed on an interval so the tick loop never
+// waits on the database.
 // ---------------------------------------------------------------------------
 
 const gPersist = globalThis as typeof globalThis & {
@@ -177,7 +139,6 @@ async function flushRooms() {
             code,
             name: p.name,
             color: p.color,
-            creature: p.creature,
             joinedAt: new Date(p.joinedAt),
           }))
         );
@@ -213,7 +174,7 @@ async function hydrateRoom(code: string): Promise<Room | undefined> {
   const existing = rooms.get(key);
   if (existing) return existing;
   let round = 0;
-  let roster: { id: string; name: string; color: string; creature: string | null; joinedAt: Date }[] = [];
+  let roster: { id: string; name: string; color: string; joinedAt: Date }[] = [];
   try {
     const rows = await db.select().from(roomRows).where(eq(roomRows.code, key)).limit(1);
     if (!rows.length) return undefined;
@@ -223,18 +184,36 @@ async function hydrateRoom(code: string): Promise<Room | undefined> {
     console.error("room load failed", key, e);
     return undefined;
   }
-  const room = makeRoom(key, round);
+  const room: Room = {
+    code: key,
+    // a night interrupted by a restart is over; the same people simply gather again
+    phase: "lobby",
+    round,
+    players: new Map(),
+    bodies: [],
+    keyX: null,
+    cages: CAGE_XS.map((x) => ({ x, occupant: null })),
+    feed: [],
+    meeting: null,
+    winner: null,
+    winReason: null,
+    bellAt: 0,
+    flickerAt: 0,
+    nextFlicker: Date.now() + 20000,
+    createdAt: Date.now(),
+    startedAt: 0,
+    pool: [],
+    blackoutUntil: 0,
+    blackoutReadyAt: 0,
+  };
   const seated = roster.slice().sort((a, b) => a.joinedAt.getTime() - b.joinedAt.getTime());
   seated.forEach((pr, i) => {
     room.players.set(pr.id, {
       id: pr.id,
       name: pr.name,
       color: pr.color,
-      creature: pr.creature ?? DEFAULT_CREATURE,
-      x: BELL.x + Math.cos((i / Math.max(1, seated.length)) * Math.PI * 2) * 260,
-      y: BELL.y + Math.sin((i / Math.max(1, seated.length)) * Math.PI * 2) * 220,
-      dirX: 0,
-      dirY: 0,
+      x: BELL_X + (i - 1) * 60,
+      dir: 0,
       facing: 1,
       moving: false,
       alive: true,
@@ -253,9 +232,6 @@ async function hydrateRoom(code: string): Promise<Room | undefined> {
       joinedAt: pr.joinedAt.getTime(),
       vote: null,
       isHost: false,
-      downed: false,
-      downedAt: 0,
-      revive: 0,
       parked: true,
     });
   });
@@ -266,40 +242,10 @@ async function hydrateRoom(code: string): Promise<Room | undefined> {
     if (p) p.isHost = true;
   }
   rooms.set(key, room);
-  feed(room, "The town remembers everyone who has walked this valley.");
+  feed(room, "The town remembers everyone who has walked this street.");
   record(room, null, "room_restored", { seats: seated.length, round });
   dirtyRooms.add(key);
   return room;
-}
-
-function makeRoom(code: string, round = 0, mode: GameMode = "nightwatch"): Room {
-  return {
-    code,
-    mode,
-    dawnAt: 0,
-    stalker: null,
-    weather: null,
-    nextWeather: Date.now() + 60_000,
-    wards: new Map(),
-    phase: "lobby",
-    players: new Map(),
-    bodies: [],
-    keyPos: null,
-    cages: CAGES.map((c) => ({ x: c.x, y: c.y, occupant: null })),
-    feed: [],
-    meeting: null,
-    winner: null,
-    winReason: null,
-    bellAt: 0,
-    flickerAt: 0,
-    nextFlicker: Date.now() + 20000,
-    createdAt: Date.now(),
-    startedAt: 0,
-    pool: [],
-    blackoutUntil: 0,
-    blackoutReadyAt: 0,
-    round,
-  };
 }
 
 function feed(room: Room, text: string) {
@@ -320,22 +266,37 @@ function makeCode(): string {
   return code;
 }
 
-export function createRoom(playerId: string, name: string, creature?: string, mode: GameMode = "nightwatch") {
-  const room = makeRoom(makeCode(), 0, mode);
+export function createRoom(playerId: string, name: string) {
+  const room: Room = {
+    code: makeCode(),
+    phase: "lobby",
+    players: new Map(),
+    bodies: [],
+    keyX: null,
+    cages: CAGE_XS.map((x) => ({ x, occupant: null })),
+    feed: [],
+    meeting: null,
+    winner: null,
+    winReason: null,
+    bellAt: 0,
+    flickerAt: 0,
+    nextFlicker: Date.now() + 20000,
+    createdAt: Date.now(),
+    startedAt: 0,
+    pool: [],
+    blackoutUntil: 0,
+    blackoutReadyAt: 0,
+    round: 0,
+  };
   rooms.set(room.code, room);
   markDirty(room);
-  record(room, null, "room_created", { mode });
-  joinRoom(room.code, playerId, name, creature);
+  record(room, null, "room_created", {});
+  joinRoom(room.code, playerId, name);
   feed(room, "The town of Hollow Creek waits under a bruised October sky…");
   return room.code;
 }
 
-export function joinRoom(
-  code: string,
-  playerId: string,
-  rawName: string,
-  creature?: string
-): { ok: boolean; error?: string; playerId?: string } {
+export function joinRoom(code: string, playerId: string, rawName: string): { ok: boolean; error?: string; playerId?: string } {
   const room = rooms.get(code.toUpperCase());
   if (!room) return { ok: false, error: "No such town. Check the code." };
   const now = Date.now();
@@ -353,36 +314,37 @@ export function joinRoom(
   if (room.phase !== "lobby" && room.phase !== "ended") {
     return { ok: false, error: "This tale has already begun." };
   }
-  const name = (rawName || "Stranger").trim().slice(0, 18) || "Stranger";
-
-  // A stale seat with the same name is re-adopted instead of duplicated.
-  const stale = [...room.players.values()].find(
-    (q) => q.name.toLowerCase() === name.toLowerCase() && (q.parked || now - q.lastSeen > 20000)
+  const name = (rawName || "Stranger").trim().slice(0, 14) || "Stranger";
+  // Re-adoption: someone returning under the same name takes over their old
+  // (stale) seat instead of spawning a duplicate "name-2" stranger.
+  // Allowed in lobby AND after the tale ended, so the same souls can regather.
+  const staleSeat = [...room.players.values()].find(
+    (q) => q.name.toLowerCase() === name.toLowerCase() && now - q.lastSeen > 8000
   );
-  if (stale) {
-    room.players.delete(stale.id);
-    stale.id = playerId;
-    stale.parked = false;
-    stale.lastSeen = now;
-    room.players.set(playerId, stale);
-    feed(room, `${name} has returned to the valley.`);
-    record(room, stale, "seat_adopted", {});
-    markDirty(room);
+  if (staleSeat) {
+    room.players.delete(staleSeat.id);
+    const oldId = staleSeat.id;
+    staleSeat.id = playerId;
+    staleSeat.lastSeen = now;
+    staleSeat.joinedAt = now;
+    staleSeat.parked = false;
+    room.players.set(playerId, staleSeat);
+    record(room, staleSeat, "rejoin", { oldId });
+    feed(room, `${staleSeat.name} returned to town.`);
     return { ok: true, playerId };
   }
-
+  if (room.phase === "ended") {
+    return { ok: false, error: "This town's night is over — only its own souls may return." };
+  }
+  if (room.players.size >= 10) return { ok: false, error: "The town is full (10 souls)." };
   const used = new Set([...room.players.values()].map((p) => p.color));
-  const color = PLAYER_COLORS.find((c) => !used.has(c)) ?? PLAYER_COLORS[room.players.size % PLAYER_COLORS.length];
-  const idx = room.players.size;
+  const color = PLAYER_COLORS.find((c) => !used.has(c)) ?? PLAYER_COLORS[0];
   const p: P = {
     id: playerId,
     name,
     color,
-    creature: validCreature(creature),
-    x: BELL.x + Math.cos((idx / 6) * Math.PI * 2) * 240,
-    y: BELL.y + Math.sin((idx / 6) * Math.PI * 2) * 200,
-    dirX: 0,
-    dirY: 0,
+    x: BELL_X + (room.players.size - 2) * 60,
+    dir: 0,
     facing: 1,
     moving: false,
     alive: true,
@@ -397,123 +359,83 @@ export function joinRoom(
     bubbleText: "",
     bubbleUntil: 0,
     interactHeld: false,
-    lastSeen: now,
-    joinedAt: now,
+    lastSeen: Date.now(),
+    joinedAt: Date.now(),
     vote: null,
-    isHost: false,
-    downed: false,
-    downedAt: 0,
-    revive: 0,
-    parked: false,
+    isHost: true,
+    parked: false, // the lantern always passes to the LAST joiner
   };
+  const previousHost = [...room.players.values()].find((q) => q.isHost);
+  if (previousHost) {
+    previousHost.isHost = false;
+    feed(room, `${name} takes the town lantern (host).`);
+  }
   room.players.set(playerId, p);
-  // HUMAN RULE: the last player to join holds the lantern.
-  for (const q of room.players.values()) q.isHost = false;
-  p.isHost = true;
-  feed(room, `${name} walks into Hollow Creek.`);
-  record(room, p, "join", { creature: p.creature });
   markDirty(room);
+  feed(room, `${name} arrived in Hollow Creek.`);
+  record(room, p, "join", {});
   return { ok: true, playerId };
 }
 
-function validCreature(id?: string): string {
-  const c = CREATURES.find((k) => k.id === id && !k.claimedBy);
-  return c ? c.id : DEFAULT_CREATURE;
-}
-
+/** Explicit leave (button or sendBeacon on tab close). Lobby: removed + host
+ *  promoted to the NEWEST remaining joiner (most likely to be present).
+ *  In-game: seat is kept (roles must persist), but the lantern passes on. */
 export function leaveRoom(code: string, playerId: string): { ok: boolean } {
   const room = rooms.get(code.toUpperCase());
   if (!room) return { ok: false };
+  markDirty(room);
   const p = room.players.get(playerId);
   if (!p) return { ok: false };
-  dropKey(room, p);
-  freePlayer(room, p);
-  room.players.delete(playerId);
-  feed(room, `${p.name} leaves the valley.`);
-  record(room, p, "leave", {});
-  if (p.isHost && room.players.size) {
-    const next = [...room.players.values()].sort((a, b) => b.joinedAt - a.joinedAt)[0];
-    next.isHost = true;
-    feed(room, `${next.name} now holds the town lantern (host).`);
-    record(room, next, "host_handoff", {});
+  record(room, p, "leave", { lobby: room.phase === "lobby" });
+  if (room.phase === "lobby") {
+    room.players.delete(playerId);
+    feed(room, `${p.name} turned back down the old road.`);
+  } else {
+    p.dir = 0;
+    p.lastSeen = 0;
   }
-  markDirty(room);
+  if (p.isHost) {
+    p.isHost = false;
+    const next = [...room.players.values()].sort((a, b) => b.joinedAt - a.joinedAt)[0];
+    if (next) {
+      next.isHost = true;
+      feed(room, `${next.name} now holds the town lantern (host).`);
+    }
+  }
   return { ok: true };
 }
 
 export function startGame(room: Room, playerId: string): { ok: boolean; error?: string } {
-  const p = room.players.get(playerId);
-  if (!p) return { ok: false, error: "Unknown soul." };
-  if (!p.isHost) return { ok: false, error: "Only the lantern-holder may start the night." };
-  const ps = [...room.players.values()];
-  // A lone soul may walk the valley in nightwatch (it is how you learn the lanes);
-  // a Hollow night needs at least three, or it ends before it begins.
-  if (ps.length < (room.mode === "nightwatch" ? 1 : 3)) {
-    return { ok: false, error: "The valley needs at least three souls — two would tear each other apart." };
-  }
-
-  // Crypto-backed Fisher-Yates: who is Hollow must be genuinely random.
-  // nightwatch has no hidden roles at all — the night itself is the enemy
-  const nightwatch = room.mode === "nightwatch";
-  const ids = shuffle(ps.map((q) => q.id));
-  const hollowCount = nightwatch ? 0 : ps.length >= 9 ? 3 : ps.length >= 5 ? 2 : 1;
-  const hollows = new Set(ids.slice(0, hollowCount));
-
-  const crewCount = Math.max(1, ps.length - hollowCount);
-  const wardCount = nightwatch
-    ? STATIONS.length
-    : Math.max(4, Math.min(STATIONS.length, TASKS_PER_CREW * crewCount));
-  room.pool = shuffle(STATIONS.map((s) => s.id)).slice(0, wardCount).map((id) => ({ id, done: false, progress: 0 }));
-
-  ps.forEach((q, i) => {
-    const a = (i / ps.length) * Math.PI * 2;
-    q.x = BELL.x + Math.cos(a) * 330;
-    q.y = BELL.y + Math.sin(a) * 300;
-    q.dirX = 0;
-    q.dirY = 0;
-    q.alive = true;
-    q.caged = false;
-    q.cageIndex = -1;
-    q.role = hollows.has(q.id) ? "hollow" : "crew";
-    q.stamina = 1;
-    q.exhausted = false;
-    q.killAt = Date.now() + (nightwatch ? 0 : 12000);
-    q.downed = false;
-    q.downedAt = 0;
-    q.revive = 0;
-    q.bellUsed = false;
-    q.hasKey = false;
-    q.bubbleText = "";
-    q.bubbleUntil = 0;
-    q.interactHeld = false;
-    q.vote = null;
-  });
-  for (const c of room.cages) c.occupant = null;
-  room.bodies = [];
-  room.keyPos = null;
-  room.phase = "playing";
-  room.startedAt = Date.now();
-  room.winner = null;
-  room.winReason = null;
-  room.blackoutUntil = 0;
-  room.blackoutReadyAt = 0;
-  room.round += 1;
-  room.nextFlicker = Date.now() + 15000;
-  if (nightwatch) {
-    room.dawnAt = Date.now() + NIGHT_MS;
-    room.stalker = {
-      x: clampX(BELL.x + (Math.random() - 0.5) * 2400),
-      y: clampY(BELL.y + (Math.random() > 0.5 ? 1 : -1) * (900 + Math.random() * 900)),
-      restingUntil: Date.now() + STALKER_WAKE_MS,
-    };
-    feed(room, `Darkness falls. ${ps.length} souls, ${wardCount} wards, and dawn in six minutes.`);
-  } else {
-    room.dawnAt = 0;
-    room.stalker = null;
-    feed(room, `Darkness falls on Hollow Creek. ${hollowCount} Hollow walk among ${ps.length} souls.`);
-  }
-  record(room, p, "game_start", { players: ps.length, hollows: hollowCount, wards: wardCount, round: room.round, mode: room.mode });
   markDirty(room);
+  const host = room.players.get(playerId);
+  if (!host?.isHost) return { ok: false, error: "Only the host may begin." };
+  if (room.phase !== "lobby") return { ok: false, error: "Already begun." };
+  if (room.players.size < 4) return { ok: false, error: "At least 4 souls are needed." };
+
+  const ps = [...room.players.values()];
+  const shuffled = shuffle(ps); // uniform Fisher–Yates — every seat equally likely
+  const hollowCount = ps.length >= 6 ? 2 : 1;
+  shuffled.forEach((p, i) => {
+    p.role = i < hollowCount ? "hollow" : "crew";
+    p.x = 300 + Math.random() * (WORLD_W - 600);
+    p.killAt = Date.now() + 10000;
+  });
+  // Shared pool: the town's wards belong to everyone. A death never orphans
+  // a chore, and nothing is redistributed — anyone living can work anything.
+  const crewCount = ps.filter((p) => p.role === "crew").length;
+  const poolSize = Math.min(STATIONS.length, 2 + crewCount * 2);
+  room.pool = shuffle(STATIONS.map((s) => s.id))
+    .slice(0, poolSize)
+    .map((id) => ({ id, done: false, progress: 0 }));
+  for (const p of ps) { p.stamina = 1; p.exhausted = false; }
+  room.startedAt = Date.now();
+  room.round += 1;
+  // The cage key hides somewhere on the outskirts.
+  room.keyX = Math.random() < 0.5 ? 150 + Math.random() * 1400 : 2700 + Math.random() * 1350;
+  room.phase = "playing";
+  room.nextFlicker = Date.now() + 15000 + Math.random() * 15000;
+  feed(room, "Night falls. Something wearing a human shape walks among you.");
+  record(room, null, "game_start", { players: ps.map((p) => ({ id: p.id, name: p.name, role: p.role })) });
   checkWin(room);
   return { ok: true };
 }
@@ -522,55 +444,110 @@ export function getRoom(code: string): Room | undefined {
   return rooms.get(code.toUpperCase());
 }
 
-function listing(room: Room): RoomListing {
-  const ps = [...room.players.values()].sort((a, b) => a.joinedAt - b.joinedAt);
-  return {
-    code: room.code,
-    phase: room.phase,
-    playerCount: ps.length,
-    hostName: ps.find((p) => p.isHost)?.name ?? "—",
-    names: ps.map((p) => p.name),
-    createdAt: room.createdAt,
-    round: room.round,
-  };
-}
-
+/**
+ * Room browser, backed by Postgres: towns survive a restart, so the menu can
+ * offer a town that is not currently in memory.
+ */
 export async function listRooms(): Promise<RoomListing[]> {
-  const out: RoomListing[] = [];
+  // let go of towns nobody has touched for a week
   try {
-    const rows = await db.select().from(roomRows).orderBy(desc(roomRows.updatedAt)).limit(60);
+    await db.delete(roomRows).where(lt(roomRows.updatedAt, new Date(Date.now() - 7 * 24 * 3600_000)));
+  } catch {
+    /* non-fatal */
+  }
+  const out = new Map<string, RoomListing>();
+  try {
+    const rows = await db
+      .select({
+        code: roomRows.code,
+        round: roomRows.round,
+        updatedAt: roomRows.updatedAt,
+        name: roomPlayers.name,
+      })
+      .from(roomRows)
+      .leftJoin(roomPlayers, eq(roomPlayers.code, roomRows.code))
+      .orderBy(desc(roomRows.updatedAt))
+      .limit(24);
     for (const r of rows) {
-      const live = rooms.get(r.code);
-      if (live) {
-        out.push(listing(live));
-        continue;
-      }
-      const roster = await db.select().from(roomPlayers).where(eq(roomPlayers.code, r.code));
-      out.push({
+      const cur = out.get(r.code) ?? {
         code: r.code,
-        phase: (r.phase as Phase) ?? "lobby",
-        playerCount: roster.length,
-        hostName: roster[roster.length - 1]?.name ?? "—",
-        names: roster.map((p) => p.name),
-        createdAt: r.createdAt.getTime(),
+        phase: "lobby" as Phase,
+        playerCount: 0,
+        hostName: "—",
+        names: [],
+        createdAt: r.updatedAt.getTime(),
         round: r.round,
-      });
+      };
+      if (r.name) cur.names.push(r.name);
+      cur.playerCount = cur.names.length;
+      out.set(r.code, cur);
     }
   } catch (e) {
     console.error("room list failed", e);
   }
-  return out;
+  // live rooms win: their phase and roster are current
+  for (const r of rooms.values()) {
+    if (r.players.size === 0) continue;
+    const ps = [...r.players.values()];
+    out.set(r.code, {
+      code: r.code,
+      phase: r.phase,
+      playerCount: ps.length,
+      hostName: ps.find((p) => p.isHost)?.name ?? "—",
+      names: ps.map((p) => p.name),
+      createdAt: r.createdAt,
+      round: r.round,
+    });
+  }
+  return [...out.values()]
+    .filter((r) => r.playerCount > 0)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 24);
 }
 
+/** Live room browser — open towns on the map. */
 export function listRoomsSync(): RoomListing[] {
-  return [...rooms.values()].map(listing);
+  return [...rooms.values()]
+    .filter((r) => r.players.size > 0)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 24)
+    .map((r) => {
+      const ps = [...r.players.values()];
+      return {
+        code: r.code,
+        phase: r.phase,
+        playerCount: ps.length,
+        hostName: ps.find((p) => p.isHost)?.name ?? "—",
+        names: ps.map((p) => p.name),
+        createdAt: r.createdAt,
+        round: r.round,
+      };
+    });
 }
 
+/** The same souls gather in the same town for another night. */
 export function restartGame(room: Room, playerId: string): { ok: boolean; error?: string } {
+  markDirty(room);
   const p = room.players.get(playerId);
   if (!p) return { ok: false, error: "Unknown soul." };
-  if (!p.isHost) return { ok: false, error: "Only the lantern-holder may call another night." };
+  if (!p.isHost) {
+    // if the lantern-bearer never came back, a present soul may claim it
+    const host = [...room.players.values()].find((q) => q.isHost);
+    if (host && Date.now() - host.lastSeen > 12000) {
+      host.isHost = false;
+      p.isHost = true;
+      feed(room, `${p.name} picked up the fallen lantern (host).`);
+    } else {
+      return { ok: false, error: "Only the lantern-bearer may gather the town." };
+    }
+  }
+  if (room.phase !== "ended") return { ok: false, error: "The night is not over yet." };
+  let i = 0;
   for (const q of room.players.values()) {
+    q.x = BELL_X + (i++ - 2) * 60;
+    q.dir = 0;
+    q.facing = 1;
+    q.moving = false;
     q.alive = true;
     q.caged = false;
     q.cageIndex = -1;
@@ -580,22 +557,13 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
     q.killAt = 0;
     q.bellUsed = false;
     q.hasKey = false;
-    q.x = BELL.x + Math.cos(q.joinedAt % 6.28) * 300;
-    q.y = BELL.y + Math.sin(q.joinedAt % 6.28) * 260;
-    q.dirX = 0;
-    q.dirY = 0;
     q.bubbleText = "";
     q.bubbleUntil = 0;
     q.interactHeld = false;
     q.vote = null;
-    q.downed = false;
-    q.downedAt = 0;
-    q.revive = 0;
   }
   room.bodies = [];
-  room.keyPos = null;
-  room.dawnAt = 0;
-  room.stalker = null;
+  room.keyX = null;
   for (const c of room.cages) c.occupant = null;
   room.meeting = null;
   room.winner = null;
@@ -606,7 +574,6 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
   room.phase = "lobby";
   feed(room, "The town gathers again. The same faces… but who will wear them tonight?");
   record(room, p, "restart", { round: room.round + 1 });
-  markDirty(room);
   return { ok: true };
 }
 
@@ -614,16 +581,12 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
 // Helpers
 // ---------------------------------------------------------------------------
 
-const d2 = (ax: number, ay: number, bx: number, by: number) => Math.hypot(ax - bx, ay - by);
-const inMeetingArea = (p: P) =>
-  p.caged || (p.x >= SQUARE.x && p.x <= SQUARE.x + SQUARE.w && p.y >= SQUARE.y && p.y <= SQUARE.y + SQUARE.h);
+const dist = (a: number, b: number) => Math.abs(a - b);
+const inMeetingArea = (p: P) => p.caged || (p.x >= MEETING_FROM && p.x <= MEETING_TO);
 
 function nearestBody(room: Room, p: P) {
   let best: Room["bodies"][number] | null = null;
-  for (const b of room.bodies) {
-    const d = d2(b.x, b.y, p.x, p.y);
-    if (d < INTERACT_RANGE + 30 && (!best || d < d2(best.x, best.y, p.x, p.y))) best = b;
-  }
+  for (const b of room.bodies) if (dist(b.x, p.x) < INTERACT_RANGE + 20 && (!best || dist(b.x, p.x) < dist(best.x, p.x))) best = b;
   return best;
 }
 
@@ -631,8 +594,7 @@ function killTarget(room: Room, p: P): P | null {
   let best: P | null = null;
   for (const t of room.players.values()) {
     if (t.id === p.id || !t.alive || t.role === "hollow") continue;
-    const d = d2(t.x, t.y, p.x, p.y);
-    if (d <= KILL_RANGE && (!best || d < d2(best.x, best.y, p.x, p.y))) best = t;
+    if (dist(t.x, p.x) <= KILL_RANGE && (!best || dist(t.x, p.x) < dist(best.x, p.x))) best = t;
   }
   return best;
 }
@@ -640,12 +602,9 @@ function killTarget(room: Room, p: P): P | null {
 function dropKey(room: Room, p: P) {
   if (p.hasKey) {
     p.hasKey = false;
-    room.keyPos = { x: clampX(p.x), y: clampY(p.y) };
+    room.keyX = Math.max(60, Math.min(WORLD_W - 60, p.x));
   }
 }
-
-const clampX = (x: number) => Math.max(60, Math.min(WORLD_W - 60, x));
-const clampY = (y: number) => Math.max(60, Math.min(WORLD_H - 60, y));
 
 function cagePlayer(room: Room, p: P): boolean {
   const idx = room.cages.findIndex((c) => c.occupant === null);
@@ -654,36 +613,16 @@ function cagePlayer(room: Room, p: P): boolean {
   p.caged = true;
   p.cageIndex = idx;
   p.x = room.cages[idx].x;
-  p.y = room.cages[idx].y;
-  p.dirX = 0;
-  p.dirY = 0;
+  p.dir = 0;
   dropKey(room, p);
   return true;
 }
 
 function freePlayer(room: Room, p: P) {
   if (!p.caged) return;
-  if (room.cages[p.cageIndex]) room.cages[p.cageIndex].occupant = null;
+  room.cages[p.cageIndex].occupant = null;
   p.caged = false;
   p.cageIndex = -1;
-}
-
-/** Nightwatch has no meetings — the bell rallies the town and drives the fog back. */
-function rally(room: Room, p: P): { ok: boolean } {
-  for (const q of room.players.values()) {
-    q.stamina = Math.min(1, q.stamina + 0.4);
-    if (q.downed && q.revive > 0.3) { q.downed = false; q.revive = 0; }
-  }
-  const s = room.stalker;
-  if (s) {
-    const a = Math.atan2(s.y - p.y, s.x - p.x);
-    s.x = clampX(s.x + Math.cos(a) * 1500);
-    s.y = clampY(s.y + Math.sin(a) * 1500);
-    s.restingUntil = Date.now() + 32000;
-  }
-  feed(room, `🔔 ${p.name} rings the bell. The valley straightens its back.`);
-  record(room, p, "rally", {});
-  return { ok: true };
 }
 
 function beginMeeting(room: Room, reason: string, caller: P | null) {
@@ -698,15 +637,13 @@ function beginMeeting(room: Room, reason: string, caller: P | null) {
 
 function doKill(room: Room, killer: P, victim: P) {
   victim.alive = false;
-  victim.dirX = 0;
-  victim.dirY = 0;
+  victim.dir = 0;
   dropKey(room, victim);
   freePlayer(room, victim); // a killed prisoner dies inside the cell; body remains there
-  room.bodies.push({ x: victim.x, y: victim.y, color: victim.color, name: victim.name, id: victim.id });
+  room.bodies.push({ x: victim.x, color: victim.color, name: victim.name, id: victim.id });
   killer.killAt = Date.now() + KILL_COOLDOWN_MS;
   killer.stamina = Math.max(0, killer.stamina - STAMINA_KILL_COST);
   killer.x = victim.x; // lunge
-  killer.y = victim.y;
   feed(room, "A scream cuts through the fog, then silence.");
   record(room, killer, "kill", { victim: victim.name, victimId: victim.id, victimCaged: victim.caged });
   bumpStats(killer.id, killer.name, { kills: 1 });
@@ -723,12 +660,7 @@ function checkWin(room: Room) {
   const tasksDone = room.pool.length > 0 && room.pool.every((t) => t.done);
   let winner: Role | null = null;
   let reason = "";
-  if (room.mode === "nightwatch") {
-    const standing = ps.filter((p) => !p.downed).length;
-    if (tasksDone) { winner = "crew"; reason = "Every ward holds. Dawn finds the valley still standing."; }
-    else if (standing === 0) { winner = "hollow"; reason = "The fog took the whole town before the wards were finished."; }
-    else if (Date.now() >= room.dawnAt) { winner = "hollow"; reason = "Dawn came, and the wards were not finished."; }
-  } else if (tasksDone && crewAll.length > 0) { winner = "crew"; reason = "Every ward is restored. The Hollow starves and retreats."; }
+  if (tasksDone && crewAll.length > 0) { winner = "crew"; reason = "Every ward is restored. The Hollow starves and retreats."; }
   else if (hollowFree === 0) { winner = "crew"; reason = "The Hollow Ones are dead or bound in iron. The town breathes again."; }
   else if (hollowFree >= crewFree) { winner = "hollow"; reason = "The Hollow outnumber the living. Hollow Creek belongs to them now."; }
   if (winner) {
@@ -747,7 +679,6 @@ function checkWin(room: Room) {
         playtimeSec,
       });
     }
-    markDirty(room);
   }
 }
 
@@ -786,25 +717,6 @@ function resolveMeeting(room: Room) {
   checkWin(room);
 }
 
-/** Simple rectangle push-out so the valley's buildings are real mass. */
-function resolveSolids(p: P) {
-  const r = 30;
-  for (const o of OBSTACLES) {
-    const nx = Math.max(o.x, Math.min(o.x + o.w, p.x));
-    const ny = Math.max(o.y, Math.min(o.y + o.h, p.y));
-    const dx = p.x - nx;
-    const dy = p.y - ny;
-    const dd = Math.hypot(dx, dy);
-    if (dd >= r) continue;
-    if (dd > 0.001) {
-      p.x = nx + (dx / dd) * r;
-      p.y = ny + (dy / dd) * r;
-    } else {
-      p.y = o.y - r;
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Input — clients send ONLY intent, never positions
 // ---------------------------------------------------------------------------
@@ -814,31 +726,12 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
   if (!p) return { ok: false, error: "Unknown soul." };
   p.lastSeen = Date.now();
 
-  // legacy 1D input (`dir`) moves on x only and always stops the y axis
-  const legacy = typeof body.dirX !== "number" && typeof body.dirY !== "number" && typeof body.dir === "number";
-  const dx = typeof body.dirX === "number" ? body.dirX : typeof body.dir === "number" ? body.dir : undefined;
-  const dy = legacy ? 0 : typeof body.dirY === "number" ? body.dirY : undefined;
-  if (dx !== undefined || dy !== undefined) {
-    const nx = Math.max(-1, Math.min(1, Math.round(dx ?? p.dirX)));
-    const ny = Math.max(-1, Math.min(1, Math.round(dy ?? p.dirY)));
-    if (nx !== p.dirX || ny !== p.dirY) record(room, p, "move_input", { dirX: nx, dirY: ny });
-    p.dirX = nx;
-    p.dirY = ny;
+  if (typeof body.dir === "number") {
+    const d = Math.max(-1, Math.min(1, Math.round(body.dir)));
+    if (d !== p.dir) record(room, p, "move_input", { dir: d });
+    p.dir = d;
   }
   if (typeof body.interactHeld === "boolean") p.interactHeld = body.interactHeld;
-  // Holding E on a ward opens its board — the ward is played now, not waited out.
-  if (p.interactHeld && room.phase === "playing" && !room.wards.has(p.id)) openWard(room, p);
-
-  if (typeof body.creature === "string") {
-    const c = validCreature(body.creature);
-    if (c !== p.creature && (room.phase === "lobby" || room.phase === "ended")) {
-      p.creature = c;
-      const spec = CREATURES.find((k) => k.id === c);
-      feed(room, `${p.name} takes the face of the ${spec?.name ?? "Stranger"}.`);
-      record(room, p, "creature_chosen", { creature: c });
-      markDirty(room);
-    }
-  }
 
   if (typeof body.chat === "string" && body.chat.trim()) {
     const text = body.chat.trim().slice(0, 120);
@@ -865,13 +758,13 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     }
     // free a prisoner with the cage key
     if (p.hasKey) {
-      const ci = room.cages.findIndex((c) => c.occupant && d2(c.x, c.y, p.x, p.y) < INTERACT_RANGE);
+      const ci = room.cages.findIndex((c) => c.occupant && dist(c.x, p.x) < INTERACT_RANGE);
       if (ci >= 0) {
         const occ = room.players.get(room.cages[ci].occupant!)!;
         freePlayer(room, occ);
         p.hasKey = false;
         p.stamina = Math.max(0, p.stamina - STAMINA_UNLOCK_COST);
-        room.keyPos = { x: room.cages[ci].x + 60, y: room.cages[ci].y }; // the key falls beside the opened cage
+        room.keyX = room.cages[ci].x + 40; // the key falls by the open cage — the town learns where it lies
         feed(room, `${p.name} unlocks the cage. ${occ.name} steps free. The key clatters to the ground.`);
         record(room, p, "unlock_cage", { freed: occ.name });
         bumpStats(p.id, p.name, { unlocks: 1 });
@@ -879,15 +772,15 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
       }
     }
     // pick up the cage key
-    if (room.keyPos && !p.caged && d2(room.keyPos.x, room.keyPos.y, p.x, p.y) < INTERACT_RANGE) {
+    if (room.keyX !== null && !p.caged && dist(room.keyX, p.x) < INTERACT_RANGE) {
       p.hasKey = true;
-      room.keyPos = null;
+      room.keyX = null;
       feed(room, `${p.name} found an old iron key.`);
       record(room, p, "pickup_key", {});
       return { ok: true };
     }
     // ring the bell
-    if (room.phase === "playing" && !p.caged && !p.bellUsed && d2(p.x, p.y, BELL.x, BELL.y) < INTERACT_RANGE) {
+    if (room.phase === "playing" && !p.caged && !p.bellUsed && dist(p.x, BELL_X) < INTERACT_RANGE) {
       p.bellUsed = true;
       p.stamina = Math.max(0, p.stamina - STAMINA_BELL_COST);
       record(room, p, "ring_bell", {});
@@ -905,12 +798,11 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
       doKill(room, p, victim);
       return { ok: true };
     }
-    if (p.role === "crew" && room.phase === "playing" && !p.caged && !p.bellUsed && d2(p.x, p.y, BELL.x, BELL.y) < INTERACT_RANGE + 20) {
+    if (p.role === "crew" && room.phase === "playing" && !p.caged && !p.bellUsed && dist(p.x, BELL_X) < INTERACT_RANGE + 20) {
       p.bellUsed = true;
       p.stamina = Math.max(0, p.stamina - STAMINA_BELL_COST);
-      record(room, p, "ring_bell", { mode: room.mode });
+      record(room, p, "ring_bell", {});
       bumpStats(p.id, p.name, { bells: 1 });
-      if (room.mode === "nightwatch") return rally(room, p);
       beginMeeting(room, `${p.name} rang the bell`, p);
       return { ok: true };
     }
@@ -948,89 +840,7 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     return { ok: true };
   }
 
-  if (body.action === "ward") return openWard(room, p);
-
-  if (body.action === "wardcancel") {
-    room.wards.delete(p.id);
-    return { ok: true };
-  }
-
-  if (body.action === "strike") {
-    const s = room.wards.get(p.id);
-    if (!s || s.board.kind !== "strike") return { ok: false, error: "No ward open." };
-    const now = Date.now();
-    if (now - s.lastStrike < 150) return { ok: true }; // no mashing
-    s.lastStrike = now;
-    const task = room.pool.find((t) => t.id === s.stationId && !t.done);
-    if (!task) { room.wards.delete(p.id); return { ok: false, error: "That ward is finished." }; }
-    const elapsed = (now - s.startedAt) / 1000;
-    if (inBand(s.board, elapsed, s.hits)) {
-      s.hits += 1;
-      p.stamina = Math.max(0, p.stamina - STAMINA_WORK_DRAIN * 0.9);
-      record(room, p, "ward_hit", { station: s.stationId, hits: s.hits, need: s.board.need });
-      if (s.hits >= s.board.need) finishWard(room, p, task, s);
-    } else {
-      s.hits = Math.max(0, s.hits - 1); // a miss undoes a hit
-      p.stamina = Math.max(0, p.stamina - 0.05);
-      record(room, p, "ward_miss", { station: s.stationId });
-    }
-    return { ok: true };
-  }
-
-  if (body.action === "tap") {
-    const s = room.wards.get(p.id);
-    if (!s || s.board.kind !== "sequence") return { ok: false, error: "No ward open." };
-    const v = typeof body.v === "number" ? Math.max(0, Math.min(3, Math.round(body.v))) : -1;
-    if (v < 0) return { ok: false, error: "Bad tap." };
-    const task = room.pool.find((t) => t.id === s.stationId && !t.done);
-    if (!task) { room.wards.delete(p.id); return { ok: false, error: "That ward is finished." }; }
-    s.taps.push(v);
-    if (!sequenceSoFarGood(s.board, s.taps)) {
-      s.taps = [];
-      p.stamina = Math.max(0, p.stamina - 0.05);
-      record(room, p, "ward_miss", { station: s.stationId });
-      return { ok: true };
-    }
-    p.stamina = Math.max(0, p.stamina - STAMINA_WORK_DRAIN * 0.25);
-    if (sequenceDone(s.board, s.taps)) finishWard(room, p, task, s);
-    return { ok: true };
-  }
-
   return { ok: true };
-}
-
-/** Open the ward board for a player standing at an unfinished ward. */
-function openWard(room: Room, p: P): { ok: boolean; error?: string } {
-  if (room.phase !== "playing" || !p.alive || p.caged) return { ok: false, error: "Not now." };
-  const st = STATIONS.find(
-    (s) => d2(s.x, s.y, p.x, p.y) < INTERACT_RANGE + 30 && room.pool.some((t) => t.id === s.id && !t.done)
-  );
-  if (!st) return { ok: false, error: "No ward here." };
-  const existing = room.wards.get(p.id);
-  if (existing && existing.stationId === st.id) return { ok: true };
-  const board = makeBoard(st.kind, Math.floor(Math.random() * 1e9));
-  room.wards.set(p.id, {
-    playerId: p.id,
-    stationId: st.id,
-    board,
-    startedAt: Date.now(),
-    hits: 0,
-    taps: [],
-    lastStrike: 0,
-  });
-  record(room, p, "ward_open", { station: st.id, kind: board.kind });
-  return { ok: true };
-}
-
-function finishWard(room: Room, p: P, task: TaskState, s: WardSession) {
-  task.progress = 1;
-  task.done = true;
-  room.wards.delete(p.id);
-  const st = STATIONS.find((x) => x.id === task.id);
-  feed(room, `${p.name} finishes the ${st ? st.name.toLowerCase() : "ward"}.`);
-  record(room, p, "task_complete", { task: task.id, kind: s.board.kind });
-  bumpStats(p.id, p.name, { tasksDone: 1 });
-  checkWin(room);
 }
 
 // ---------------------------------------------------------------------------
@@ -1042,12 +852,13 @@ function tick() {
   const dt = TICK_MS / 1000;
   for (const room of rooms.values()) {
     if (now - room.createdAt > 6 * 3600_000 && room.players.size === 0) { rooms.delete(room.code); continue; }
-    if (room.phase === "lobby" || room.phase === "ended") {
+    if (room.phase === "lobby") {
+      // prune souls who have been gone 75s so seats (and the lantern) never rot
       for (const p of [...room.players.values()]) {
         if (p.parked) continue; // a restored seat waits for its player
         if (now - p.lastSeen > 75000) leaveRoom(room.code, p.id);
       }
-      // invariant: while anyone is gathered, SOMEONE holds the lantern
+      // invariant: while anyone is in the lobby, SOMEONE holds the lantern
       const host = [...room.players.values()].find((p) => p.isHost);
       if (!host && room.players.size > 0) {
         const next = [...room.players.values()].sort((a, b) => b.joinedAt - a.joinedAt)[0];
@@ -1067,114 +878,48 @@ function tick() {
       }
       continue;
     }
+    if (room.phase === "ended") continue;
 
     for (const p of room.players.values()) {
-      if (now - p.lastSeen > 15000) { p.dirX = 0; p.dirY = 0; } // stale connection stops walking
-      if (p.downed) { p.dirX = 0; p.dirY = 0; } // the fallen cannot walk
+      if (now - p.lastSeen > 15000) p.dir = 0; // stale connection stops walking
       const speed = p.alive ? SPEED : GHOST_SPEED;
-      const len = Math.hypot(p.dirX, p.dirY);
-      p.moving = len > 0;
-      if (p.dirX !== 0) p.facing = p.dirX;
-      if (len > 0) {
-        p.x += (p.dirX / len) * speed * dt;
-        p.y += (p.dirY / len) * speed * dt;
-      }
+      p.moving = p.dir !== 0;
+      if (p.dir !== 0) p.facing = p.dir;
+      p.x += p.dir * speed * dt;
       if (p.caged && p.cageIndex >= 0) {
-        const c = room.cages[p.cageIndex];
-        p.x = Math.max(c.x - CELL_HALF + 8, Math.min(c.x + CELL_HALF - 8, p.x));
-        p.y = Math.max(c.y - CELL_HALF + 8, Math.min(c.y + CELL_HALF - 8, p.y));
+        const cx = room.cages[p.cageIndex].x;
+        p.x = Math.max(cx - CELL_HALF + 8, Math.min(cx + CELL_HALF - 8, p.x));
       } else {
-        p.x = clampX(p.x);
-        p.y = clampY(p.y);
-        resolveSolids(p);
+        p.x = Math.max(30, Math.min(WORLD_W - 30, p.x));
       }
-      // a ward board closes if its player drifts away or leaves it too long
-      const ws = room.wards.get(p.id);
-      if (ws) {
-        const st = STATIONS.find((x) => x.id === ws.stationId);
-        if (!st || now - ws.startedAt > 150000 || d2(st.x, st.y, p.x, p.y) > INTERACT_RANGE * 2.2) {
-          room.wards.delete(p.id);
-        }
-      }
-      // vigor returns only while truly idle
-      if (!p.moving) {
-        const chill = room.weather?.kind === "cold" && now < room.weather.until ? 0.55 : 1;
-        p.stamina = Math.min(1, p.stamina + STAMINA_IDLE_REGEN * dt * chill);
-        if (p.exhausted && p.stamina >= 0.2) p.exhausted = false;
-      }
-      if (p.stamina <= 0) p.exhausted = true;
-    }
-
-    // ---------------- the valley's moods ----------------
-    if (room.phase === "playing" && now >= room.nextWeather) {
-      const kinds: WeatherKind[] = ["fog", "cold", "gutter", "crows"];
-      const kind = kinds[Math.floor(Math.random() * kinds.length)];
-      room.weather = { kind, until: now + WEATHER_MS };
-      room.nextWeather = now + WEATHER_EVERY_MS + Math.random() * 40000;
-      feed(room, WEATHER_LINES[kind]);
-      record(room, null, "weather", { kind });
-      if (kind === "gutter" && room.stalker) room.stalker.restingUntil = Math.min(room.stalker.restingUntil, now) ;
-    }
-    if (room.weather && now >= room.weather.until) room.weather = null;
-
-    // ---------------- nightwatch: the thing in the fog, and the fallen -------------
-    if (room.phase === "playing" && room.mode === "nightwatch") {
-      const living = [...room.players.values()];
-      for (const q of living) {
-        if (!q.downed) continue;
-        const helper = living.some(
-          (h) => !h.downed && h.interactHeld && !h.moving && d2(h.x, h.y, q.x, q.y) < INTERACT_RANGE
-        );
-        if (helper) q.revive = Math.min(1, q.revive + dt / (REVIVE_MS / 1000));
-        else q.revive = Math.max(0, q.revive - dt * 0.5);
-        // nobody coming? they drag themselves up eventually — the night may never
-        // soft-lock a lone soul, but a friend is always faster and costs nothing.
-        if (!helper && now - q.downedAt > 15000) {
-          q.downed = false;
-          q.revive = 0;
-          q.stamina = Math.min(q.stamina, 0.35);
-          feed(room, `${q.name} drags themselves back up. Bruised, and slower for it.`);
-          record(room, q, "self_revive", {});
-          continue;
-        }
-        if (q.revive >= 1) {
-          q.downed = false;
-          q.revive = 0;
-          q.stamina = Math.max(q.stamina, 0.55);
-          feed(room, `${q.name} is back on their feet.`);
-          record(room, q, "revived", {});
-        }
-      }
-      const s = room.stalker;
-      if (s && now >= s.restingUntil) {
-        let best: P | null = null;
-        let bd = Infinity;
-        for (const h of living) {
-          if (h.downed) continue;
-          const d = d2(h.x, h.y, s.x, s.y);
-          if (d < bd) { bd = d; best = h; }
-        }
-        if (best) {
-          const ang = Math.atan2(best.y - s.y, best.x - s.x);
-          s.x += Math.cos(ang) * STALKER_SPEED * dt;
-          s.y += Math.sin(ang) * STALKER_SPEED * dt;
-          s.x = clampX(s.x);
-          s.y = clampY(s.y);
-          if (bd < STALKER_RANGE) {
-            best.downed = true;
-            best.downedAt = now;
-            best.revive = 0;
-            best.stamina = Math.max(0, best.stamina - 0.25);
-            feed(room, `The fog takes ${best.name}. They are down — stand over them and hold.`);
-            record(room, best, "downed", { x: Math.round(best.x), y: Math.round(best.y) });
-            const a = Math.random() * Math.PI * 2;
-            s.x = clampX(s.x + Math.cos(a) * 1100);
-            s.y = clampY(s.y + Math.sin(a) * 1100);
-            s.restingUntil = now + STALKER_REST_MS;
+      // shared ward work (hold E) — vigor drains, low vigor slows, zero halts
+      let working = false;
+      if (room.phase === "playing" && p.alive && !p.caged && p.role === "crew" && p.interactHeld && p.dir === 0) {
+        const t = room.pool.find((t) => {
+          if (t.done) return false;
+          const st = STATIONS.find((s) => s.id === t.id)!;
+          return dist(st.x, p.x) < INTERACT_RANGE;
+        });
+        if (t && p.stamina > 0 && !p.exhausted) {
+          working = true;
+          const factor = Math.min(1, p.stamina / STAMINA_SLOW_THRESHOLD);
+          t.progress += (TICK_MS / TASK_HOLD_MS) * factor;
+          p.stamina = Math.max(0, p.stamina - STAMINA_WORK_DRAIN * dt);
+          if (p.stamina <= 0) p.exhausted = true; // must truly rest before working again
+          if (t.progress >= 1) {
+            t.progress = 1;
+            t.done = true;
+            record(room, p, "task_complete", { task: t.id });
+            bumpStats(p.id, p.name, { tasksDone: 1 });
+            checkWin(room);
           }
         }
       }
-      if (now >= room.dawnAt) checkWin(room);
+      // vigor returns only while truly idle
+      if (!working && p.dir === 0) {
+        p.stamina = Math.min(1, p.stamina + STAMINA_IDLE_REGEN * dt);
+        if (p.exhausted && p.stamina >= 0.2) p.exhausted = false;
+      }
     }
 
     if (room.phase === "meeting" && room.meeting && now >= room.meeting.endsAt) resolveMeeting(room);
@@ -1187,7 +932,6 @@ function tick() {
         "Crows lift from the church roof all at once.",
         "A cold wind carries a whisper no one spoke.",
         "Every window in town goes dark for a heartbeat.",
-        "The creek runs black for a moment, then clears.",
       ];
       feed(room, lines[Math.floor(Math.random() * lines.length)]);
     }
@@ -1214,41 +958,30 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
   const ps = [...room.players.values()];
   const killCd = Math.max(0, me.killAt - now);
   const target = me.role === "hollow" ? killTarget(room, me) : null;
-  const near = (x: number, y: number, range = INTERACT_RANGE) => d2(x, y, me.x, me.y) < range;
 
   let hint: string | null = null;
-  const downedFriend = [...room.players.values()].find((q) => q.id !== me.id && q.downed && near(q.x, q.y));
   if (me.alive && room.phase !== "lobby") {
     const b = room.phase === "playing" && !me.caged ? nearestBody(room, me) : null;
-    const cageIdx = me.hasKey ? room.cages.findIndex((c) => c.occupant && near(c.x, c.y)) : -1;
-    const nearTask = room.pool.find((t) => !t.done && (() => {
-      const st = STATIONS.find((s) => s.id === t.id)!;
-      return near(st.x, st.y);
-    })());
+    const cageIdx = me.hasKey ? room.cages.findIndex((c) => c.occupant && dist(c.x, me.x) < INTERACT_RANGE) : -1;
     if (b) hint = `Report ${b.name}'s body`;
     else if (cageIdx >= 0) hint = `Unlock ${room.players.get(room.cages[cageIdx].occupant!)?.name}'s cage`;
-    else if (room.keyPos && !me.caged && near(room.keyPos.x, room.keyPos.y)) hint = "Take the iron key";
-    else if (room.phase === "playing" && !me.caged && !me.bellUsed && near(BELL.x, BELL.y)) hint = "Ring the bell";
-    else if (room.phase === "playing" && me.alive && !me.caged && nearTask) {
-      const st = STATIONS.find((s) => s.id === nearTask.id)!;
-      hint = me.exhausted
-        ? "Spent — stand still and catch your breath"
-        : `Hold E — play the ward: ${st.name}`;
-    } else if (room.phase === "playing" && !me.caged) {
-      hint =
-        room.mode === "nightwatch"
-          ? `Dawn in ${Math.max(0, Math.round((room.dawnAt - now) / 1000))}s — ${room.pool.filter((t) => !t.done).length} wards left`
-          : "Wards are marked on your map — the valley is wide tonight";
+    else if (room.keyX !== null && !me.caged && dist(room.keyX, me.x) < INTERACT_RANGE) hint = "Take the iron key";
+    else if (room.phase === "playing" && !me.caged && !me.bellUsed && dist(me.x, BELL_X) < INTERACT_RANGE) hint = "Ring the bell";
+    else if (room.phase === "playing" && me.alive && !me.caged) {
+      const t = room.pool.find((t) => !t.done && dist(STATIONS.find((s) => s.id === t.id)!.x, me.x) < INTERACT_RANGE);
+      if (t) {
+        hint = me.role === "hollow"
+          ? `Hold E — ${STATIONS.find((s) => s.id === t.id)!.name} (pretend)`
+          : me.exhausted
+            ? "Spent — stand still and catch your breath"
+            : `Hold E — ${STATIONS.find((s) => s.id === t.id)!.name}${me.stamina < STAMINA_SLOW_THRESHOLD ? " (weary, slow)" : ""}`;
+      }
     }
-    if (me.downed) hint = "You are down. Hold still — a friend must stand over you.";
-    else if (downedFriend && room.phase === "playing") hint = `Hold E — raise ${downedFriend.name}`;
   }
 
   const abilityLabel = me.role === "hollow" ? "Kill" : "Ring Bell";
   const abilityReady = me.alive && room.phase === "playing" && (
-    me.role === "hollow"
-      ? killCd <= 0 && !!target
-      : !me.caged && !me.bellUsed && d2(me.x, me.y, BELL.x, BELL.y) < INTERACT_RANGE + 20
+    me.role === "hollow" ? killCd <= 0 && !!target : !me.caged && !me.bellUsed && dist(me.x, BELL_X) < INTERACT_RANGE + 20
   );
 
   const doneTasks = room.pool.filter((t) => t.done).length;
@@ -1256,57 +989,25 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
   // ---- server-side vision: a hacked client cannot wallhack ----
   const blackout = now < room.blackoutUntil;
   const ghostView = !me.alive;
-  const foggy = room.weather?.kind === "fog" && now < (room.weather?.until ?? 0);
-  const vision = (ghostView || room.phase === "lobby" || room.phase === "ended"
-    ? 99999
-    : room.phase === "meeting"
-      ? VISION_MEETING
-      : me.role === "hollow"
-        ? VISION_HOLLOW
-        : blackout ? VISION_BLACKOUT : VISION_CREW) * (foggy ? 0.78 : 1);
-  const canSee = (x: number, y: number) => ghostView || d2(x, y, me.x, me.y) <= vision;
+  let vision = ghostView ? 99999
+    : room.phase === "meeting" ? 900
+    : me.role === "hollow" ? VISION_HOLLOW
+    : blackout ? VISION_BLACKOUT
+    : VISION_CREW;
+  if (room.phase === "lobby" || room.phase === "ended") vision = 99999;
+  const canSee = (x: number) => ghostView || dist(x, me.x) <= vision;
 
   // proximity dread for the living crew — drives heartbeat / tension audio
   let danger = 0;
-  if (me.alive && room.phase === "playing" && room.mode === "nightwatch") {
-    const s = room.stalker;
-    if (s && now >= s.restingUntil) danger = Math.max(0, Math.min(1, 1 - d2(s.x, s.y, me.x, me.y) / 620));
-    if (me.downed) danger = Math.max(danger, 0.55);
-  } else if (me.alive && me.role === "crew" && room.phase === "playing") {
+  if (me.alive && me.role === "crew" && room.phase === "playing") {
     let nearest = Infinity;
-    for (const p of ps) if (p.role === "hollow" && p.alive && !p.caged) nearest = Math.min(nearest, d2(p.x, p.y, me.x, me.y));
-    danger = Math.max(0, Math.min(1, 1 - nearest / 420));
+    for (const p of ps) if (p.role === "hollow" && p.alive && !p.caged) nearest = Math.min(nearest, dist(p.x, me.x));
+    danger = Math.max(0, Math.min(1, 1 - nearest / 340));
     if (blackout) danger = Math.max(danger, 0.35);
   }
 
   return {
     code: room.code,
-    mode: room.mode,
-    dawnAt: room.dawnAt,
-    stalker:
-      room.stalker && now >= room.stalker.restingUntil && d2(room.stalker.x, room.stalker.y, me.x, me.y) < Math.max(vision, 950)
-        ? { x: room.stalker.x, y: room.stalker.y }
-        : null,
-    weather: room.weather && now < room.weather.until ? room.weather : null,
-    ward: (() => {
-      const w = room.wards.get(playerId);
-      const st = w ? STATIONS.find((x) => x.id === w.stationId) : undefined;
-      if (!w || !st) return null;
-      return {
-        stationId: w.stationId,
-        name: st.name,
-        kind: w.board.kind,
-        seed: w.board.seed,
-        need: w.board.need,
-        hits: w.hits,
-        taps: w.taps,
-        startedAt: w.startedAt,
-        speed: w.board.speed,
-        half: w.board.half,
-        spin: w.board.spin,
-        seq: w.board.seq,
-      };
-    })(),
     phase: room.phase,
     round: room.round,
     now,
@@ -1325,28 +1026,22 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
       canBlackout: me.role === "hollow" && me.alive && room.phase === "playing" && now >= room.blackoutReadyAt,
       teammates: me.role === "hollow" ? ps.filter((p) => p.role === "hollow" && p.id !== me.id).map((p) => p.id) : [],
       myVote: me.vote,
-      creature: me.creature,
-      downed: me.downed,
-      revive: Math.round(me.revive * 100) / 100,
     },
     players: ps
-      .filter((p) => p.id === me.id || canSee(p.x, p.y) || room.phase === "meeting" || room.phase === "lobby" || room.phase === "ended")
+      .filter((p) => p.id === me.id || canSee(p.x) || room.phase === "meeting" || room.phase === "lobby" || room.phase === "ended")
       .map((p) => {
-        const seen = p.id === me.id || canSee(p.x, p.y);
+        const seen = p.id === me.id || canSee(p.x);
         return {
           id: p.id,
           name: p.name,
           color: p.color,
-          creature: p.creature,
           x: seen ? Math.round(p.x * 10) / 10 : -9999, // meeting roster: names known, positions hidden
-          y: seen ? Math.round(p.y * 10) / 10 : -9999,
           facing: p.facing,
-          moving: seen && p.moving,
+          moving: seen && p.moving && p.dir !== 0,
           alive: p.alive,
           caged: p.caged,
           hasKey: seen && p.hasKey,
           voted: p.vote !== null,
-          downed: p.downed,
           isHost: p.isHost,
           bubble:
             seen && p.bubbleUntil > now && (me.alive ? p.alive : true)
@@ -1354,12 +1049,12 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
               : null,
         };
       }),
-    bodies: room.bodies.filter((b) => canSee(b.x, b.y)).map((b) => ({ x: b.x, y: b.y, color: b.color, name: b.name })),
-    keyPos: room.keyPos && canSee(room.keyPos.x, room.keyPos.y) ? room.keyPos : null,
-    cages: room.cages.map((c) => ({ x: c.x, y: c.y, occupant: c.occupant })),
+    bodies: room.bodies.filter((b) => canSee(b.x)).map((b) => ({ x: b.x, color: b.color, name: b.name })),
+    keyX: room.keyX !== null && canSee(room.keyX) ? room.keyX : null,
+    cages: room.cages.map((c) => ({ x: c.x, occupant: c.occupant })),
     tasks: room.pool.map((t) => {
       const st = STATIONS.find((s) => s.id === t.id)!;
-      return { id: t.id, name: st.name, x: st.x, y: st.y, kind: st.kind, done: t.done, progress: t.progress };
+      return { id: t.id, name: st.name, x: st.x, done: t.done, progress: t.progress };
     }),
     taskBar: { done: doneTasks, total: room.pool.length },
     meeting: room.meeting

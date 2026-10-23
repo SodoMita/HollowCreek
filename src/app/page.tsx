@@ -1,124 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CREATURES, DEFAULT_CREATURE, type Creature, type RoomListing } from "@/game/types";
-import {
-  SettingsStore, createDefaultSettings, type GameSettings,
-} from "@/game/settings";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Bell, DoorOpen, Flame, Moon, Plus, RefreshCw, Skull, Trophy, Users } from "lucide-react";
+import Link from "next/link";
+import type { RoomListing } from "@/game/types";
+import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
 
 function getPid(): string {
   let pid = localStorage.getItem("hc_pid");
-  if (!pid) { pid = crypto.randomUUID(); localStorage.setItem("hc_pid", pid); }
+  if (!pid) {
+    pid = crypto.randomUUID();
+    localStorage.setItem("hc_pid", pid);
+  }
   return pid;
-}
-
-/** Specimen-plate sigils, drawn as vectors so they scale and reverse to one colour. */
-function Sigil({ kind, className = "" }: { kind: Creature["sigil"]; className?: string }) {
-  const common = {
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: 2.2,
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-  };
-  return (
-    <svg viewBox="0 0 64 64" className={className} aria-hidden>
-      {kind === "strigoi" && (
-        <g {...common}>
-          <path d="M32 8c-9 0-15 7-15 16 0 6 2 9 2 14 0 7-3 10-3 18h32c0-8-3-11-3-18 0-5 2-8 2-14 0-9-6-16-15-16Z" />
-          <path d="M24 26c2-2 5-2 6 0M34 26c2-2 5-2 6 0" />
-          <path d="M28 42h8" />
-          <path d="M32 8V2M26 4l6 4 6-4" />
-        </g>
-      )}
-      {kind === "wolf" && (
-        <g {...common}>
-          <path d="M14 20 8 8l12 6M50 20 56 8l-12 6" />
-          <path d="M12 26c0-8 9-12 20-12s20 4 20 12c0 12-9 22-20 22S12 38 12 26Z" />
-          <path d="M24 28h.01M40 28h.01" />
-          <path d="M32 34v5M26 44c4 3 8 3 12 0" />
-        </g>
-      )}
-      {kind === "wraith" && (
-        <g {...common}>
-          <path d="M32 6c-10 0-17 8-17 18 0 12 6 16 6 26 0 4 2 8 4 8 2 0 3-3 3-6 0-4 2-6 4-6s4 2 4 6c0 3 1 6 3 6 2 0 4-4 4-8 0-10 6-14 6-26 0-10-7-18-17-18Z" />
-          <path d="M23 24c2-2 6-2 8 0M33 24c2-2 6-2 8 0" />
-        </g>
-      )}
-      {kind === "banshee" && (
-        <g {...common}>
-          <path d="M20 22c0-8 5-14 12-14s12 6 12 14c0 14-4 34-12 34s-12-20-12-34Z" />
-          <ellipse cx="32" cy="26" rx="6" ry="9" />
-          <path d="M8 20h8M48 20h8M10 34h8M46 34h8M14 48h8M42 48h8" />
-        </g>
-      )}
-      {kind === "moroii" && (
-        <g {...common}>
-          <path d="M32 58V22" />
-          <path d="M18 34h28" />
-          <path d="M20 58h24" />
-          <path d="M40 18c6-2 10-6 10-12-6 0-10 3-12 8" />
-          <path d="M14 20c4-6 9-8 15-6" />
-        </g>
-      )}
-      {kind === "vrykolakas" && (
-        <g {...common}>
-          <path d="M14 58V10h24v48" />
-          <path d="M38 30h12v28H38" />
-          <circle cx="33" cy="34" r="1.6" fill="currentColor" stroke="none" />
-          <path d="M52 14c4 0 6 3 6 6M52 22c2 0 3 1 3 3" />
-        </g>
-      )}
-    </svg>
-  );
-}
-
-function CreatureCard({
-  creature, selected, taken, onSelect,
-}: {
-  creature: Creature;
-  selected: boolean;
-  taken: boolean;
-  onSelect: (id: string) => void;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={taken}
-      onClick={() => onSelect(creature.id)}
-      className={[
-        "group relative flex w-[240px] shrink-0 flex-col items-start gap-3 border p-5 text-left transition-all duration-300 sm:w-[268px]",
-        taken
-          ? "cursor-not-allowed border-[#2a2028] bg-[#0f0c12]/80 opacity-45"
-          : selected
-            ? "border-[#7B1220] bg-[#1a0f14] shadow-[0_0_0_1px_#7B1220,0_28px_60px_-30px_rgba(123,18,32,0.9)]"
-            : "border-[#2a2028] bg-[#120e15]/80 hover:border-[#7B1220]/70 hover:bg-[#170f16]",
-      ].join(" ")}
-    >
-      <div className="flex w-full items-start justify-between">
-        <Sigil kind={creature.sigil} className={selected ? "h-14 w-14 text-[#C2404C]" : "h-14 w-14 text-[#9C9287]"} />
-        <span className="font-body text-[10px] uppercase tracking-[0.28em] text-[#6f6459]">
-          {taken ? "taken" : selected ? "yours" : "free"}
-        </span>
-      </div>
-      <div>
-        <h3 className="font-display text-2xl leading-none text-[#E8DFCF]">{creature.name}</h3>
-        <p className="mt-1 font-body italic text-[13px] tracking-wide text-[#9C9287]">{creature.latin}</p>
-      </div>
-      <p className="text-[13px] leading-relaxed text-[#8b8075]">{creature.blurb}</p>
-      <div className="mt-auto w-full border-t border-[#2a2028] pt-3 font-body text-[10px] uppercase tracking-[0.26em]">
-        {taken ? (
-          <span className="text-[#6f6459]">worn by {creature.claimedBy}</span>
-        ) : selected ? (
-          <span className="text-[#C2404C]">claimed — rise with it</span>
-        ) : (
-          <span className="text-[#6f6459] group-hover:text-[#9C9287]">unclaimed</span>
-        )}
-      </div>
-    </button>
-  );
 }
 
 export default function Home() {
@@ -129,32 +25,34 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [rooms, setRooms] = useState<RoomListing[]>([]);
   const [roomsLoaded, setRoomsLoaded] = useState(false);
-  const [creature, setCreature] = useState<string>(DEFAULT_CREATURE);
   const [settings, setSettings] = useState<GameSettings>(createDefaultSettings);
-  const [flash, setFlash] = useState(false);
   const settingsDialog = useRef<SettingsDialog | null>(null);
 
   useEffect(() => {
-    setCreature(localStorage.getItem("hc_creature") || DEFAULT_CREATURE);
-    setName(localStorage.getItem("hc_name") || "");
+    setName(localStorage.getItem("hc_name") ?? "");
     const store = new SettingsStore();
     setSettings(store.value);
+    applyDocumentPreferences(store.value);
     const unsubscribe = store.subscribe((next) => {
       setSettings(next);
-      document.documentElement.style.setProperty("--hc-ui-scale", String(next.interface.scale));
+      applyDocumentPreferences(next);
     });
     const dialog = new SettingsDialog(store);
     settingsDialog.current = dialog;
-    return () => { unsubscribe(); dialog.destroy?.(); };
+    return () => {
+      unsubscribe();
+      dialog.destroy();
+      settingsDialog.current = null;
+    };
   }, []);
 
   const refreshRooms = useCallback(async () => {
     try {
       const r = await fetch("/api/game/rooms");
       const d = await r.json();
-      setRooms(Array.isArray(d.rooms) ? d.rooms : []);
-      setRoomsLoaded(true);
-    } catch { /* the valley is quiet */ }
+      setRooms(d.rooms ?? []);
+    } catch { /* keep last list */ }
+    setRoomsLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -164,329 +62,243 @@ export default function Home() {
   }, [refreshRooms]);
 
   const saveName = () => localStorage.setItem("hc_name", name.trim() || "Stranger");
-  const pickCreature = (id: string) => {
-    setCreature(id);
-    localStorage.setItem("hc_creature", id);
-  };
 
-  const rise = () => {
-    setFlash(true);
-    setTimeout(() => setFlash(false), 520);
-  };
-
-  const create = async (mode: "nightwatch" | "hollow" = "nightwatch") => {
-    setBusy(true);
-    setError(null);
+  const create = async () => {
+    setBusy(true); setError(null);
     saveName();
     try {
       const res = await fetch("/api/game/create", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ playerId: getPid(), name: name.trim() || "Stranger", creature, mode }),
+        body: JSON.stringify({ playerId: getPid(), name: name.trim() || "Stranger" }),
       });
       const data = await res.json();
-      if (data.code) {
-        localStorage.setItem("hc_creature", creature);
-        router.push(`/room/${data.code}`);
-      } else setError(data.error ?? "The town refused you.");
-    } catch {
-      setError("No answer from the valley.");
-    } finally {
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      router.push(`/room/${data.code}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed");
       setBusy(false);
     }
   };
 
   const join = async (target?: string) => {
     const c = (target ?? code).trim().toUpperCase();
-    if (!c) { setError("Enter a town code."); return; }
-    setBusy(true);
-    setError(null);
+    if (c.length < 4) { setError("Enter the 4-letter town code."); return; }
+    setBusy(true); setError(null);
     saveName();
     try {
       const res = await fetch("/api/game/join", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code: c, playerId: getPid(), name: name.trim() || "Stranger", creature }),
+        body: JSON.stringify({ code: c, playerId: getPid(), name: name.trim() || "Stranger" }),
       });
       const data = await res.json();
-      if (data.ok) {
-        localStorage.setItem("hc_creature", creature);
-        router.push(`/room/${c}`);
-      } else setError(data.error ?? "That town is closed.");
-    } catch {
-      setError("No answer from the valley.");
-    } finally {
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to join");
+      if (data.playerId) localStorage.setItem("hc_pid", data.playerId);
+      router.push(`/room/${c}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed");
       setBusy(false);
     }
   };
 
   return (
-    <main className="relative min-h-screen overflow-x-hidden bg-[#0B0A0C] text-[#E8DFCF]">
-      {/* poster paper */}
-      <div
-        className="pointer-events-none fixed inset-0 opacity-[0.16] mix-blend-soft-light"
-        style={{ backgroundImage: "url(images/parchment.webp)", backgroundSize: "620px" }}
-      />
-
-      {/* --- spine rail: the credit block on the poster's spine --- */}
-      <aside className="pointer-events-none fixed left-0 top-0 z-30 hidden h-full w-[62px] flex-col items-center justify-between border-r border-[#2a2028] bg-[#0B0A0C]/80 py-8 lg:flex">
-        <span className="h-16 w-px bg-[#7B1220]" />
-        <p
-          className="whitespace-nowrap font-body text-[10px] uppercase tracking-[0.42em] text-[#6f6459]"
-          style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
-        >
-          Hollow Creek · Night of the Strigoi · one codebase · a game for many hands
-        </p>
-        <span className="h-16 w-px bg-[#2a2028]" />
-      </aside>
-
-      {/* --- flash on RISE --- */}
-      {flash && (
-        <div className="pointer-events-none fixed inset-0 z-50 animate-[hc-rise_0.5s_ease-out] bg-[#E8DFCF] mix-blend-difference" />
-      )}
-
-      {/* ============================ HERO ============================ */}
-      <section className="relative min-h-[86dvh] w-full overflow-hidden border-b border-[#2a2028] lg:pl-[62px]">
-        <div
-          className="absolute inset-0 bg-cover bg-center"
-          style={{ backgroundImage: "url(images/poster.webp)", filter: "saturate(0.72) contrast(1.12)" }}
+    <main className="relative min-h-screen overflow-hidden bg-[#0b0710]">
+      {/* sky */}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-[#120b1e] via-[#33172b] to-[#6e3320]" />
+      {/* moon */}
+      <div className="pointer-events-none absolute right-[12%] top-[10%] h-28 w-28 rounded-full bg-[#e8ddc0] shadow-[0_0_90px_40px_rgba(240,225,190,0.25)]" />
+      {/* falling leaves */}
+      {settings.graphics.particles && Array.from({ length: 14 }).map((_, i) => (
+        <span
+          key={i}
+          className="pointer-events-none absolute top-0 block h-2.5 w-3.5 rounded-[60%_40%_60%_40%]"
+          style={{
+            left: `${(i * 7.3 + 3) % 100}%`,
+            background: ["#b4552a", "#c9762f", "#8f3b1f", "#d99a3d"][i % 4],
+            animation: `hc-leaf-fall ${9 + (i % 5) * 2.4}s ${(i * 1.7) % 9}s linear infinite`,
+          }}
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0B0A0C]/85 via-[#0B0A0C]/45 to-[#0B0A0C]" />
-        <div className="absolute inset-0 bg-[radial-gradient(120%_90%_at_70%_15%,rgba(159,182,198,0.16),transparent_60%)]" />
+      ))}
+      {/* fog */}
+      {settings.graphics.fog && <div
+        className="pointer-events-none absolute bottom-[16%] left-[-10%] h-40 w-[120%] rounded-full bg-[#8a7f95]/10 blur-2xl"
+        style={{ animation: "hc-fog-drift 14s ease-in-out infinite" }}
+      />}
+      {/* skyline silhouette */}
+      <svg className="pointer-events-none absolute bottom-0 left-0 w-full" viewBox="0 0 1200 260" preserveAspectRatio="none" aria-hidden>
+        <path
+          d="M0,260 L0,190 L60,190 L60,150 L110,150 L110,190 L160,190 L160,120 L175,100 L190,120 L190,190 L260,190 L260,160 L330,160 L330,190 L390,190 L390,90 L400,60 L410,90 L410,190 L470,190 L470,140 L540,140 L540,190 L610,190 L610,110 L660,80 L710,110 L710,190 L780,190 L780,150 L840,150 L840,190 L900,190 L920,60 L940,190 L1000,190 L1000,130 L1070,130 L1070,190 L1200,190 L1200,260 Z"
+          fill="#0d0810"
+        />
+        <rect x="395" y="120" width="10" height="14" fill="#e8a04a" opacity="0.8" />
+        <rect x="640" y="120" width="12" height="16" fill="#e8a04a" opacity="0.7" />
+        <rect x="270" y="168" width="10" height="12" fill="#e8a04a" opacity="0.6" />
+        <rect x="0" y="188" width="1200" height="72" fill="#0a0609" />
+      </svg>
 
-        <div className="relative z-10 flex min-h-[86dvh] flex-col justify-end px-6 pb-12 pt-16 sm:px-10 lg:px-16">
-          <p className="font-body text-[11px] uppercase tracking-[0.5em] text-[#C2404C]">
-            October 1893 · a valley that keeps its dead
-          </p>
-          <h1 className="mt-5 font-display text-[clamp(3.6rem,13vw,11rem)] leading-[0.82] tracking-[-0.02em] text-[#E8DFCF]">
-            HOLLOW
-            <span className="block">
-              CREEK<span className="text-[#7B1220]">.</span>
-            </span>
+      <div className="relative z-10 mx-auto flex min-h-screen max-w-6xl flex-col gap-10 px-6 py-12 lg:flex-row lg:items-center lg:gap-16">
+        {/* left: title & lore */}
+        <div className="flex-1">
+          <p className="hc-rise font-body text-sm uppercase tracking-[0.4em] text-[#c9762f]">October, 1893 · population: uncertain</p>
+          <h1 className="hc-title-flicker hc-rise-1 mt-3 font-display text-7xl leading-none text-[#e9dfcf] drop-shadow-[0_4px_24px_rgba(200,90,40,0.35)] sm:text-8xl">
+            Hollow<br />Creek
           </h1>
-          <div className="mt-7 flex max-w-4xl flex-col gap-6 border-t border-[#E8DFCF]/25 pt-6 sm:flex-row sm:items-start sm:gap-12">
-            <p className="max-w-md font-body italic text-lg leading-relaxed text-[#c9b8a4]">
-              &ldquo;Every soul in the valley wears a face tonight. One of them keeps its own
-              underneath — and it is hungry.&rdquo;
-            </p>
-            <p className="max-w-sm text-[15px] leading-relaxed text-[#9C9287]">
-              A horror for many hands. Walk the whole valley — farm, chapel rise, sawmill, creek
-              and cemetery — mend the wards before the fog settles, keep your friends on their
-              feet, and get everyone home when the light comes back.
-            </p>
-          </div>
-          <div className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-3 font-body text-[10px] uppercase tracking-[0.32em] text-[#6f6459]">
-            <span className="text-[#C2404C]">Tonight&rsquo;s rule — Nightwatch</span>
-            <span className="h-px w-10 bg-[#2a2028]" />
-            <span>no hidden faces</span>
-            <span className="h-px w-10 bg-[#2a2028]" />
-            <span>six minutes to dawn</span>
-            <span className="h-px w-10 bg-[#2a2028]" />
-            <span>keep everyone on their feet</span>
-          </div>
-        </div>
-      </section>
-
-      {/* ==================== CREATURE ROSTER ==================== */}
-      <section className="relative border-b border-[#2a2028] bg-[#0B0A0C] py-14 lg:pl-[62px]">
-        <div className="px-6 sm:px-10 lg:px-16">
-          <div className="flex flex-wrap items-end justify-between gap-6 border-b border-[#2a2028] pb-6">
-            <div>
-              <p className="font-body text-[11px] uppercase tracking-[0.42em] text-[#C2404C]">
-                Specimen plate I — creatures of the night
-              </p>
-              <h2 className="mt-3 font-display text-[clamp(2.2rem,5vw,4.2rem)] leading-none">
-                The creatures of the night.
-              </h2>
-            </div>
-            <p className="max-w-sm font-body italic text-[15px] leading-relaxed text-[#9C9287]">
-              Other hands already wear the wolf, the wraith and the banshee. The strigoi nobody
-              took — a corpse that keeps its name, its appetite and its keys to the house it left.
-            </p>
-          </div>
-        </div>
-
-        {/* full-bleed ruled band of specimen boxes */}
-        <div className="mt-8 flex gap-px overflow-x-auto border-y border-[#2a2028] bg-[#2a2028] px-6 pb-2 pt-2 sm:px-10 lg:px-16">
-          {CREATURES.map((c) => (
-            <CreatureCard
-              key={c.id}
-              creature={c}
-              selected={creature === c.id}
-              taken={!!c.claimedBy}
-              onSelect={pickCreature}
-            />
-          ))}
-        </div>
-
-        {/* the plate */}
-        <div className="mt-12 grid gap-10 px-6 sm:px-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:px-16">
-          <figure className="relative overflow-hidden border border-[#2a2028]">
-            <img src="images/strigoi.webp" alt="Specimen plate: the Strigoi" className="h-full w-full object-cover" />
-            <div className="absolute inset-0 bg-gradient-to-t from-[#0B0A0C] via-transparent to-transparent" />
-            <figcaption className="absolute bottom-0 left-0 right-0 flex items-end justify-between gap-4 p-5">
-              <div>
-                <p className="font-body text-[10px] uppercase tracking-[0.34em] text-[#C2404C]">Plate I</p>
-                <p className="font-display text-3xl leading-none">Strigoi vivus</p>
+          <p className="hc-rise-2 mt-6 max-w-md text-lg leading-relaxed text-[#c9b8a4]">
+            The harvest was good. Then the church bell rang on its own, and not
+            everyone who came home was <em>people</em> anymore. Walk the one long
+            street. Do your chores. Watch your neighbours.
+          </p>
+          <p className="hc-rise-3 mt-4 max-w-md text-[#8f7d6b]">
+            When the bell tolls, walk to the square and vote. The condemned are
+            not hanged here — they are <span className="text-[#d99a3d]">caged in iron</span>,
+            still able to plead… until a key, a vote, or the Hollow sets them free.
+          </p>
+          <div className="hc-rise-3 mt-8 grid max-w-lg grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+            {[
+              [`${keyLabel(settings.controls.left)} / ${keyLabel(settings.controls.right)}`, "walk the street"],
+              [keyLabel(settings.controls.interact), settings.controls.interactMode === "hold" ? "interact · hold for chores" : "interact · toggle chores"],
+              [`${keyLabel(settings.controls.ability)} / ${keyLabel(settings.controls.blackout)}`, "role ability · snuff lights"],
+              [keyLabel(settings.controls.chat), "speak (bubble)"],
+            ].map(([k, v]) => (
+              <div key={k} className="rounded border border-[#3a2733] bg-[#160e1a]/80 p-3">
+                <div className="font-mono text-[#d99a3d]">{k}</div>
+                <div className="mt-1 text-xs text-[#9c8b7a]">{v}</div>
               </div>
-              <p className="max-w-[190px] text-right font-body italic text-[12px] leading-snug text-[#9C9287]">
-                Collected near the chapel rise, October 1893.
-              </p>
-            </figcaption>
-          </figure>
-
-          <div className="flex flex-col justify-center gap-6">
-            <div>
-              <p className="font-body text-[11px] uppercase tracking-[0.42em] text-[#6f6459]">Your identity</p>
-              <h3 className="mt-3 font-display text-[clamp(2.4rem,6vw,4.6rem)] leading-[0.9]">
-                {(CREATURES.find((c) => c.id === creature) ?? CREATURES[0]).name}
-                <span className="block font-body text-base italic tracking-wide text-[#9C9287]">
-                  {(CREATURES.find((c) => c.id === creature) ?? CREATURES[0]).latin}
-                </span>
-              </h3>
-              <p className="mt-4 max-w-md text-[15px] leading-relaxed text-[#c9b8a4]">
-                {(CREATURES.find((c) => c.id === creature) ?? CREATURES[0]).blurb}
-              </p>
-            </div>
-
-            {/* summoning card */}
-            <div className="border border-[#2a2028] bg-[#120e15]/80 p-6">
-              <label className="font-body text-[10px] uppercase tracking-[0.32em] text-[#6f6459]" htmlFor="soul-name">
-                The name they will carve on your stone
-              </label>
-              <input
-                id="soul-name"
-                value={name}
-                maxLength={18}
-                onChange={(e) => setName(e.target.value)}
-                onBlur={saveName}
-                placeholder="Stranger"
-                className="mt-3 w-full border-b border-[#3a2733] bg-transparent pb-2 font-display text-2xl text-[#E8DFCF] outline-none transition-colors placeholder:text-[#4c4038] focus:border-[#C2404C]"
-              />
-              <div className="mt-6 flex flex-wrap gap-3">
-                <button
-                  onClick={() => { rise(); void create("nightwatch"); }}
-                  disabled={busy}
-                  className="group relative flex-1 overflow-hidden border border-[#7B1220] bg-[#7B1220] px-8 py-4 font-display text-2xl tracking-wide text-[#E8DFCF] transition-colors hover:bg-[#96182a] disabled:opacity-50"
-                >
-                  RISE
-                </button>
-                <button
-                  onClick={() => { rise(); void create("hollow"); }}
-                  disabled={busy}
-                  title="A later mode — hidden faces among the townsfolk"
-                  className="w-full border border-[#2a2028] px-6 py-2.5 font-body text-[10px] uppercase tracking-[0.32em] text-[#6f6459] transition-colors hover:border-[#7B1220] hover:text-[#E8DFCF] disabled:opacity-50"
-                >
-                  or open a Hollow night (later mode)
-                </button>
-                <div className="flex flex-1 items-stretch border border-[#3a2733]">
-                  <input
-                    value={code}
-                    onChange={(e) => setCode(e.target.value.toUpperCase().slice(0, 4))}
-                    onKeyDown={(e) => e.key === "Enter" && void join()}
-                    placeholder="CODE"
-                    className="w-24 bg-transparent px-3 text-center font-display text-xl tracking-[0.2em] outline-none placeholder:text-[#4c4038]"
-                  />
-                  <button
-                    onClick={() => void join()}
-                    disabled={busy}
-                    className="border-l border-[#3a2733] px-5 font-body text-[11px] uppercase tracking-[0.28em] text-[#c9b8a4] transition-colors hover:bg-[#7B1220] hover:text-[#E8DFCF] disabled:opacity-50"
-                  >
-                    Enter
-                  </button>
-                </div>
-              </div>
-              <div className="mt-4 flex items-center justify-between gap-4">
-                <p className="text-[12px] leading-snug text-[#6f6459]">
-                  {error ? <span className="text-[#C2404C]">{error}</span> : "RISE opens a new town and hands you the lantern."}
-                </p>
-                <button
-                  onClick={() => settingsDialog.current?.open()}
-                  className="font-body text-[10px] uppercase tracking-[0.28em] text-[#6f6459] underline-offset-4 hover:text-[#E8DFCF] hover:underline"
-                >
-                  Settings
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ==================== OPEN TOWNS ==================== */}
-      <section className="relative bg-[#0B0A0C] py-14 lg:pl-[62px]">
-        <div className="px-6 sm:px-10 lg:px-16">
-          <div className="flex flex-wrap items-end justify-between gap-6 border-b border-[#2a2028] pb-5">
-            <h2 className="font-display text-[clamp(1.9rem,4vw,3.2rem)] leading-none">Open towns</h2>
-            <p className="font-body text-[10px] uppercase tracking-[0.32em] text-[#6f6459]">
-              polled every three seconds
-            </p>
-          </div>
-
-          <ul className="divide-y divide-[#2a2028]">
-            {rooms.length === 0 && (
-              <li className="py-10 text-center font-body italic text-[#6f6459]">
-                {roomsLoaded ? "No lanterns are lit. Rise and open the first town." : "Listening for lanterns…"}
-              </li>
-            )}
-            {rooms.map((r) => (
-              <li key={r.code} className="flex flex-wrap items-center gap-4 py-5">
-                <span className="font-display text-3xl tracking-[0.14em] text-[#E8DFCF]">{r.code}</span>
-                <span className="font-body text-[10px] uppercase tracking-[0.3em] text-[#C2404C]">
-                  {r.phase === "playing" ? "night" : r.phase === "meeting" ? "the bell" : r.phase === "ended" ? "dawn" : "gathering"}
-                </span>
-                <span className="ml-auto font-body text-[13px] tabular-nums tracking-[0.18em] text-[#9C9287]">
-                  {String(r.playerCount).padStart(2, "0")} souls
-                </span>
-                <span className="w-52 truncate text-[13px] text-[#6f6459]">{r.names.join(" · ") || "—"}</span>
-                <button
-                  onClick={() => void join(r.code)}
-                  className="border border-[#3a2733] px-6 py-2 font-body text-[10px] uppercase tracking-[0.28em] text-[#c9b8a4] transition-colors hover:border-[#C2404C] hover:text-[#E8DFCF]"
-                >
-                  Walk in
-                </button>
-              </li>
             ))}
-          </ul>
-        </div>
-      </section>
-
-      {/* ==================== FOOTER / COLOPHON ==================== */}
-      <footer className="relative border-t border-[#2a2028] bg-[#0f0c12] py-12 lg:pl-[62px]">
-        <div className="grid gap-8 px-6 sm:px-10 lg:grid-cols-3 lg:px-16">
-          <div>
-            <p className="font-body text-[10px] uppercase tracking-[0.34em] text-[#6f6459]">Colophon</p>
-            <p className="mt-3 max-w-xs text-[13px] leading-relaxed text-[#8b8075]">
-              Told in one breath: a valley, a long night, and a town that keeps count of
-              everything. The bell is the only law, and dawn is the only verdict. Music is
-              currently {settings.audio.muted ? "muted" : "playing"}.
-            </p>
-          </div>
-          <div className="flex flex-col gap-2">
-            <p className="font-body text-[10px] uppercase tracking-[0.34em] text-[#6f6459]">Records</p>
-            <a href="/stats" className="text-[13px] text-[#c9b8a4] underline-offset-4 hover:text-[#E8DFCF] hover:underline">
-              Lifetime ledger of every soul
-            </a>
-            <a href="/play" className="text-[13px] text-[#c9b8a4] underline-offset-4 hover:text-[#E8DFCF] hover:underline">
-              Static client (GitHub Pages / portal builds)
-            </a>
-          </div>
-          <div className="flex flex-col gap-2">
-            <p className="font-body text-[10px] uppercase tracking-[0.34em] text-[#6f6459]">Play</p>
-            <p className="text-[13px] leading-relaxed text-[#8b8075]">
-              Walk the valley, mend what the autumn broke, and stand over anyone the fog takes
-              down. Ring the bell when the dark presses in — it buys the town a little more night.
-            </p>
           </div>
         </div>
-        <p className="mt-10 px-6 text-center font-body text-[10px] uppercase tracking-[0.42em] text-[#4c4038] sm:px-10 lg:px-16">
-          Hollow Creek · {new Date().getFullYear()} · the valley remembers
-        </p>
-      </footer>
 
-      <p className="sr-only" aria-live="polite">
-        Generative score {settings.audio.muted ? "muted" : "active"} · interface scale{" "}
-        {settings.interface.scale}
-      </p>
+        {/* right: forms */}
+        <div className="hc-rise-2 w-full max-w-sm shrink-0 rounded-lg border border-[#3a2733] bg-[#140d18]/90 p-6 shadow-[0_20px_80px_rgba(0,0,0,0.6)] backdrop-blur">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-display text-3xl text-[#e9dfcf]">Enter the town</h2>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => settingsDialog.current?.open()}
+                className="rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#c9b8a4] transition hover:border-[#c9762f]/40 hover:text-[#ffd98a]"
+                aria-label="Open settings"
+              >⚙ Settings</button>
+              <Link
+                href="/stats"
+                className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition hover:border-[#c9762f]/40 hover:text-[#d99a3d]"
+              >
+                <Trophy className="h-3.5 w-3.5" /> Records
+              </Link>
+            </div>
+          </div>
+          <label className="mt-5 block text-xs uppercase tracking-widest text-[#9c8b7a]">Your name</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={14}
+            placeholder="Stranger"
+            className="mt-1 w-full rounded border border-[#3a2733] bg-[#0d0810] px-3 py-2.5 text-[#e9dfcf] outline-none placeholder:text-[#5a4a50] focus:border-[#c9762f]"
+          />
+          <button
+            onClick={create}
+            disabled={busy}
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded bg-[#8f3b1f] px-4 py-3 font-display text-xl tracking-wide text-[#f3e6d0] transition hover:bg-[#a84a26] disabled:opacity-50"
+          >
+            <Plus className="h-5 w-5" strokeWidth={2.5} /> Found a new town
+          </button>
+          <div className="my-5 flex items-center gap-3 text-xs text-[#5a4a50]">
+            <div className="h-px flex-1 bg-[#3a2733]" /> or travel to one <div className="h-px flex-1 bg-[#3a2733]" />
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              maxLength={4}
+              placeholder="CODE"
+              className="w-full rounded border border-[#3a2733] bg-[#0d0810] px-3 py-2.5 text-center font-mono text-xl tracking-[0.5em] text-[#d99a3d] outline-none placeholder:text-[#5a4a50] focus:border-[#c9762f]"
+              onKeyDown={(e) => e.key === "Enter" && join()}
+            />
+            <button
+              onClick={() => join()}
+              disabled={busy}
+              className="flex shrink-0 items-center gap-1.5 rounded border border-[#c9762f]/50 px-4 font-display text-xl text-[#d99a3d] transition hover:bg-[#c9762f]/10 disabled:opacity-50"
+            >
+              <DoorOpen className="h-4 w-4" /> Join
+            </button>
+          </div>
+          {error && <p className="mt-3 text-sm text-[#e06a5a]">{error}</p>}
+
+          {/* ---- open towns browser ---- */}
+          <div className="mt-6 border-t border-[#3a2733] pt-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-display text-2xl text-[#e9dfcf]">Open towns</h3>
+              <button
+                onClick={() => void refreshRooms()}
+                className="flex items-center gap-1.5 text-xs text-[#9c8b7a] transition hover:text-[#d99a3d]"
+                title="Refresh"
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> live
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute h-2 w-2 animate-ping rounded-full bg-[#6b8e23] opacity-60" />
+                  <span className="h-2 w-2 rounded-full bg-[#6b8e23]" />
+                </span>
+              </button>
+            </div>
+            <div className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
+              {!roomsLoaded && <p className="text-sm text-[#6b5a55]">Reading the map…</p>}
+              {roomsLoaded && rooms.length === 0 && (
+                <p className="text-sm italic text-[#6b5a55]">No towns on the map yet. Found one, and others will find you.</p>
+              )}
+              {rooms.map((r) => (
+                <div
+                  key={r.code}
+                  className="group flex items-center gap-3 rounded border border-[#2a1c28] bg-[#0d0810]/80 px-3 py-2.5 transition hover:border-[#c9762f]/40"
+                >
+                  <span className={`shrink-0 ${r.phase === "lobby" ? "text-[#d99a3d]" : r.phase === "ended" ? "text-[#6b5a55]" : "text-[#8f7d9b]"}`}>
+                    {r.phase === "lobby" ? <Flame className="h-4 w-4" /> : r.phase === "meeting" ? <Bell className="h-4 w-4" /> : r.phase === "ended" ? <Skull className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className="font-mono text-sm tracking-[0.25em] text-[#e9dfcf]">{r.code}</span>
+                      <span className="truncate text-xs text-[#9c8b7a]">
+                        {r.phase === "lobby" ? "gathering at dusk" : r.phase === "meeting" ? "the bell tolls" : r.phase === "ended" ? "the tale ended" : `night ${r.round || 1} has fallen`}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-[#6b5a55]">
+                      <Users className="h-3 w-3 shrink-0" />
+                      <span>{r.playerCount}/10</span>
+                      <span className="truncate">· {r.names.slice(0, 4).join(", ")}{r.names.length > 4 ? "…" : ""}</span>
+                    </div>
+                  </div>
+                  {r.phase === "lobby" ? (
+                    <button
+                      onClick={() => join(r.code)}
+                      disabled={busy || r.playerCount >= 10}
+                      className="shrink-0 rounded bg-[#8f3b1f]/80 px-3 py-1.5 font-display text-base text-[#f3e6d0] transition hover:bg-[#a84a26] disabled:opacity-40"
+                    >
+                      {r.playerCount >= 10 ? "Full" : "Join"}
+                    </button>
+                  ) : r.phase === "ended" ? (
+                    <button
+                      onClick={() => join(r.code)}
+                      disabled={busy}
+                      title="Only the town's own souls may return"
+                      className="shrink-0 rounded border border-[#3a2733] px-3 py-1.5 font-display text-base text-[#9c8b7a] transition hover:border-[#c9762f]/40 hover:text-[#d99a3d] disabled:opacity-40"
+                    >
+                      Return
+                    </button>
+                  ) : (
+                    <span className="shrink-0 text-xs italic text-[#5a4a50]">in progress</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <p className="mt-4 text-xs leading-relaxed text-[#6b5a55]">
+            4–10 townsfolk. One or two among you are Hollow. The town&rsquo;s wards are shared —
+            any living soul may work them, but chores and deeds drain your vigor; stand
+            still to catch your breath. Survive the night and the same souls can gather
+            again — every deed is written into the chronicle.
+          </p>
+        </div>
+      </div>
     </main>
   );
 }

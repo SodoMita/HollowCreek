@@ -12,9 +12,9 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Hollow Creek — Night of the Strigoi",
+  title: "Hollow Creek — an autumn horror of townsfolk and things",
   description:
-    "A 2D multiplayer social-deduction horror. Walk the whole valley — farm, chapel rise, sawmill, creek and cemetery — finish the wards, ring the bell, and cage the Hollow before it wears your face.",
+    "A 1D multiplayer social-deduction horror. Walk the autumn street, do your chores, ring the bell — and cage the Hollow before it wears your face.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

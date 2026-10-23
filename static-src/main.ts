@@ -2,23 +2,19 @@
 // Talks to the authoritative server over the same HTTP API as the Next client;
 // reuses the canvas Renderer and generative AudioDirector unchanged.
 import { Renderer } from "../src/game/render";
-import { mountWardUI } from "../src/game/wardui";
 import { AudioDirector } from "../src/game/audio";
 import { SettingsStore, applyDocumentPreferences, keyLabel, matchesControl, type BindableAction } from "../src/game/settings";
 import { SettingsDialog } from "../src/game/settings-ui";
 import { BELL_X } from "../src/game/types";
-// 2D valley: display positions are world vectors.
-import type { RoomListing, Snapshot, Vec } from "../src/game/types";
+import type { RoomListing, Snapshot } from "../src/game/types";
 
 // Temporary author-built sandboxes run the same unified code (see SYNC.md).
 // The menu probes them in order; room-code joins also discover the backend
 // that owns the town and then stay pinned there. Use one server in production.
 const SERVERS = [
-  // the most recent town servers; the client probes them in order and pins the
-  // first one that answers /api/health, so a stale one costs one timeout.
-  "https://3000-i5piktbn7w7iqeh2i097p.e2b.app",
-  "https://3000-i7o0mkz1zbhtoybt1665u.e2b.app",
-  "https://3000-i2c5whq198cydt5gvd416.e2b.app",
+  "https://3000-iv1ax3jjgiz1x3ha95746.e2b.app",
+  "https://3000-ihrqg7gfricyapy48j4hv.e2b.app",
+  "https://3000-irlhq619hi9cpbud4mpec.e2b.app",
 ];
 const DEFAULT_SERVER = SERVERS[0];
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -85,8 +81,7 @@ let lastPhase = "lobby";
 let overlayKey = "";
 const keys = new Set<string>();
 let lastDir = 0;
-let lastDirY = 0;
-const displayX = new Map<string, Vec>();
+const displayX = new Map<string, number>();
 const settingsStore = new SettingsStore();
 const audio = new AudioDirector(settingsStore);
 let interactToggled = false;
@@ -389,7 +384,7 @@ function renderHud(s: Snapshot) {
         <div class="bigcode">${s.code}</div>
         <div class="roster">${s.players.map((p) => `<div class="seat"><span class="dot" style="background:${p.color}"></span><span>${esc(p.name)}</span>${p.isHost ? `<span class="host">host</span>` : ""}</div>`).join("")}</div>
         ${s.self.id === s.hostId
-          ? `<button class="big" data-act="start" ${s.playerCount < (s.mode === "nightwatch" ? 1 : 3) ? "disabled" : ""}>${s.playerCount < (s.mode === "nightwatch" ? 1 : 3) ? "Waiting for more souls… (min 3)" : "Let night fall"}</button>`
+          ? `<button class="big" data-act="start" ${s.playerCount < 4 ? "disabled" : ""}>${s.playerCount < 4 ? "Waiting for more souls… (min 4)" : "Let night fall"}</button>`
           : `<p class="muted" style="margin-top:16px">Waiting for the host to let night fall…</p>`}
         <div class="row" style="margin-top:14px;justify-content:center">
           <button class="chip" data-act="settings">⚙ Settings</button>
@@ -433,9 +428,8 @@ function interactUp() {
   if (settingsStore.value.controls.interactMode === "hold") stopInteract();
 }
 function computeDir() {
-  const dx = (keys.has("right") ? 1 : 0) - (keys.has("left") ? 1 : 0);
-  const dy = (keys.has("down") ? 1 : 0) - (keys.has("up") ? 1 : 0);
-  if (dx !== lastDir || dy !== lastDirY) { lastDir = dx; lastDirY = dy; void send({ dirX: dx, dirY: dy }); }
+  const d = (keys.has("right") ? 1 : 0) - (keys.has("left") ? 1 : 0);
+  if (d !== lastDir) { lastDir = d; void send({ dir: d }); }
 }
 function chatOpen() { return $("chatbox").style.display === "block"; }
 function openChat() {
@@ -526,14 +520,6 @@ const canvas = $("cv") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 const renderer = new Renderer();
 renderer.setSettings(settingsStore.value);
-// ward boards — the same game the React client plays
-const wardHost = document.createElement("div");
-document.body.appendChild(wardHost);
-const wardUI = mountWardUI(wardHost, (a, v) => {
-  if (a === "strike") void send({ action: "strike" });
-  else if (a === "tap") void send({ action: "tap", v });
-  else void send({ action: "wardcancel" });
-});
 const vw = () => window.visualViewport?.width ?? window.innerWidth;
 const vh = () => window.visualViewport?.height ?? window.innerHeight;
 function resize() {
@@ -557,15 +543,10 @@ function loop(nowMs: number) {
   if (!snap || $("game").style.display === "none") return;
   for (const p of snap.players) {
     const cur = displayX.get(p.id);
-    if (!cur || Math.hypot(cur.x - p.x, cur.y - p.y) > 320) displayX.set(p.id, { x: p.x, y: p.y });
-    else
-      displayX.set(p.id, {
-        x: cur.x + (p.x - cur.x) * Math.min(1, dt * 10),
-        y: cur.y + (p.y - cur.y) * Math.min(1, dt * 10),
-      });
+    if (cur === undefined || Math.abs(cur - p.x) > 300) displayX.set(p.id, p.x);
+    else displayX.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 10));
   }
   renderer.render(ctx, vw(), vh(), snap, displayX, nowMs / 1000, dt);
-  wardUI.update(snap);
 }
 requestAnimationFrame(loop);
 
