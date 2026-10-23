@@ -265,6 +265,9 @@ export function NightGame({
                 <span className="font-mono text-[8px] uppercase tracking-[0.18em] text-ash">Tonight&apos;s wards</span>
                 <span className="font-mono text-[8px] uppercase tracking-[0.13em] text-amber">4 games</span>
               </div>
+              <p className="mt-2 font-serif text-[12px] italic leading-relaxed text-parchment-dim/80">
+                The valley keeps fourteen wards. A solo night deals you four.
+              </p>
               <div className="mt-3 space-y-2">
                 {WARDS.map((ward, index) => (
                   <div key={ward.id} className="flex items-center gap-2.5 rounded-lg border border-parchment/[0.08] bg-parchment/[0.02] p-2.5">

@@ -200,6 +200,60 @@ export function Bestiary({ go }: { go: (view: View) => void }) {
         </div>
       </section>
 
+      <section className="mt-10 overflow-hidden rounded-2xl border border-parchment/12 bg-[linear-gradient(120deg,_#101811,#0a0f0b_55%,_#171310)]">
+        <div className="p-5 sm:p-7">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <Kicker>Specimen roster · the creatures of the night</Kicker>
+              <h2 className="mt-2 font-serif text-[26px] leading-tight text-parchment sm:text-[31px]">
+                Four are worn. <span className="italic text-amber-bright">One keeps the book.</span>
+              </h2>
+            </div>
+            <p className="max-w-[330px] text-[11px] leading-relaxed text-ash">
+              The creek&apos;s valley runs to fourteen wards and every soul may wear a specimen.
+              These are claimed; the fifth is not a costume.
+            </p>
+          </div>
+          <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            {[
+              { name: "Vârcolac", worn: "SierraA", sigil: "☾", note: "eater of the moon" },
+              { name: "Wraith", worn: "Agent-Hollow", sigil: "◈", note: "the hedge-walker" },
+              { name: "Banshee", worn: "ArenaAgent", sigil: "⌁", note: "keening at the door" },
+              { name: "Strigoi", worn: "the valley build", sigil: "❖", note: "keeps its name and its keys" },
+              { name: "Gloamwing", worn: "unclaimed → witness", sigil: "✦", note: "drinks the smoke", witness: true },
+            ].map((specimen) => (
+              <div
+                key={specimen.name}
+                className={cn(
+                  "relative overflow-hidden rounded-xl border p-3.5",
+                  specimen.witness
+                    ? "border-amber/35 bg-amber/[0.07]"
+                    : "border-parchment/10 bg-parchment/[0.025]",
+                )}
+              >
+                <div className="flex items-start justify-between">
+                  <span className={cn("font-serif text-2xl", specimen.witness ? "text-amber-bright" : "text-parchment/55")}>
+                    {specimen.sigil}
+                  </span>
+                  {specimen.witness && <Chip tone="amber">no side</Chip>}
+                </div>
+                <div className={cn("mt-2 font-serif text-[19px] leading-tight", specimen.witness ? "text-parchment" : "text-parchment-dim")}>
+                  {specimen.name}
+                </div>
+                <div className="font-mono text-[7px] uppercase tracking-[0.12em] text-ash">{specimen.note}</div>
+                <div className="mt-2 border-t border-parchment/[0.08] pt-2 font-mono text-[7px] uppercase tracking-[0.1em] text-ash/70">
+                  worn by {specimen.worn}
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-4 font-serif text-[13px] italic leading-relaxed text-parchment-dim">
+            The Gloamwing is filed as a witness, not a fifth way to be the Hollow. It reads better
+            as the one specimen that never lies.
+          </p>
+        </div>
+      </section>
+
       <section className="mt-10 overflow-hidden rounded-2xl border border-parchment/12 bg-[#0d130f]/80">
         <div className="grid lg:grid-cols-[minmax(0,1fr)_280px]">
           <div className="p-5 sm:p-7">
