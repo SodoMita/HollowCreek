@@ -6,6 +6,7 @@ import { DoorOpen, Flame, ScrollText, Trophy, Zap } from "lucide-react";
 import { Renderer } from "@/game/render";
 import { WardPanel } from "@/game/ward-ui";
 import { AudioDirector } from "@/game/audio";
+import { VoiceChat } from "@/game/voice";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
 import { BELL_X } from "@/game/types";
@@ -27,6 +28,7 @@ export default function GameClient({ code }: { code: string }) {
   const [chatText, setChatText] = useState("");
   const [roleBanner, setRoleBanner] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
+  const [micOn, setMicOn] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(createDefaultSettings);
@@ -37,6 +39,7 @@ export default function GameClient({ code }: { code: string }) {
   const keys = useRef(new Set<string>());
   const lastDir = useRef(0);
   const audioRef = useRef<AudioDirector | null>(null);
+  const voiceRef = useRef<VoiceChat | null>(null);
   const wardPanelRef = useRef<WardPanel | null>(null);
   const settingsStoreRef = useRef<SettingsStore | null>(null);
   const settingsDialogRef = useRef<SettingsDialog | null>(null);
@@ -129,6 +132,7 @@ export default function GameClient({ code }: { code: string }) {
       setSettings(next);
       setMuted(next.audio.muted);
       applyDocumentPreferences(next);
+      voiceRef.current?.applyMix();
     });
     const dialog = new SettingsDialog(store, document.body, { onOpen: releaseInputs });
     settingsDialogRef.current = dialog;
@@ -138,6 +142,8 @@ export default function GameClient({ code }: { code: string }) {
       settingsDialogRef.current = null;
       audioRef.current?.destroy();
       audioRef.current = null;
+      voiceRef.current?.destroy();
+      voiceRef.current = null;
     };
   }, [getSettingsStore, releaseInputs]);
 
@@ -145,6 +151,26 @@ export default function GameClient({ code }: { code: string }) {
     if (!audioRef.current) audioRef.current = new AudioDirector(getSettingsStore());
     audioRef.current.start();
   }, [getSettingsStore]);
+
+  const getVoice = useCallback(() => {
+    if (!voiceRef.current) {
+      voiceRef.current = new VoiceChat(() => getSettingsStore().value, (status) => {
+        setMicOn(status.enabled);
+        if (status.error) {
+          setToast(status.error);
+          setTimeout(() => setToast(null), 2600);
+        }
+      });
+    }
+    return voiceRef.current;
+  }, [getSettingsStore]);
+
+  const toggleMic = useCallback(async () => {
+    ensureAudio();
+    const voice = getVoice();
+    voice.setServer(code, getPid());
+    await voice.setEnabled(!voice.enabled);
+  }, [code, ensureAudio, getVoice]);
 
   // Shared repair panel: built once, never re-mounted on each 100ms state poll.
   useEffect(() => {
@@ -183,6 +209,10 @@ export default function GameClient({ code }: { code: string }) {
           wardPanelRef.current?.update(s.minigame, s.self.stamina, s.self.exhausted);
           setSnap(s);
           audioRef.current?.update(s);
+          voiceRef.current?.tick(
+            { id: s.self.id, x: s.players.find((p) => p.id === s.self.id)?.x ?? 0, alive: s.self.alive },
+            s.players.filter((p) => p.id !== s.self.id).map((p) => ({ id: p.id, x: p.x, alive: p.alive })),
+          );
           if (lastPhase.current === "lobby" && s.phase === "playing") {
             setRoleBanner(s.self.role === "hollow" ? "hollow" : "crew");
             setTimeout(() => setRoleBanner(null), 4500);
@@ -243,6 +273,7 @@ export default function GameClient({ code }: { code: string }) {
       else if (bound("drop") && !e.repeat) { void send({ action: "drop_supply" }); e.preventDefault(); }
       else if (bound("ruin") && !e.repeat) { void send({ action: "sabotage" }); e.preventDefault(); }
       else if (bound("chat") && !e.repeat) { openChat(); e.preventDefault(); }
+      else if (bound("talk") && !e.repeat) { void toggleMic(); e.preventDefault(); }
     };
     const up = (e: KeyboardEvent) => {
       if (settingsDialogRef.current?.isOpen || wardPanelRef.current?.isOpen) return;
@@ -260,7 +291,7 @@ export default function GameClient({ code }: { code: string }) {
       window.removeEventListener("keydown", down); window.removeEventListener("keyup", up);
       window.removeEventListener("pointerdown", unlockAudio); window.removeEventListener("blur", releaseInputs);
     };
-  }, [computeDir, send, ensureAudio, getSettingsStore, interactDown, interactUp, openChat, releaseInputs]);
+  }, [computeDir, send, ensureAudio, getSettingsStore, interactDown, interactUp, openChat, releaseInputs, toggleMic]);
 
   // ---- render loop ----
   useEffect(() => {
@@ -394,6 +425,12 @@ export default function GameClient({ code }: { code: string }) {
                 title={muted ? "Unmute" : "Mute"}
                 className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] sm:py-1.5"
               >{muted ? "🔇" : "🔊"}</button>
+              <button
+                onClick={() => void toggleMic()}
+                title={micOn ? `Voice chat on — nearby souls hear you (${keyLabel(settings.controls.talk)})` : `Voice chat off (${keyLabel(settings.controls.talk)})`}
+                aria-label="Toggle voice chat"
+                className={`rounded border px-2 py-1 sm:py-1.5 ${micOn ? "border-[#6b8e23] bg-[#1d2a1a]/80 text-[#a8c98a]" : "border-[#3a2733] bg-[#140d18]/80 text-[#9c8b7a] hover:text-[#d99a3d]"}`}
+              >🎙</button>
               <button
                 onClick={() => settingsDialogRef.current?.open()}
                 title="Settings"

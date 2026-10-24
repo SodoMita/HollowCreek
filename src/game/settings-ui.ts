@@ -18,6 +18,7 @@ const ACTIONS: { id: BindableAction; label: string }[] = [
   { id: "drop", label: "Drop carried kit" },
   { id: "ruin", label: "Hollow: ruin a ward" },
   { id: "chat", label: "Speak" },
+  { id: "talk", label: "Voice chat on/off" },
 ];
 
 const slider = (path: string, label: string, min: number, max: number, step = 1) => `
@@ -129,6 +130,7 @@ export class SettingsDialog {
             ${slider("audio.music", "Music", 0, 100)}
             ${slider("audio.ambience", "Wind & ambience", 0, 100)}
             ${slider("audio.effects", "Effects & footsteps", 0, 100)}
+            ${slider("audio.voice", "Voice chat", 0, 100)}
             <div class="hc-settings-section">Behavior</div>
             ${toggle("audio.muted", "Mute all audio", "Also available from the speaker button in the HUD.")}
             ${toggle("audio.adaptiveMusic", "Adaptive score", "Harmony and pulse react to danger, meetings, and blackouts.")}

@@ -4,6 +4,7 @@
 import { Renderer } from "../src/game/render";
 import { WardPanel } from "../src/game/ward-ui";
 import { AudioDirector } from "../src/game/audio";
+import { VoiceChat } from "../src/game/voice";
 import { SettingsStore, applyDocumentPreferences, keyLabel, matchesControl, type BindableAction } from "../src/game/settings";
 import { SettingsDialog } from "../src/game/settings-ui";
 import { BELL_X } from "../src/game/types";
@@ -93,10 +94,22 @@ const wardPanel = new WardPanel(document.body, {
 let interactToggled = false;
 let tasksOpen = window.innerWidth > 640;
 const settingsDialog = new SettingsDialog(settingsStore, document.body, { onOpen: releaseInputs });
+const voice = new VoiceChat(() => settingsStore.value, (status) => {
+  $("mic").style.borderColor = status.enabled ? "#6b8e23" : "";
+  $("mic").style.color = status.enabled ? "#a8c98a" : "";
+  if (status.error) toast(status.error);
+});
 settingsStore.subscribe((settings) => {
   applyDocumentPreferences(settings);
   $("mute").textContent = settings.audio.muted ? "🔇" : "🔊";
+  voice.applyMix();
 });
+async function toggleMic() {
+  audio.start();
+  voice.setBaseUrl(server);
+  voice.setServer(roomCode, getPid());
+  await voice.setEnabled(!voice.enabled);
+}
 applyDocumentPreferences(settingsStore.value);
 
 async function api(path: string, body?: unknown, base = server, timeoutMs = 0): Promise<any> {
@@ -237,6 +250,7 @@ function enterRoom(code: string) {
   void poll();
 }
 function leaveToMenu() {
+  voice.destroy();
   releaseInputs();
   const departingCode = roomCode;
   const departingServer = server;
@@ -293,6 +307,12 @@ async function poll() {
     snap = s;
     wardPanel.update(s.minigame, s.self.stamina, s.self.exhausted);
     audio.update(s);
+    voice.setBaseUrl(server);
+    voice.setServer(roomCode, getPid());
+    void voice.tick(
+      { id: s.self.id, x: s.players.find((p) => p.id === s.self.id)?.x ?? 0, alive: s.self.alive },
+      s.players.filter((p) => p.id !== s.self.id).map((p) => ({ id: p.id, x: p.x, alive: p.alive })),
+    );
     if (lastPhase === "lobby" && s.phase === "playing") reveal(s.self.role === "hollow");
     lastPhase = s.phase;
     renderHud(s);
@@ -506,6 +526,7 @@ function bound(action: BindableAction, e: KeyboardEvent) {
 window.addEventListener("keydown", (e) => {
   audio.start();
   if (settingsDialog.isOpen || !roomCode) return;
+
   if (wardPanel.isOpen) {
     if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
     return; // Puzzle buttons own Tab, Enter and Space.
@@ -521,6 +542,7 @@ window.addEventListener("keydown", (e) => {
   else if (bound("push", e) && !e.repeat) { void send({ cartHeld: true }); e.preventDefault(); }
   else if (bound("drop", e) && !e.repeat) { void send({ action: "drop_supply" }); e.preventDefault(); }
   else if (bound("ruin", e) && !e.repeat) { void send({ action: "sabotage" }); e.preventDefault(); }
+  else if (bound("talk", e) && !e.repeat) { void toggleMic(); e.preventDefault(); }
   else if (bound("chat", e) && !e.repeat) { openChat(); e.preventDefault(); }
 });
 window.addEventListener("keyup", (e) => {
@@ -568,6 +590,7 @@ $("mute").addEventListener("click", () => {
   audio.setMuted(!audio.muted);
 });
 $("mute").textContent = audio.muted ? "🔇" : "🔊";
+$("mic").addEventListener("click", () => void toggleMic());
 $("copycode").addEventListener("click", () => { void navigator.clipboard?.writeText(roomCode); toast("Town code copied"); });
 document.addEventListener("click", (e) => {
   const t = e.target as HTMLElement;

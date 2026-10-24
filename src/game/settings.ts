@@ -1,7 +1,7 @@
 // Persistent, client-only preferences. These never change authoritative gameplay.
 export type GraphicsQuality = "low" | "medium" | "high";
 export type InteractMode = "hold" | "toggle";
-export type BindableAction = "left" | "right" | "interact" | "ability" | "blackout" | "push" | "drop" | "ruin" | "chat";
+export type BindableAction = "left" | "right" | "interact" | "ability" | "blackout" | "push" | "drop" | "ruin" | "chat" | "talk";
 
 export interface GameSettings {
   audio: {
@@ -9,6 +9,7 @@ export interface GameSettings {
     music: number;
     ambience: number;
     effects: number;
+    voice: number;
     muted: boolean;
     adaptiveMusic: boolean;
     heartbeat: boolean;
@@ -45,6 +46,7 @@ const DEFAULTS: GameSettings = {
     music: 0.7,
     ambience: 0.65,
     effects: 0.8,
+    voice: 0.8,
     muted: false,
     adaptiveMusic: true,
     heartbeat: true,
@@ -80,12 +82,13 @@ const DEFAULTS: GameSettings = {
     drop: "KeyG",
     ruin: "KeyR",
     chat: "Enter",
+    talk: "KeyT",
     interactMode: "hold",
   },
 };
 
 const STORAGE_KEY = "hc_settings_v1";
-const ACTIONS: BindableAction[] = ["left", "right", "interact", "ability", "blackout", "push", "drop", "ruin", "chat"];
+const ACTIONS: BindableAction[] = ["left", "right", "interact", "ability", "blackout", "push", "drop", "ruin", "chat", "talk"];
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const num = (v: unknown, fallback: number, lo = 0, hi = 1) =>
@@ -108,6 +111,7 @@ export function normalizeSettings(input: unknown): GameSettings {
     music: num(a.music, d.audio.music),
     ambience: num(a.ambience, d.audio.ambience),
     effects: num(a.effects, d.audio.effects),
+    voice: num(a.voice, d.audio.voice),
     muted: bool(a.muted, d.audio.muted),
     adaptiveMusic: bool(a.adaptiveMusic, d.audio.adaptiveMusic),
     heartbeat: bool(a.heartbeat, d.audio.heartbeat),
