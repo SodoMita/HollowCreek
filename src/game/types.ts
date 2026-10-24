@@ -62,7 +62,7 @@ export const STATIONS: Station[] = [
   { id: "well", name: "Rebuild the well winch", x: 680, kind: "well" },
   { id: "scarecrow", name: "Restitch the scarecrow", x: 1060, kind: "scarecrow" },
   { id: "lantern", name: "Rewire the street lantern", x: 1450, kind: "lantern" },
-  { id: "chapel", name: "Mend the chapel windows", x: 1720, kind: "chapel" },
+  { id: "chapel", name: "Restore the chapel lights", x: 1720, kind: "chapel" },
   { id: "mill", name: "Replace the sawmill blades", x: 2760, kind: "mill" },
   { id: "graves", name: "Rebuild the grave markers", x: 3200, kind: "graves" },
   { id: "radio", name: "Repair the radio tower", x: 3650, kind: "radio" },

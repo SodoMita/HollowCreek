@@ -4,7 +4,8 @@ import { WARD_JOBS, type WardGameView } from "./wards";
 
 const STYLE_ID = "hc-ward-panel-style";
 const ARROWS = ["↑", "→", "↓", "←"] as const;
-const LEAD = ["╰", "╭", "╮", "╯"] as const;
+const LANTERN_SIGILS = ["✦", "☾", "◈", "✧", "◉", "❖", "☉", "⌁"] as const;
+const CROW_GLYPHS = ["⌁", "✦", "☾", "◈"] as const;
 const STONES = ["ALDER", "BELL", "CROW", "DOVE"] as const;
 const BARS = ["UPPER", "LEFT", "LOWER", "RIGHT"] as const;
 
@@ -27,6 +28,21 @@ function styles() {
     .hc-ward-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
     .hc-ward-grid.four{grid-template-columns:repeat(4,minmax(0,1fr))}
     .hc-ward-grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .hc-ward-grid.nine{grid-template-columns:repeat(3,minmax(0,1fr));max-width:330px;margin-left:auto;margin-right:auto}
+    .hc-ward-track{position:relative;height:28px;margin:13px 0;background:#281e27;border:1px solid #655249;border-radius:8px}
+    .hc-ward-track .band{position:absolute;top:1px;bottom:1px;background:#81652c;border:1px solid #dab86b;border-radius:4px}
+    .hc-ward-track .bucket{position:absolute;top:-5px;width:11px;height:36px;background:#e9dfcf;border-radius:4px;box-shadow:0 0 8px #bd9959}
+    .hc-ward-ring{display:flex;align-items:center;justify-content:space-between;gap:7px;padding:7px 0;border-bottom:1px solid #453440}
+    .hc-ward-ring strong{font-size:24px;color:#e9c588}
+    .hc-ward-ring button{min-width:44px;min-height:44px;border:1px solid #6d554a;border-radius:6px;background:#31232d;color:#f1dfc5;font:inherit;cursor:pointer}
+    .hc-ward-ring button:hover,.hc-ward-ring button:focus-visible{border-color:#e2a667;outline:2px solid #e2a667}
+    .hc-ward-calls{display:flex;gap:7px;justify-content:center;margin:13px 0}
+    .hc-ward-calls span{min-width:38px;min-height:38px;display:grid;place-items:center;border:1px solid #695046;border-radius:6px;font-size:23px}
+    .hc-ward-calls span.sewn{color:#9fc08e;border-color:#57704f}
+    .hc-ward-furrow{position:relative;max-width:320px;aspect-ratio:1;margin:12px auto}
+    .hc-ward-furrow svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+    .hc-ward-furrow .hc-ward-grid{position:relative;z-index:1;aspect-ratio:1;margin:0}
+    .hc-ward-furrow button{min-height:0!important}
     .hc-ward-grid button,.hc-ward-action,.hc-ward-plot button{min-height:54px;border:1px solid #6d554a;border-radius:8px;background:#261c24;color:#f1dfc5;font:inherit;cursor:pointer;touch-action:manipulation}
     .hc-ward-grid button:hover,.hc-ward-grid button:focus-visible,.hc-ward-action:hover,.hc-ward-action:focus-visible,.hc-ward-plot button:hover,.hc-ward-plot button:focus-visible{border-color:#e2a667;background:#392531;outline:2px solid #e2a667;outline-offset:2px}
     .hc-ward-grid button:disabled{opacity:.25;cursor:default;outline:none}
@@ -65,52 +81,63 @@ function renderJob(view: WardGameView): string {
   const v = view.values, t = view.targets;
   switch (view.kind) {
     case "pumpkins": {
-      const selected = v.reduce((count, on) => count + on, 0);
-      const span = v.reduce((n, on, i) => n + (on ? t[i] : 0), 0);
-      return `<div class="hc-ward-console">Shed gap: <b>${t[6]} feet</b> · braced: <b>${span} feet</b> in ${selected}/3 beams. Splintered lumber won't bear the roof.</div>
-        <div class="hc-ward-grid three">${v.map((on, i) => button(i, `${on ? "Remove" : "Select"} ${t[i]} foot ${i === t[7] ? "splintered" : "sound"} beam`,
-          `<div class="hc-ward-beam" style="width:${35 + t[i] * 8}%"></div><small>${t[i]} ft${i === t[7] ? " · SPLINTERED" : " · sound"}</small>`, `${on ? "selected " : ""}${i === t[7] ? "hc-ward-splinter" : ""}`)).join("")}</div>
-        ${button(6, "Fasten the roof brace", "Fasten three beams across the gap", "hc-ward-action")}`;
+      if (view.step === 0) {
+        const selected = v.reduce((count, on) => count + on, 0);
+        const span = v.reduce((n, on, i) => n + (on ? t[i] : 0), 0);
+        return `<div class="hc-ward-console">Shed gap: <b>${t[6]} feet</b> · braced: <b>${span} feet</b> in ${selected}/3 beams. Splintered lumber will not bear the roof.</div>
+          <div class="hc-ward-grid three">${v.map((on, i) => button(i, `${on ? "Remove" : "Select"} ${t[i]} foot ${i === t[7] ? "splintered" : "sound"} beam`,
+            `<div class="hc-ward-beam" style="width:${35 + t[i] * 8}%"></div><small>${t[i]} ft${i === t[7] ? " · SPLINTERED" : " · sound"}</small>`, `${on ? "selected " : ""}${i === t[7] ? "hc-ward-splinter" : ""}`)).join("")}</div>
+          ${button(6, "Fasten roof brace", "Fasten the three beams", "hc-ward-action")}`;
+      }
+      const path = t.slice(8), dug = new Set(path.slice(0, view.step - 1));
+      const line = path.slice(1).map((cell, i) => {
+        const before = path[i];
+        return `<line x1="${50 + before % 3 * 100}" y1="${50 + Math.floor(before / 3) * 100}" x2="${50 + cell % 3 * 100}" y2="${50 + Math.floor(cell / 3) * 100}" stroke="${i < view.step - 1 ? "#c5a364" : "#695147"}" stroke-width="8" stroke-linecap="round"/>`;
+      }).join("");
+      return `<div class="hc-ward-console">The roof holds. Now cut <b>The Furrow</b>: drain rainwater away from the shed foundation by following the connected ditch from START to OUTLET. Wrong turns refill it.</div>
+        <div class="hc-ward-furrow"><svg viewBox="0 0 300 300" aria-hidden="true">${line}</svg>
+          <div class="hc-ward-grid nine">${Array.from({ length: 9 }, (_, i) => path.includes(i)
+            ? button(7 + i, `Dig furrow at row ${Math.floor(i / 3) + 1} column ${i % 3 + 1}`,
+              `<span class="hc-ward-glyph">${i === path[0] ? "◎" : i === path.at(-1) ? "◈" : dug.has(i) ? "●" : "○"}</span>`, dug.has(i) ? "done" : "")
+            : `<button type="button" disabled aria-label="Dry ground">·</button>`).join("")}</div>
+        </div>`;
     }
     case "well": {
-      const tension = ["slack", "safe", "taut", "slipping"][v[1]];
-      return `<div class="hc-ward-console">Bucket raised <b>${v[0]}/${t[0]} turns</b>${gauge(v[0], t[0])}
-          Rope tension: <b>${tension}</b> (${v[1]}/3). Ease it before the next crank at 3. Slips: ${v[2]}.</div>
+      const band = t[view.step], position = v[0];
+      const tension = ["slack", "safe", "safe", "taut", "slipping"][v[1]];
+      return `<div class="hc-ward-console"><b>The Long Draw · catch ${view.step + 1}/3.</b> Wind the bucket into the pale catch zone, ease rope tension to 2 or less, then set the ratchet.
+        <div class="hc-ward-track"><div class="band" style="left:${(band - 1) / 14 * 100}%;width:${2 / 14 * 100}%"></div><div class="bucket" style="left:${position / 14 * 100}%"></div></div>
+        Bucket ${position}/14 · rope <b>${tension}</b> (${v[1]}/4) · slips ${v[2]}.</div>
         <div class="hc-ward-grid three">
-          ${button(0, "Crank winch to raise bucket", '<span class="hc-ward-glyph">↻</span><small>Crank winch</small>')}
-          ${button(1, "Ease rope tension", '<span class="hc-ward-glyph">↙</span><small>Ease rope</small>')}
-          ${button(2, "Lock the ratchet with safe tension", '<span class="hc-ward-glyph">▣</span><small>Lock ratchet</small>')}
+          ${button(0, "Crank the bucket up one notch", '<span class="hc-ward-glyph">↻</span><small>Crank</small>')}
+          ${button(1, "Ease the rope tension", '<span class="hc-ward-glyph">↙</span><small>Ease rope</small>')}
+          ${button(2, "Catch bucket inside pale zone", '<span class="hc-ward-glyph">▣</span><small>Catch / lock</small>')}
         </div>`;
     }
     case "scarecrow": {
-      const path = new Set(t);
-      const sewn = new Set(t.slice(0, view.step));
-      const lines = t.slice(1).map((cell, i) => {
-        const prev = t[i];
-        return `<line x1="${50 + prev % 4 * 100}" y1="${50 + Math.floor(prev / 4) * 100}" x2="${50 + cell % 4 * 100}" y2="${50 + Math.floor(cell / 4) * 100}" stroke="${i < view.step ? "#bfa675" : "#685344"}" stroke-width="7" stroke-linecap="round"/>`;
-      }).join("");
-      return `<div class="hc-ward-console">Stitches: <b>${view.step}/${t.length}</b>. Start at START, follow the torn thread to END; only neighbouring holes share a seam.</div>
-        <div class="hc-ward-seam"><svg viewBox="0 0 400 400" aria-hidden="true">${lines}</svg>
-          <div class="hc-ward-grid four">${Array.from({ length: 16 }, (_, i) => path.has(i)
-            ? button(i, `${i === t[0] ? "Start stitch" : i === t.at(-1) ? "End stitch" : "Stitch"} row ${Math.floor(i / 4) + 1} column ${i % 4 + 1}`,
-              `<span class="hc-ward-glyph">${i === t[0] ? "◎" : i === t.at(-1) ? "◈" : sewn.has(i) ? "●" : "○"}</span>`, sewn.has(i) ? "done" : "")
-            : `<button type="button" disabled aria-label="Intact cloth">·</button>`).join("")}</div>
-        </div>`;
+      const round = v[0], length = 3 + round;
+      const showing = view.revealMs > 0;
+      const call = t.slice(0, length);
+      return `<div class="hc-ward-console"><b>Crow Call · round ${round + 1}/4.</b>
+        ${showing ? "Watch the calls in the stitches. Wait for the crows to finish before repeating them." : "Now repeat their call from memory. A wrong rune repeats this round, not the whole ward."}</div>
+        <div class="hc-ward-calls" aria-label="${showing ? "Crow pattern on show" : "Crow pattern hidden"}">${call.map((r, i) => `<span class="${i < view.step ? "sewn" : ""}">${showing ? CROW_GLYPHS[r] : i < view.step ? "✓" : "?"}</span>`).join("")}</div>
+        <div class="hc-ward-grid four">${CROW_GLYPHS.map((r, i) => `<button type="button" data-ward-move="${i}" aria-label="Call rune ${i + 1}" ${showing ? "disabled" : ""}><span class="hc-ward-glyph">${r}</span><small>Call ${i + 1}</small></button>`).join("")}</div>
+        ${button(4, "Replay the crow call at a vigor cost", "Replay the crow call", "hc-ward-action")}`;
     }
     case "lantern": {
-      const wick = v[0] < t[0] ? "wick too low — flame weak" : v[0] > t[0] ? "wick too high — glass sooting" : "wick height steady";
-      const draft = v[1] < t[1] ? "vent too closed — smoke trapped" : v[1] > t[1] ? "vent too open — flame blown out" : "draft balanced";
-      return `<div class="hc-ward-console">Wick height <b>${v[0]}/6</b>: ${wick}.<br/>Vent opening <b>${v[1]}/6</b>: ${draft}.</div>
-        <div class="hc-ward-grid two">
-          ${button(0, "Lower wick", '− Wick')} ${button(1, "Raise wick", '+ Wick')}
-          ${button(2, "Close vent", '− Vent')} ${button(3, "Open vent", '+ Vent')}
-        </div>${button(4, "Strike match and test flame", "Strike a match to test the flame", "hc-ward-action")}`;
+      const names = ["Wick band", "Glass cage", "Copper cap"];
+      return `<div class="hc-ward-console"><b>Lantern Rites.</b> Three eight-face bands mesh around the drowned wick. Bring the bright star ✦ beneath the wick on each band. Turning one counter-turns the next.</div>
+        ${v.map((face, i) => `<div class="hc-ward-ring"><span>${names[i]}</span>
+          <button type="button" data-ward-move="${i * 2}" aria-label="Turn ${names[i]} left">↶</button>
+          <strong>${LANTERN_SIGILS[face]}</strong>
+          <button type="button" data-ward-move="${i * 2 + 1}" aria-label="Turn ${names[i]} right">↷</button>
+          <small>target ✦</small></div>`).join("")}`;
     }
     case "chapel": {
-      const glyphs = LEAD;
-      return `<div class="hc-ward-console">Set the four panes so their lead strips meet in a rose at the centre. Turning one pane pulls the panes beside and below it.</div>
-        <div class="hc-ward-grid two">${v.map((angle, i) => button(i, `Rotate stained-glass pane ${i + 1}, current ${glyphs[angle]}, target ${glyphs[t[i]]}`,
-          `<span class="hc-ward-glyph">${glyphs[angle]}</span><small>pane ${i + 1} · lead ${glyphs[t[i]]}</small>`, angle === t[i] ? "done" : "")).join("")}</div>`;
+      const lit = v.filter(Boolean).length;
+      return `<div class="hc-ward-console"><b>Nine Candles.</b> Test the repaired chapel fittings: the new glass draws a contrary draught. Each candle you touch changes itself and its cross-neighbours. Light all nine together. ${lit}/9 burning · shortest repair ${view.extra[0]} taps.</div>
+        <div class="hc-ward-grid nine">${v.map((on, i) => button(i, `Chapel candle row ${Math.floor(i / 3) + 1} column ${i % 3 + 1}: ${on ? "lit" : "dark"}`,
+          `<span class="hc-ward-glyph">${on ? "✦" : "·"}</span><small>${on ? "lit" : "dark"}</small>`, on ? "done" : "")).join("")}</div>`;
     }
     case "mill": {
       const names = ["Driver", "Transfer", "Flywheel", "Blade"];
@@ -178,9 +205,10 @@ export class WardPanel {
       return;
     }
     const wasOpen = this.isOpen;
+    const wasPreview = this.current?.kind === "scarecrow" && this.current.revealMs > 0;
     this.current = view;
     this.root.hidden = false;
-    const signature = JSON.stringify([view.stationId, view.kind, view.values, view.targets, view.extra, view.step, view.mistakes, view.moves]);
+    const signature = JSON.stringify([view.stationId, view.kind, view.values, view.targets, view.extra, view.step, view.mistakes, view.moves, view.revealMs > 0]);
     if (signature !== this.signature) {
       const focused = wasOpen ? (document.activeElement as HTMLElement | null)?.dataset.wardMove : undefined;
       this.signature = signature;
@@ -188,8 +216,10 @@ export class WardPanel {
       if (!wasOpen) {
         this.opening = true;
         this.callbacks.opened();
-        (this.root.querySelector("[data-ward-move]") as HTMLButtonElement | null)?.focus({ preventScroll: true });
+        (this.root.querySelector(view.kind === "scarecrow" && view.revealMs > 0 ? "[data-ward-close]" : "[data-ward-move]") as HTMLButtonElement | null)?.focus({ preventScroll: true });
         this.opening = false;
+      } else if (wasPreview && view.kind === "scarecrow" && view.revealMs === 0) {
+        (this.root.querySelector("[data-ward-move]") as HTMLButtonElement | null)?.focus({ preventScroll: true });
       } else if (focused) {
         (this.root.querySelector(`[data-ward-move="${focused}"]`) as HTMLButtonElement | null)?.focus({ preventScroll: true });
       }
@@ -216,7 +246,7 @@ export class WardPanel {
       <div class="hc-ward-meta"><span>${Math.round(view.progress * 100)}% repaired</span><span>${view.moves} moves${view.mistakes ? ` · ${view.mistakes} slips` : ""}</span></div>
       ${renderJob(view)}
       <p data-ward-vigor class="hc-ward-note"></p>
-      <p class="hc-ward-note">No timer. Tap a part, or use Tab then Enter / Space. Esc leaves; progress stays with this ward.</p>
+      <p class="hc-ward-note">No deadline to finish. Tap a part, or use Tab then Enter / Space. Esc leaves; progress stays with this ward.</p>
     </div>`;
   }
 }

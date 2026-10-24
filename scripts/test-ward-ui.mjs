@@ -62,6 +62,27 @@ for (const kind of kinds) {
   assert.equal(panel.isOpen, false, `${kind} closes when server cancels`);
 }
 assert.equal(opens, kinds.length);
+const crow = puzzle.createWardPuzzle("scarecrow", 51);
+panel.update(puzzle.wardView("scarecrow", "Scarecrow", crow, 2400), 1, false);
+assert.ok(root.innerHTML.includes("disabled"), "crow runes are disabled while calls are shown");
+const previewRenders = renderCount;
+panel.update(puzzle.wardView("scarecrow", "Scarecrow", crow, 1300), 1, false);
+assert.equal(renderCount, previewRenders, "preview countdown does not destroy focus on every poll");
+panel.update(puzzle.wardView("scarecrow", "Scarecrow", crow, 0), 1, false);
+assert.equal(renderCount, previewRenders + 1, "runes become playable when the preview ends");
+assert.ok(!root.innerHTML.includes("disabled"), "rune buttons are enabled after the call");
+panel.update(null, 1, false);
+let harvest = puzzle.createWardPuzzle("pumpkins", 51);
+let beams = null;
+for (let a = 0; a < 6; a++) for (let b = a + 1; b < 6; b++) for (let c = b + 1; c < 6; c++) {
+  if ([a, b, c].includes(harvest.targets[7])) continue;
+  if (harvest.targets[a] + harvest.targets[b] + harvest.targets[c] === harvest.targets[6]) beams = [a, b, c];
+}
+for (const beam of beams) harvest = puzzle.applyWardMove(harvest, beam);
+harvest = puzzle.applyWardMove(harvest, 6);
+panel.update(puzzle.wardView("pumpkins", "Harvest", harvest), 1, false);
+assert.ok(root.innerHTML.includes("The Furrow") && root.innerHTML.includes('data-ward-move="7'), "braced roof opens physical drainage path");
+panel.update(null, 1, false);
 panel.update(puzzle.wardView("well", "Well", puzzle.createWardPuzzle("well", 5)), 1, false);
 root.listeners.click({ target: { closest(selector) { return selector.includes("data-ward-close") ? {} : null; } } });
 assert.equal(closes, 1, "Leave button calls the cancel action");

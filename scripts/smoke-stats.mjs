@@ -69,14 +69,15 @@ await sleep(900);
 check("holding E cannot auto-complete a puzzle", (await myState()).tasks.find((t) => t.id === task.id).progress === 0);
 await input({ interactHeld: false });
 const beforeWork = (await myState()).self.stamina;
-for (let turn = 0; turn < 20; turn++) {
+for (let turn = 0; turn < 75; turn++) {
   const board = (await myState()).minigame;
   if (!board) break;
-  check("well has a rope and ratchet board", board.kind === "well");
-  const [height, tension] = board.values;
-  const moveIndex = height < board.targets[0] ? (tension >= 3 ? 1 : 0) : (tension > 2 ? 1 : 2);
+  check("well has The Long Draw", board.kind === "well");
+  const [position, tension] = board.values;
+  const catchBand = board.targets[board.step];
+  const moveIndex = position < catchBand ? tension >= 4 ? 1 : 0 : tension > 2 ? 1 : 2;
   const move = await input({ action: "ward_move", wardId: task.id, move: moveIndex });
-  if (!move.ok) throw new Error(`Winch move rejected: ${move.error}`);
+  if (!move.ok) throw new Error(`Bucket catch rejected: ${move.error}`);
 }
 const mid = await myState();
 check("puzzle moves drain stamina", mid.self.stamina < beforeWork);
