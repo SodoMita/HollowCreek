@@ -29,6 +29,17 @@ export const STAMINA_BLACKOUT_COST = 0.3;
 export const STAMINA_BELL_COST = 0.15;
 export const STAMINA_UNLOCK_COST = 0.1;
 
+// One cart, pushed together; sizes and speeds are world units per second.
+export const SUPPLY_CART_START = 900;
+export const CART_PUSH_RANGE = 105;
+export const CART_SOLO_SPEED = 38;
+export const CART_HELPER_BONUS = 26;
+export const CART_MAX_SPEED = 116;
+export const CARRY_SPEED = 122;
+export const CARRY_VIGOR_DRAIN = 0.045;
+export const SABOTAGE_COOLDOWN_MS = 26000;
+export const SABOTAGE_VIGOR_COST = 0.22;
+
 export interface Station {
   id: string;
   name: string;
@@ -56,9 +67,6 @@ export const STATIONS: Station[] = [
   { id: "radio", name: "Repair the radio tower", x: 3650, kind: "radio" },
   { id: "silo", name: "Patch the grain silo", x: 4000, kind: "silo" },
 ];
-
-/** Carts of boards, spare iron and lamp oil. One carried repair kit per player. */
-export const SUPPLY_DEPOTS = [480, 1250, 2940, 3830] as const;
 
 export const CAGE_XS = [1940, 2030, 2120, 2280, 2370, 2460];
 
@@ -100,6 +108,8 @@ export interface SelfInfo {
   exhausted: boolean; // hit 0 — must rest to 20% before working again
   blackoutCooldownMs: number;
   canBlackout: boolean;
+  sabotageCooldownMs: number;
+  canSabotage: boolean;
   teammates: string[]; // other hollow ids (only for hollow)
   myVote: string | null;
 }
@@ -109,7 +119,8 @@ export interface TaskView {
   name: string;
   x: number;
   done: boolean;
-  delivered: boolean; // a kit has arrived from a supply cart
+  delivered: boolean; // a kit has arrived from the cart
+  sabotaged: boolean; // the Hollow has ruined this ward once this night
   progress: number; // 0..1, repair work after delivery
 }
 
@@ -129,6 +140,8 @@ export interface Snapshot {
   keyX: number | null;
   /** Dropped kits can be recovered after a death, cage or voluntary drop. */
   supplyDrops: number[];
+  cartX: number;
+  cartPushers: number;
   cages: { x: number; occupant: string | null }[];
   tasks: TaskView[];
   taskBar: { done: number; total: number };
@@ -167,7 +180,8 @@ export interface InputBody {
   playerId: string;
   dir?: number;
   interactHeld?: boolean;
-  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "restart" | "leave" | "drop_supply";
+  cartHeld?: boolean; // hold Push + a direction while beside the cart
+  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "restart" | "leave" | "drop_supply" | "sabotage";
   chat?: string;
   vote?: string; // playerId | "skip" | "free:<id>"
 }

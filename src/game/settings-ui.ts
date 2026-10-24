@@ -14,6 +14,9 @@ const ACTIONS: { id: BindableAction; label: string }[] = [
   { id: "interact", label: "Interact / work" },
   { id: "ability", label: "Role ability" },
   { id: "blackout", label: "Snuff lights" },
+  { id: "push", label: "Push cart (hold + walk)" },
+  { id: "drop", label: "Drop carried kit" },
+  { id: "ruin", label: "Hollow: ruin a ward" },
   { id: "chat", label: "Speak" },
 ];
 
@@ -160,7 +163,7 @@ export class SettingsDialog {
           <section class="hc-settings-panel" data-panel="controls" hidden>
             <div class="hc-settings-section">Keyboard</div>
             ${ACTIONS.map((a) => `<div class="hc-binding"><span>${a.label}</span><button data-bind="${a.id}"></button></div>`).join("")}
-            <p class="hc-settings-note">Select a binding, then press a key. Arrow keys and Space are fallback controls unless you assign those keys yourself. Escape cancels rebinding or closes this panel.</p>
+             <p class="hc-settings-note">Select a binding, then press a key. Hold Push while walking left or right beside the cart; another player can push alongside you. Arrow keys and Space remain fallback controls. Escape cancels rebinding or closes this panel.</p>
             <div class="hc-settings-section">Interaction</div>
             <label class="hc-setting hc-select"><span>Chore input</span><select data-setting="controls.interactMode"><option value="hold">Hold to work</option><option value="toggle">Press to start / stop</option></select></label>
             <p class="hc-settings-note">Toggle mode still stops work when you open chat, open settings, leave, or the window loses focus. It sends the same server input as hold mode.</p>

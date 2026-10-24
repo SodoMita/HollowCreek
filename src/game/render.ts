@@ -1,6 +1,6 @@
 // Canvas renderer for Hollow Creek — pure drawing, no game logic.
 import {
-  BELL_X, CAGE_XS, MEETING_FROM, MEETING_TO, STATIONS, SUPPLY_DEPOTS, WORLD_W,
+  BELL_X, CAGE_XS, MEETING_FROM, MEETING_TO, STATIONS, WORLD_W,
 } from "./types";
 import type { Snapshot, Station } from "./types";
 import { createDefaultSettings, type GameSettings } from "./settings";
@@ -206,13 +206,21 @@ export class Renderer {
       const sx = st.x - cam;
       if (sx > -280 && sx < w + 280) this.drawStation(ctx, st, sx, ground, t, now, snap);
     }
-    for (const depot of SUPPLY_DEPOTS) {
-      const sx = depot - cam;
-      if (sx > -90 && sx < w + 90) drawSupplyCart(ctx, sx, ground);
+    const cartScreenX = snap.cartX - cam;
+    if (cartScreenX > -90 && cartScreenX < w + 90) {
+      drawSupplyCart(ctx, cartScreenX, ground);
+      if (snap.cartPushers > 0) {
+        ctx.save();
+        ctx.font = "bold 10px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#e9dfcf";
+        ctx.fillText(`${snap.cartPushers} PUSHING`, cartScreenX, ground - 89);
+        ctx.restore();
+      }
     }
     for (const drop of snap.supplyDrops) {
       const sx = drop - cam;
-      if (sx > -45 && sx < w + 45) drawKit(ctx, sx, ground, 0.78);
+      if (sx > -45 && sx < w + 45) drawKit(ctx, sx, ground);
     }
 
     // --- bell tower ---
@@ -280,7 +288,7 @@ export class Renderer {
       this.drawFigure(ctx, px, ground + floatY, p.color, p.facing, p.moving, ghost, isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t, 1);
       ctx.restore();
       // A kit stays visible on its carrier until someone delivers it.
-      if (p.hasSupply) drawKit(ctx, px - 23, ground - 16 + floatY, 0.7);
+      if (p.hasSupply) drawKit(ctx, px - 23, ground - 16 + floatY);
       // key icon
       if (p.hasKey) {
         ctx.fillStyle = "#e8b93c";
@@ -735,13 +743,13 @@ export class Renderer {
     ctx.restore();
 
     // A kit on the ground marks a ward that is ready for hands-on repair.
-    if (task && !task.done && supplied) drawKit(ctx, x + 85, ground, 0.9);
+    if (task && !task.done && supplied) drawKit(ctx, x + 85, ground);
 
     // State marker for unfinished wards: missing kit or ready for repair.
     if (task && !task.done && snap.phase === "playing") {
       const bob = Math.sin(t * 3 + st.x) * 4;
       ctx.save();
-      ctx.fillStyle = supplied ? "#b3d59a" : "#ffcd5a";
+      ctx.fillStyle = supplied ? "#b3d59a" : task.sabotaged ? "#d87762" : "#ffcd5a";
       ctx.shadowColor = supplied ? "#729a65" : "#ffcd5a"; this.glow(ctx, 8);
       ctx.translate(x, ground - 235 + bob);
       ctx.rotate(Math.PI / 4);
@@ -752,8 +760,8 @@ export class Renderer {
       ctx.fillRect(x - 48, ground - 259, 96, 16);
       ctx.font = "bold 10px system-ui, sans-serif";
       ctx.textAlign = "center";
-      ctx.fillStyle = supplied ? "#b3d59a" : "#ffcd5a";
-      ctx.fillText(supplied ? "REPAIR" : "NEEDS KIT", x, ground - 247);
+      ctx.fillStyle = supplied ? "#b3d59a" : task.sabotaged ? "#d87762" : "#ffcd5a";
+      ctx.fillText(supplied ? "REPAIR" : task.sabotaged ? "SABOTAGED" : "NEEDS KIT", x, ground - 247);
       ctx.restore();
       if (task.progress > 0) {
         ctx.fillStyle = "rgba(0,0,0,0.5)";

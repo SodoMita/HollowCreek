@@ -29,10 +29,10 @@ const pid = crew.self.id;
 const myState = () => state(code, pid);
 const input = (body) => post("/api/game/input", { code, playerId: pid, ...body });
 const where = (s) => s.players.find((p) => p.id === pid).x;
-const depots = [480, 1250, 2940, 3830];
-const { task, depot } = crew.tasks.flatMap((task) => depots.map((depot) => ({
-  task, depot, cost: Math.abs(where(crew) - depot) + Math.abs(task.x - depot),
-}))).filter(({ task, depot }) => Math.abs(task.x - depot) > 165).sort((a, b) => a.cost - b.cost)[0];
+const cartStart = crew.cartX;
+const task = crew.tasks
+  .filter((t) => Math.abs(t.x - cartStart) > 165)
+  .sort((a, b) => Math.abs(a.x - cartStart) - Math.abs(b.x - cartStart))[0];
 
 async function walkTo(x) {
   const until = Date.now() + 30_000;
@@ -50,10 +50,16 @@ await walkTo(task.x);
 await input({ dir: 0, interactHeld: true });
 await sleep(700);
 check("cannot repair without a delivered kit", (await myState()).tasks.find((t) => t.id === task.id).progress === 0);
-await walkTo(depot);
+await walkTo((await myState()).cartX);
 await input({ action: "interact", interactHeld: false });
-check("kit picked up at a supply cart", (await myState()).self.hasSupply);
+check("kit picked up at the one supply cart", (await myState()).self.hasSupply);
 await walkTo(task.x);
+check("hauling spends vigor", (await myState()).self.stamina < 1);
+await input({ action: "drop_supply" });
+const onGround = await myState();
+check("kit can be dropped", !onGround.self.hasSupply && onGround.supplyDrops.length > 0);
+await input({ action: "interact", interactHeld: false });
+check("dropped kit can be recovered", (await myState()).self.hasSupply);
 await input({ action: "interact", interactHeld: true });
 const delivered = await myState();
 check("kit delivered to broken ward", delivered.tasks.find((t) => t.id === task.id).delivered && !delivered.self.hasSupply);

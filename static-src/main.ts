@@ -299,7 +299,7 @@ function reveal(hollow: boolean) {
   const r = $("reveal");
   r.querySelector(".r1")!.textContent = hollow ? "You are Hollow" : "Townfolk";
   (r.querySelector(".r1") as HTMLElement).style.color = hollow ? "#ff4a3a" : "#a8c98a";
-  r.querySelector(".r2")!.textContent = hollow ? `Wear their faces. Kill when none watch. ${keyLabel(settingsStore.value.controls.ability)} to strike, ${keyLabel(settingsStore.value.controls.blackout)} to snuff.` : "Carry kits from supply carts to broken wards; hold E to repair. Find the key. Trust no one.";
+  r.querySelector(".r2")!.textContent = hollow ? `Wear their faces. ${keyLabel(settingsStore.value.controls.ability)} to strike, ${keyLabel(settingsStore.value.controls.blackout)} to snuff, ${keyLabel(settingsStore.value.controls.ruin)} to ruin a repaired ward.` : "Carry kits from the movable cart to broken wards; hold E to repair. Find the key.";
   r.style.display = "flex";
   setTimeout(() => { r.style.display = "none"; }, 4500);
 }
@@ -310,6 +310,11 @@ function renderHud(s: Snapshot) {
   $("copycode").textContent = s.code;
   $("soulcount").textContent = `${s.playerCount} souls${s.self.hasSupply ? " · kit carried" : ""}`;
   $("supplydrop").style.display = s.phase === "playing" && s.self.hasSupply ? "inline-block" : "none";
+  $("pushbtn").style.display = s.phase === "playing" && s.self.alive && !s.self.caged && !s.self.hasSupply ? "block" : "none";
+  $("pushbtn").textContent = `Hold Push + ◀▶${s.cartPushers > 0 ? ` · ${s.cartPushers}` : ""}`;
+  $("ruinbtn").style.display = s.phase === "playing" && s.self.alive && s.self.role === "hollow" ? "block" : "none";
+  $("ruinbtn").textContent = `Ruin ${keyLabel(settingsStore.value.controls.ruin)}${s.self.sabotageCooldownMs > 0 ? ` · ${Math.ceil(s.self.sabotageCooldownMs / 1000)}s` : ""}`;
+  ($("ruinbtn") as HTMLButtonElement).disabled = !s.self.canSabotage;
   const role = $("role");
   role.textContent = (!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "The Hollow" : "Townfolk") + (s.self.caged && s.self.alive ? " · Caged" : "");
   role.className = !s.self.alive ? "ghost" : s.self.role;
@@ -320,7 +325,7 @@ function renderHud(s: Snapshot) {
   if (s.phase !== "lobby" && s.self.alive && s.tasks.length) {
     tasks.style.display = "block";
     tasks.innerHTML = `<div class="hd" id="tasktoggle">${s.self.role === "hollow" ? "Town wards (pretend)" : "Town wards · shared"} ${tasksOpen ? "▾" : "▸"}</div>` +
-      (tasksOpen ? s.tasks.map((t) => `<div class="t ${t.done ? "done" : ""}">${t.done ? "✓" : t.delivered ? "▣" : "◇"} ${esc(t.name)}${!t.done ? ` <span style="color:${t.delivered ? "var(--moss)" : "var(--amber)"}">${t.delivered ? t.progress > 0 ? `${Math.round(t.progress * 100)}%` : "repair" : "needs kit"}</span>` : ""}</div>`).join("") : "");
+      (tasksOpen ? s.tasks.map((t) => `<div class="t ${t.done ? "done" : ""}">${t.done ? "✓" : t.delivered ? "▣" : "◇"} ${esc(t.name)}${!t.done ? ` <span style="color:${t.delivered ? "var(--moss)" : "var(--amber)"}">${t.delivered ? t.progress > 0 ? `${Math.round(t.progress * 100)}%` : "repair" : t.sabotaged ? "ruined" : "needs kit"}</span>` : ""}</div>`).join("") : "");
   } else tasks.style.display = "none";
 
   // feed
@@ -392,7 +397,7 @@ function renderHud(s: Snapshot) {
         <h2>${s.round > 0 ? `Night ${s.round + 1} approaches` : "Gathering at dusk"}</h2>
         <p class="muted" style="margin-top:4px">${s.round > 0 ? "The same souls, the same street — new roles when darkness falls" : "Share the town code with your fellow townsfolk"}</p>
         <div class="bigcode">${s.code}</div>
-        <p style="margin-top:10px;color:#c9b8a4;font-size:13px">The wards are broken. Take a kit from a supply cart, carry it to a ward, then hold E to repair it.</p>
+        <p style="margin-top:10px;color:#c9b8a4;font-size:13px">The wards are broken. Take kits from the one movable cart, carry them to a ward, then hold E to repair. More hands push the cart faster.</p>
         <div class="roster">${s.players.map((p) => `<div class="seat"><span class="dot" style="background:${p.color}"></span><span>${esc(p.name)}</span>${p.isHost ? `<span class="host">host</span>` : ""}</div>`).join("")}</div>
         ${s.self.id === s.hostId
           ? `<button class="big" data-act="start" ${s.playerCount < 4 ? "disabled" : ""}>${s.playerCount < 4 ? "Waiting for more souls… (min 4)" : "Let night fall"}</button>`
@@ -423,7 +428,7 @@ function releaseInputs() {
   keys.clear();
   lastDir = 0;
   interactToggled = false;
-  if (roomCode) void send({ dir: 0, interactHeld: false });
+  if (roomCode) void send({ dir: 0, interactHeld: false, cartHeld: false });
 }
 function stopInteract() {
   interactToggled = false;
@@ -469,6 +474,9 @@ window.addEventListener("keydown", (e) => {
   else if (bound("interact", e) && !e.repeat) { interactDown(); e.preventDefault(); }
   else if (bound("ability", e) && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
   else if (bound("blackout", e) && !e.repeat) { void send({ action: "blackout" }); e.preventDefault(); }
+  else if (bound("push", e) && !e.repeat) { void send({ cartHeld: true }); e.preventDefault(); }
+  else if (bound("drop", e) && !e.repeat) { void send({ action: "drop_supply" }); e.preventDefault(); }
+  else if (bound("ruin", e) && !e.repeat) { void send({ action: "sabotage" }); e.preventDefault(); }
   else if (bound("chat", e) && !e.repeat) { openChat(); e.preventDefault(); }
 });
 window.addEventListener("keyup", (e) => {
@@ -476,6 +484,7 @@ window.addEventListener("keyup", (e) => {
   if (bound("left", e)) { keys.delete("left"); computeDir(); }
   else if (bound("right", e)) { keys.delete("right"); computeDir(); }
   else if (bound("interact", e)) interactUp();
+  else if (bound("push", e)) void send({ cartHeld: false });
 });
 window.addEventListener("blur", releaseInputs);
 $("chatinput").addEventListener("keydown", (e) => { if (e.key === "Enter") submitChat(); e.stopPropagation(); });
@@ -488,10 +497,12 @@ document.querySelectorAll<HTMLElement>("[data-hold]").forEach((b) => {
   const on = (e: Event) => {
     e.preventDefault();
     if (what === "e") interactDown();
+    else if (what === "push") void send({ cartHeld: true });
     else { keys.add(what); computeDir(); }
   };
   const off = () => {
     if (what === "e") interactUp();
+    else if (what === "push") void send({ cartHeld: false });
     else { keys.delete(what); computeDir(); }
   };
   b.addEventListener("pointerdown", on);
@@ -505,6 +516,7 @@ $("snuffbtn").addEventListener("click", () => send({ action: "blackout" }));
 $("talkbtn").addEventListener("click", openChat);
 $("leave").addEventListener("click", leaveToMenu);
 $("supplydrop").addEventListener("click", () => void send({ action: "drop_supply" }));
+$("ruinbtn").addEventListener("click", () => void send({ action: "sabotage" }));
 $("settings").addEventListener("click", () => settingsDialog.open());
 $("menusettings").addEventListener("click", () => settingsDialog.open());
 $("mute").addEventListener("click", () => {

@@ -1,10 +1,9 @@
 import type { Station } from "./types";
 
 /** A small crate of boards, wire, iron and lamp oil, shared across all wards. */
-export function drawKit(ctx: CanvasRenderingContext2D, x: number, ground: number, scale = 1) {
+export function drawKit(ctx: CanvasRenderingContext2D, x: number, ground: number) {
   ctx.save();
   ctx.translate(x, ground);
-  ctx.scale(scale, scale);
   ctx.fillStyle = "rgba(0,0,0,.4)";
   ctx.beginPath(); ctx.ellipse(0, 1, 20, 4, 0, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = "#4a301e";

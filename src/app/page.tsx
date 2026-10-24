@@ -147,7 +147,7 @@ export default function Home() {
           <p className="hc-rise-2 mt-6 max-w-md text-lg leading-relaxed text-[#c9b8a4]">
             The harvest was good. Then the church bell rang on its own, and not
             everyone who came home was <em>people</em> anymore. The wards lie broken.
-            Bring repair kits from the supply carts, mend the street, and watch your neighbours.
+            Bring kits from the one movable supply cart, mend the street, and watch your neighbours.
           </p>
           <p className="hc-rise-3 mt-4 max-w-md text-[#8f7d6b]">
             When the bell tolls, walk to the square and vote. The condemned are
@@ -293,9 +293,9 @@ export default function Home() {
 
           <p className="mt-4 text-xs leading-relaxed text-[#6b5a55]">
             4–10 townsfolk. One or two among you are Hollow. The wards begin broken:
-            carry kits from supply carts, deliver them, then hold E to repair. Anyone living
-            can help. Repairs drain your vigor; stand still to recover. Survive the night
-            and the same souls can gather again.
+            take kits from the one cart, deliver them, then hold E to repair. Push the cart
+            together to move it faster; carrying a kit slows and tires you. Drop it if you
+            must. The Hollow can ruin a mended ward.
           </p>
         </div>
       </div>

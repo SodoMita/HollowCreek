@@ -62,13 +62,16 @@
   #game { position:fixed; inset:0; height:100dvh; overflow:hidden; display:none; touch-action:none; user-select:none; -webkit-user-select:none; }
   #cv { position:absolute; inset:0; }
   .hud { position:absolute; z-index:5; zoom:var(--hc-ui-scale,1); opacity:var(--hc-hud-opacity,1); }
-  .hc-hide-touch-controls #controls { display:none !important; }
+  .hc-hide-touch-controls #controls, .hc-hide-touch-controls #ruinbtn { display:none !important; }
   .hc-hide-feed #feed, .hc-hide-tasks #tasks, .hc-hide-hints #hint { display:none !important; }
   .hc-reduced-motion *, .hc-reduced-motion *:before, .hc-reduced-motion *:after { animation:none !important; transition:none !important; }
   .chip { background:rgba(20,13,24,.82); border:1px solid rgba(58,39,51,.7); border-radius:8px; padding:6px 10px; backdrop-filter:blur(4px); font-size:13px; }
   #topbar { top:0; left:0; right:0; display:flex; justify-content:space-between; align-items:flex-start; gap:8px; padding:8px; padding-top:max(8px,env(safe-area-inset-top)); }
   #topbar .right { display:flex; gap:6px; align-items:center; }
   #supplydrop { display:none; background:#4a3323; color:#f2cf91; font-size:11px; padding:6px 8px; }
+  #pushbtn { display:none; align-self:flex-start; padding:4px 9px; color:#f2cf91; background:rgba(51,35,31,.92); font-size:11px; touch-action:none; }
+  #ruinbtn { display:none; bottom:calc(92px + env(safe-area-inset-bottom)); right:10px; border-color:#733743; background:rgba(51,15,20,.94); color:#ffd0bf; font-size:12px; }
+  #ruinbtn:disabled { opacity:.5; cursor:default; }
   #role { font-family:"Pirata One"; font-size:16px; padding:6px 12px; border-radius:8px; }
   @media (max-width:480px) {
     #topbar .right { gap:3px; }
@@ -143,8 +146,8 @@
         <div class="kicker">October, 1893 · population: uncertain</div>
         <h1>Hollow<br/>Creek</h1>
         <p>The harvest was good. Then the church bell rang on its own, and not everyone who came home was <em>people</em> anymore.</p>
-        <p>Walk the one long street. The wards have been smashed: bring kits from supply carts and mend them. When the bell tolls, walk to the square and vote — the condemned are caged in iron, still able to plead.</p>
-        <p class="muted">A / D or arrows walk · E interact · Q ability · F snuff · Enter speak. Rebind controls, adjust the mixer, and tune graphics/accessibility in Settings.</p>
+        <p>Walk the one long street. The wards have been smashed: bring kits from the one movable cart and mend them. Push together to roll it faster. When the bell tolls, walk to the square and vote — the condemned are caged in iron, still able to plead.</p>
+        <p class="muted">A / D walk · E interact · hold Shift + walk to push · G drop kit · R ruin (Hollow) · Q ability · F snuff · Enter speak. Rebind controls, adjust the mixer, and tune graphics/accessibility in Settings.</p>
       </div>
       <div class="card">
         <h2>Enter the town</h2>
@@ -175,7 +178,7 @@
       <div class="chip"><button id="copycode" style="font-family:monospace;letter-spacing:.3em;color:var(--ink)"></button> <span id="soulcount" style="color:var(--dim)"></span></div>
       <div class="right">
         <span id="role" class="crew"></span>
-        <button class="chip" id="supplydrop" title="Drop repair kit for another player" aria-label="Drop repair kit">▣ Kit ↧</button>
+        <button class="chip" id="supplydrop" title="Drop repair kit (G)" aria-label="Drop repair kit">Drop kit</button>
         <button class="chip" id="mute" aria-label="Mute audio">🔊</button>
         <button class="chip" id="settings" aria-label="Open settings">⚙</button>
         <button class="chip" id="leave" aria-label="Leave town">✕</button>
@@ -190,6 +193,7 @@
     <div class="hud" id="controls">
       <div class="col">
         <div id="vigor">⚡<div id="vigorbar"><div id="vigorfill"></div></div><span id="vigorlbl">vigor</span></div>
+        <button class="chip" id="pushbtn" data-hold="push">Hold Push + ◀▶</button>
         <div class="grp">
           <button class="rbtn" data-hold="left">◀</button>
           <button class="rbtn" data-hold="right">▶</button>
@@ -202,6 +206,7 @@
         <button class="rbtn kill" id="ability">Kill</button>
       </div>
     </div>
+    <button class="hud chip" id="ruinbtn" type="button">Ruin R</button>
     <div class="hud" id="chatbox"><input id="chatinput" maxlength="120" placeholder="Say something… it appears above your head" /></div>
     <div class="hud" id="toast"></div>
     <div id="overlay"><div class="panel" id="overlaypanel"></div></div>

@@ -75,7 +75,7 @@ export default function GameClient({ code }: { code: string }) {
     keys.current.clear();
     lastDir.current = 0;
     interactToggled.current = false;
-    void send({ dir: 0, interactHeld: false });
+    void send({ dir: 0, interactHeld: false, cartHeld: false });
   }, [send]);
 
   /** Free the seat before navigating, so the lobby and host update at once. */
@@ -191,7 +191,7 @@ export default function GameClient({ code }: { code: string }) {
       alive = false;
       if (timer) clearInterval(timer);
       window.removeEventListener("pagehide", bye);
-      if (!leavingRef.current) void send({ dir: 0, interactHeld: false });
+      if (!leavingRef.current) void send({ dir: 0, interactHeld: false, cartHeld: false });
       bye();
     };
   }, [code, send]);
@@ -221,6 +221,9 @@ export default function GameClient({ code }: { code: string }) {
       else if (bound("interact") && !e.repeat) { interactDown(); e.preventDefault(); }
       else if (bound("ability") && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
       else if (bound("blackout") && !e.repeat) { void send({ action: "blackout" }); e.preventDefault(); }
+      else if (bound("push") && !e.repeat) { void send({ cartHeld: true }); e.preventDefault(); }
+      else if (bound("drop") && !e.repeat) { void send({ action: "drop_supply" }); e.preventDefault(); }
+      else if (bound("ruin") && !e.repeat) { void send({ action: "sabotage" }); e.preventDefault(); }
       else if (bound("chat") && !e.repeat) { openChat(); e.preventDefault(); }
     };
     const up = (e: KeyboardEvent) => {
@@ -229,6 +232,7 @@ export default function GameClient({ code }: { code: string }) {
       if (matchesControl(controls, "left", e.code)) { keys.current.delete("left"); computeDir(); }
       else if (matchesControl(controls, "right", e.code)) { keys.current.delete("right"); computeDir(); }
       else if (matchesControl(controls, "interact", e.code)) interactUp();
+      else if (matchesControl(controls, "push", e.code)) void send({ cartHeld: false });
     };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
@@ -350,7 +354,7 @@ export default function GameClient({ code }: { code: string }) {
                 <button title="Drop repair kit for another player" aria-label="Drop repair kit"
                   onClick={() => void send({ action: "drop_supply" })}
                   className="ml-2 rounded bg-[#4a3323] px-1.5 py-0.5 text-xs text-[#f2cf91] hover:bg-[#684327]">
-                  ▣<span className="hidden sm:inline"> Kit · drop</span>
+                  ▣<span className="hidden sm:inline"> Drop kit · {keyLabel(settings.controls.drop)}</span>
                 </button>
               )}
             </div>
@@ -395,7 +399,7 @@ export default function GameClient({ code }: { code: string }) {
                   <span>{t.done ? "✓" : t.delivered ? "▣" : "◇"}</span><span className="min-w-0 flex-1 truncate">{t.name}</span>
                   {!t.done && (
                     <span className={`ml-auto shrink-0 ${t.delivered ? "text-[#a8c98a]" : "text-[#d99a3d]"}`}>
-                      {t.delivered ? t.progress > 0 ? `${Math.round(t.progress * 100)}%` : "repair" : "needs kit"}
+                      {t.delivered ? t.progress > 0 ? `${Math.round(t.progress * 100)}%` : "repair" : t.sabotaged ? "ruined" : "needs kit"}
                     </span>
                   )}
                 </div>
@@ -456,6 +460,15 @@ export default function GameClient({ code }: { code: string }) {
             </div>
           )}
 
+          {/* ---- Hollow sabotage, separate from kill and blackout ---- */}
+          {s.self.role === "hollow" && s.self.alive && s.phase === "playing" && (
+            <button onClick={() => void send({ action: "sabotage" })}
+              disabled={!s.self.canSabotage}
+              className={`absolute bottom-[calc(5.1rem+env(safe-area-inset-bottom))] right-2 z-10 rounded border px-3 py-1.5 text-xs backdrop-blur sm:right-4 ${s.self.canSabotage ? "border-[#d87762] bg-[#391519]/90 text-[#ffd0bf]" : "border-[#3a2733] bg-[#140d18]/80 text-[#807070]"}`}>
+              Ruin · {keyLabel(settings.controls.ruin)}{s.self.sabotageCooldownMs > 0 ? ` · ${Math.ceil(s.self.sabotageCooldownMs / 1000)}s` : ""}
+            </button>
+          )}
+
           {/* ---- bottom controls ---- */}
           <div className="hc-hud-item hc-hud-fade hc-touch-controls absolute bottom-0 left-0 right-0 flex items-end justify-between gap-2 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))]">
             <div className="flex flex-col gap-1.5">
@@ -471,6 +484,21 @@ export default function GameClient({ code }: { code: string }) {
                   <span className={`text-[10px] ${s.self.exhausted ? "text-[#e06a5a]" : "text-[#9c8b7a]"}`}>{s.self.exhausted ? "spent — rest!" : "vigor"}</span>
                 </div>
               )}
+              {s.self.alive && !s.self.caged && s.phase === "playing" && (s.self.hasSupply ? (
+                <button onClick={() => void send({ action: "drop_supply" })}
+                  className="self-start rounded border border-[#84624c] bg-[#33231f]/90 px-2 py-1 text-[11px] text-[#f2cf91]">
+                  Drop kit · {keyLabel(settings.controls.drop)}
+                </button>
+              ) : (
+                <button onPointerDown={(e) => { e.preventDefault(); void send({ cartHeld: true }); }}
+                  onPointerUp={() => void send({ cartHeld: false })}
+                  onPointerLeave={() => void send({ cartHeld: false })}
+                  onPointerCancel={() => void send({ cartHeld: false })}
+                  onContextMenu={(e) => e.preventDefault()}
+                  className="self-start rounded border border-[#84624c] bg-[#33231f]/90 px-2 py-1 text-[11px] text-[#f2cf91]">
+                  Hold Push + ◀▶ {s.cartPushers > 0 ? `· ${s.cartPushers} pushing` : ""}
+                </button>
+              ))}
               <div className="flex gap-2 sm:gap-3">
               {([["left", "◀"], ["right", "▶"]] as const).map(([d, glyph]) => (
                 <button
@@ -547,7 +575,7 @@ export default function GameClient({ code }: { code: string }) {
               <div className="hc-rise max-h-[88dvh] w-[min(92vw,440px)] overflow-y-auto rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-4 text-center sm:p-6">
                 <h2 className="font-display text-4xl text-[#e9dfcf]">{s.round > 0 ? `Night ${s.round + 1} approaches` : "Gathering at dusk"}</h2>
                 <p className="mt-1 text-sm text-[#9c8b7a]">{s.round > 0 ? "The same souls, the same street — new roles when darkness falls" : "Share the town code with your fellow townsfolk"}</p>
-                <p className="mx-auto mt-3 max-w-sm text-sm leading-snug text-[#c9b8a4]">The wards are broken. Take a kit from a supply cart, carry it to a ward, then hold E to repair it.</p>
+                <p className="mx-auto mt-3 max-w-sm text-sm leading-snug text-[#c9b8a4]">The wards are broken. Take a kit from the single movable cart, carry it to a ward, then hold E to repair. Multiple players push it faster.</p>
                 <div className="mt-3 font-mono text-5xl tracking-[0.4em] text-[#d99a3d]">{s.code}</div>
                 <div className="mt-5 grid grid-cols-2 gap-2 text-left text-sm">
                   {s.players.map((p) => (
@@ -588,12 +616,12 @@ export default function GameClient({ code }: { code: string }) {
                 {roleBanner === "hollow" ? (
                   <>
                     <p className="font-display text-5xl sm:text-7xl text-[#ff4a3a] drop-shadow-[0_0_30px_rgba(255,60,40,0.6)]">You are Hollow</p>
-                    <p className="mt-3 text-lg text-[#c9a0a0]">Wear their faces. Kill when none watch. {keyLabel(settings.controls.ability)} to strike, {keyLabel(settings.controls.blackout)} to snuff the lights.</p>
+                    <p className="mt-3 text-lg text-[#c9a0a0]">Wear their faces. {keyLabel(settings.controls.ability)} to strike, {keyLabel(settings.controls.blackout)} to snuff, {keyLabel(settings.controls.ruin)} to ruin a supplied or repaired ward.</p>
                   </>
                 ) : (
                   <>
                     <p className="font-display text-5xl sm:text-7xl text-[#a8c98a]">Townfolk</p>
-                    <p className="mt-3 text-lg text-[#b8c9a4]">Carry kits to the broken wards; hold E to repair them. Find the key. Trust no one.</p>
+                    <p className="mt-3 text-lg text-[#b8c9a4]">Carry kits from the one cart to broken wards; hold E to repair. Push together to move the cart faster.</p>
                   </>
                 )}
               </div>
