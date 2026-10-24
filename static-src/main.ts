@@ -2,6 +2,7 @@
 // Talks to the authoritative server over the same HTTP API as the Next client;
 // reuses the canvas Renderer and generative AudioDirector unchanged.
 import { Renderer } from "../src/game/render";
+import { WardPanel } from "../src/game/ward-ui";
 import { AudioDirector } from "../src/game/audio";
 import { SettingsStore, applyDocumentPreferences, keyLabel, matchesControl, type BindableAction } from "../src/game/settings";
 import { SettingsDialog } from "../src/game/settings-ui";
@@ -84,6 +85,11 @@ let lastDir = 0;
 const displayX = new Map<string, number>();
 const settingsStore = new SettingsStore();
 const audio = new AudioDirector(settingsStore);
+const wardPanel = new WardPanel(document.body, {
+  move: (wardId, move) => { void send({ action: "ward_move", wardId, move }); },
+  close: () => { void send({ action: "ward_cancel" }); },
+  opened: releaseInputs,
+});
 let interactToggled = false;
 let tasksOpen = window.innerWidth > 640;
 const settingsDialog = new SettingsDialog(settingsStore, document.body, { onOpen: releaseInputs });
@@ -215,6 +221,7 @@ function enterRoom(code: string) {
   cancelProbe();
   roomCode = code;
   snap = null;
+  wardPanel.update(null, 1, false);
   roomError = "";
   pollFailures = 0;
   overlayKey = "";
@@ -243,6 +250,7 @@ function leaveToMenu() {
   }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   snap = null; roomCode = ""; overlayKey = ""; roomError = ""; pollFailures = 0;
+  wardPanel.update(null, 1, false);
   $("game").style.display = "none";
   $("menu").style.display = "block";
   history.replaceState(null, "", location.pathname);
@@ -283,6 +291,7 @@ async function poll() {
     pollFailures = 0;
     roomError = "";
     snap = s;
+    wardPanel.update(s.minigame, s.self.stamina, s.self.exhausted);
     audio.update(s);
     if (lastPhase === "lobby" && s.phase === "playing") reveal(s.self.role === "hollow");
     lastPhase = s.phase;
@@ -299,7 +308,7 @@ function reveal(hollow: boolean) {
   const r = $("reveal");
   r.querySelector(".r1")!.textContent = hollow ? "You are Hollow" : "Townfolk";
   (r.querySelector(".r1") as HTMLElement).style.color = hollow ? "#ff4a3a" : "#a8c98a";
-  r.querySelector(".r2")!.textContent = hollow ? `Wear their faces. ${keyLabel(settingsStore.value.controls.ability)} to strike, ${keyLabel(settingsStore.value.controls.blackout)} to snuff, ${keyLabel(settingsStore.value.controls.ruin)} to ruin a repaired ward.` : "Carry kits from the movable cart to broken wards; hold E to repair. Find the key.";
+  r.querySelector(".r2")!.textContent = hollow ? `Wear their faces. ${keyLabel(settingsStore.value.controls.ability)} to strike, ${keyLabel(settingsStore.value.controls.blackout)} to snuff, ${keyLabel(settingsStore.value.controls.ruin)} to ruin a repaired ward.` : "Carry kits from the movable cart to broken wards; press E to open a repair puzzle. Find the key.";
   r.style.display = "flex";
   setTimeout(() => { r.style.display = "none"; }, 4500);
 }
@@ -355,7 +364,7 @@ function renderHud(s: Snapshot) {
   if (s.phase !== "lobby" && s.self.alive && s.tasks.length) {
     tasks.style.display = "block";
     tasks.innerHTML = `<div class="hd" id="tasktoggle">${s.self.role === "hollow" ? "Town wards (pretend)" : "Town wards · shared"} ${tasksOpen ? "▾" : "▸"}</div>` +
-      (tasksOpen ? s.tasks.map((t) => `<div class="t ${t.done ? "done" : ""}">${t.done ? "✓" : t.delivered ? "▣" : "◇"} ${esc(t.name)}${!t.done ? ` <span style="color:${t.delivered ? "var(--moss)" : "var(--amber)"}">${t.delivered ? t.progress > 0 ? `${Math.round(t.progress * 100)}%` : "repair" : t.sabotaged ? "ruined" : "needs kit"}</span>` : ""}</div>`).join("") : "");
+      (tasksOpen ? s.tasks.map((t) => `<div class="t ${t.done ? "done" : ""}">${t.done ? "✓" : t.delivered ? "▣" : "◇"} ${esc(t.name)}${!t.done ? ` <span style="color:${t.delivered ? "var(--moss)" : "var(--amber)"}">${t.delivered ? t.progress > 0 ? `${Math.round(t.progress * 100)}%` : "puzzle ready" : t.sabotaged ? "ruined" : "needs kit"}</span>` : ""}</div>`).join("") : "");
   } else tasks.style.display = "none";
 
   // feed
@@ -427,7 +436,7 @@ function renderHud(s: Snapshot) {
         <h2>${s.round > 0 ? `Night ${s.round + 1} approaches` : "Gathering at dusk"}</h2>
         <p class="muted" style="margin-top:4px">${s.round > 0 ? "The same souls, the same street — new roles when darkness falls" : "Share the town code with your fellow townsfolk"}</p>
         <div class="bigcode">${s.code}</div>
-        <p style="margin-top:10px;color:#c9b8a4;font-size:13px">The wards are broken. Take kits from the one movable cart, then hold E to repair. More hands push it faster. Cages hold suspects; only repairing every ward wins.</p>
+        <p style="margin-top:10px;color:#c9b8a4;font-size:13px">The wards are broken. Deliver a kit from the one cart, then press E at the ward to play its repair puzzle. More hands push the cart faster. Cages hold suspects; repair every ward to win.</p>
         <div class="roster">${s.players.map((p) => `<div class="seat"><span class="dot" style="background:${p.color}"></span><span>${esc(p.name)}</span>${p.isHost ? `<span class="host">host</span>` : ""}</div>`).join("")}</div>
         ${s.self.id === s.hostId
           ? `<button class="big" data-act="start" ${s.playerCount < 4 ? "disabled" : ""}>${s.playerCount < 4 ? "Waiting for more souls… (min 4)" : "Let night fall"}</button>`
@@ -497,6 +506,10 @@ function bound(action: BindableAction, e: KeyboardEvent) {
 window.addEventListener("keydown", (e) => {
   audio.start();
   if (settingsDialog.isOpen || !roomCode) return;
+  if (wardPanel.isOpen) {
+    if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
+    return; // Puzzle buttons own Tab, Enter and Space.
+  }
   if (chatOpen()) { if (e.key === "Escape") { $("chatbox").style.display = "none"; ($("chatinput") as HTMLInputElement).blur(); } return; }
   const target = e.target as HTMLElement | null;
   if (target && (["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName) || target.isContentEditable)) return;
@@ -511,7 +524,7 @@ window.addEventListener("keydown", (e) => {
   else if (bound("chat", e) && !e.repeat) { openChat(); e.preventDefault(); }
 });
 window.addEventListener("keyup", (e) => {
-  if (settingsDialog.isOpen || !roomCode) return;
+  if (settingsDialog.isOpen || wardPanel.isOpen || !roomCode) return;
   if (bound("left", e)) { keys.delete("left"); computeDir(); }
   else if (bound("right", e)) { keys.delete("right"); computeDir(); }
   else if (bound("interact", e)) interactUp();

@@ -157,7 +157,7 @@ export default function Home() {
           <div className="hc-rise-3 mt-8 grid max-w-lg grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             {[
               [`${keyLabel(settings.controls.left)} / ${keyLabel(settings.controls.right)}`, "walk the street"],
-              [keyLabel(settings.controls.interact), settings.controls.interactMode === "hold" ? "take / deliver kit · hold to repair" : "take / deliver kit · toggle repair"],
+              [keyLabel(settings.controls.interact), "take / deliver kit · open repair puzzle"],
               [`${keyLabel(settings.controls.ability)} / ${keyLabel(settings.controls.blackout)}`, "role ability · snuff lights"],
               [keyLabel(settings.controls.chat), "speak (bubble)"],
             ].map(([k, v]) => (
@@ -293,7 +293,7 @@ export default function Home() {
 
           <p className="mt-4 text-xs leading-relaxed text-[#6b5a55]">
             4–10 townsfolk. One or two among you are Hollow. The wards begin broken:
-            take kits from the one cart, deliver them, then hold E to repair. Push the cart
+            take kits from the one cart, deliver them, then press E to play a repair puzzle. Push the cart
             together to move it faster; carrying a kit slows and tires you. Drop it if you
             must. Cages hold suspects, but the town wins only by mending every ward.
             The Hollow can ruin a mended ward.

@@ -13,7 +13,9 @@ const TYPE_LABELS: Record<string, [string, string]> = {
   game_start: ["🌒", "Night fell — roles were dealt"],
   move_input: ["👣", "changed direction"],
   chat: ["💬", "spoke"],
-  task_complete: ["🕯", "finished a chore"],
+  task_complete: ["🕯", "finished a repair"],
+  ward_started: ["🧩", "opened a repair puzzle"],
+  ward_move: ["🔩", "played a puzzle move"],
   kill: ["🩸", "killed"],
   report: ["❗", "reported a body"],
   ring_bell: ["🔔", "rang the bell"],
@@ -77,6 +79,8 @@ export default async function ChroniclePage({ params }: { params: Promise<{ code
               : e.type === "vote" ? `for ${String(d.target ?? "")}`
               : e.type === "move_input" ? `dir ${String(d.dir ?? "")}`
               : e.type === "task_complete" ? String(d.task ?? "")
+              : e.type === "ward_started" ? `${String(d.task ?? "")} (${String(d.kind ?? "")})`
+              : e.type === "ward_move" ? `${String(d.task ?? "")} · tile ${String(d.tile ?? "")} · ${String(d.progress ?? 0)}%`
               : e.type === "meeting_start" ? String(d.reason ?? "")
               : e.type === "game_end" ? `${String(d.winner ?? "")} — ${String(d.reason ?? "")}`
               : e.type === "meeting_result" ? JSON.stringify(d.tally ?? {})

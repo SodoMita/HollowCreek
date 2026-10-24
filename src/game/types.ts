@@ -1,4 +1,5 @@
 // Shared types & world constants for HOLLOW CREEK — a 1D autumn horror deduction game.
+import type { WardGameView } from "./wards";
 
 export const WORLD_W = 4200;
 export const SPEED = 190; // px per second
@@ -7,7 +8,6 @@ export const TICK_MS = 50;
 export const KILL_RANGE = 75;
 export const KILL_COOLDOWN_MS = 18000;
 export const INTERACT_RANGE = 80;
-export const TASK_HOLD_MS = 3200;
 export const MEETING_MS = 45000;
 export const CELL_HALF = 30;
 export const CAGE_UNLOCK_RANGE = 125;
@@ -176,6 +176,8 @@ export interface Snapshot {
   cartPushers: number;
   cages: { x: number; occupant: string | null }[];
   tasks: TaskView[];
+  /** Only the viewer working beside a supplied ward receives its board. */
+  minigame: WardGameView | null;
   taskBar: { done: number; total: number };
   meeting: {
     endsAt: number;
@@ -215,7 +217,9 @@ export interface InputBody {
   dir?: number;
   interactHeld?: boolean;
   cartHeld?: boolean; // hold Push + a direction while beside the cart
-  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "restart" | "leave" | "drop_supply" | "sabotage";
+  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "restart" | "leave" | "drop_supply" | "sabotage" | "ward_move" | "ward_cancel";
+  wardId?: string;
+  move?: number;
   chat?: string;
   vote?: string; // playerId | "skip" | "free:<id>"
 }

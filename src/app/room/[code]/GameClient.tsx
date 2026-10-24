@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DoorOpen, Flame, ScrollText, Trophy, Zap } from "lucide-react";
 import { Renderer } from "@/game/render";
+import { WardPanel } from "@/game/ward-ui";
 import { AudioDirector } from "@/game/audio";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
@@ -36,6 +37,7 @@ export default function GameClient({ code }: { code: string }) {
   const keys = useRef(new Set<string>());
   const lastDir = useRef(0);
   const audioRef = useRef<AudioDirector | null>(null);
+  const wardPanelRef = useRef<WardPanel | null>(null);
   const settingsStoreRef = useRef<SettingsStore | null>(null);
   const settingsDialogRef = useRef<SettingsDialog | null>(null);
   const interactToggled = useRef(false);
@@ -144,6 +146,17 @@ export default function GameClient({ code }: { code: string }) {
     audioRef.current.start();
   }, [getSettingsStore]);
 
+  // Shared repair panel: built once, never re-mounted on each 100ms state poll.
+  useEffect(() => {
+    const panel = new WardPanel(document.body, {
+      move: (wardId, move) => { void send({ action: "ward_move", wardId, move }); },
+      close: () => { void send({ action: "ward_cancel" }); },
+      opened: () => releaseInputs(),
+    });
+    wardPanelRef.current = panel;
+    return () => { panel.destroy(); wardPanelRef.current = null; };
+  }, [releaseInputs, send]);
+
   // ---- join + poll ----
   useEffect(() => {
     let alive = true;
@@ -167,6 +180,7 @@ export default function GameClient({ code }: { code: string }) {
           const s: Snapshot = await r.json();
           if (!alive) return;
           snapRef.current = s;
+          wardPanelRef.current?.update(s.minigame, s.self.stamina, s.self.exhausted);
           setSnap(s);
           audioRef.current?.update(s);
           if (lastPhase.current === "lobby" && s.phase === "playing") {
@@ -208,6 +222,10 @@ export default function GameClient({ code }: { code: string }) {
     const down = (e: KeyboardEvent) => {
       unlockAudio();
       if (settingsDialogRef.current?.isOpen) return;
+      if (wardPanelRef.current?.isOpen) {
+        if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
+        return; // Tab, Enter and Space belong to the focused puzzle buttons.
+      }
       if (chatOpenRef.current) {
         if (e.key === "Escape") setChatOpen(false);
         return;
@@ -227,7 +245,7 @@ export default function GameClient({ code }: { code: string }) {
       else if (bound("chat") && !e.repeat) { openChat(); e.preventDefault(); }
     };
     const up = (e: KeyboardEvent) => {
-      if (settingsDialogRef.current?.isOpen) return;
+      if (settingsDialogRef.current?.isOpen || wardPanelRef.current?.isOpen) return;
       const controls = getSettingsStore().value.controls;
       if (matchesControl(controls, "left", e.code)) { keys.current.delete("left"); computeDir(); }
       else if (matchesControl(controls, "right", e.code)) { keys.current.delete("right"); computeDir(); }
@@ -399,7 +417,7 @@ export default function GameClient({ code }: { code: string }) {
                   <span>{t.done ? "✓" : t.delivered ? "▣" : "◇"}</span><span className="min-w-0 flex-1 truncate">{t.name}</span>
                   {!t.done && (
                     <span className={`ml-auto shrink-0 ${t.delivered ? "text-[#a8c98a]" : "text-[#d99a3d]"}`}>
-                      {t.delivered ? t.progress > 0 ? `${Math.round(t.progress * 100)}%` : "repair" : t.sabotaged ? "ruined" : "needs kit"}
+                      {t.delivered ? t.progress > 0 ? `${Math.round(t.progress * 100)}%` : "puzzle ready" : t.sabotaged ? "ruined" : "needs kit"}
                     </span>
                   )}
                 </div>
@@ -575,7 +593,7 @@ export default function GameClient({ code }: { code: string }) {
               <div className="hc-rise max-h-[88dvh] w-[min(92vw,440px)] overflow-y-auto rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-4 text-center sm:p-6">
                 <h2 className="font-display text-4xl text-[#e9dfcf]">{s.round > 0 ? `Night ${s.round + 1} approaches` : "Gathering at dusk"}</h2>
                 <p className="mt-1 text-sm text-[#9c8b7a]">{s.round > 0 ? "The same souls, the same street — new roles when darkness falls" : "Share the town code with your fellow townsfolk"}</p>
-                <p className="mx-auto mt-3 max-w-sm text-sm leading-snug text-[#c9b8a4]">The wards are broken. Take kits from the movable cart, then hold E to repair. Multiple players push it faster. Cages hold suspects; only mending every ward wins the night.</p>
+                <p className="mx-auto mt-3 max-w-sm text-sm leading-snug text-[#c9b8a4]">The wards are broken. Deliver a kit from the movable cart, then press E at the ward to play its repair puzzle. More hands push the cart faster. Cages hold suspects; repair every ward to win.</p>
                 <div className="mt-3 font-mono text-5xl tracking-[0.4em] text-[#d99a3d]">{s.code}</div>
                 <div className="mt-5 grid grid-cols-2 gap-2 text-left text-sm">
                   {s.players.map((p) => (
@@ -621,7 +639,7 @@ export default function GameClient({ code }: { code: string }) {
                 ) : (
                   <>
                     <p className="font-display text-5xl sm:text-7xl text-[#a8c98a]">Townfolk</p>
-                    <p className="mt-3 text-lg text-[#b8c9a4]">Carry kits from the one cart to broken wards; hold E to repair. Push together to move the cart faster.</p>
+                    <p className="mt-3 text-lg text-[#b8c9a4]">Carry kits from the one cart to broken wards; press E to open each repair puzzle. Push together to move the cart faster.</p>
                   </>
                 )}
               </div>

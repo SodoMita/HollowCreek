@@ -763,7 +763,7 @@ export class Renderer {
       ctx.font = "bold 10px system-ui, sans-serif";
       ctx.textAlign = "center";
       ctx.fillStyle = supplied ? "#b3d59a" : task.sabotaged ? "#d87762" : "#ffcd5a";
-      ctx.fillText(supplied ? "REPAIR" : task.sabotaged ? "SABOTAGED" : "NEEDS KIT", x, ground - 247);
+      ctx.fillText(supplied ? "PUZZLE" : task.sabotaged ? "SABOTAGED" : "NEEDS KIT", x, ground - 247);
       ctx.restore();
       if (task.progress > 0) {
         ctx.fillStyle = "rgba(0,0,0,0.5)";

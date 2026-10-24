@@ -165,8 +165,8 @@ export class SettingsDialog {
             ${ACTIONS.map((a) => `<div class="hc-binding"><span>${a.label}</span><button data-bind="${a.id}"></button></div>`).join("")}
              <p class="hc-settings-note">Select a binding, then press a key. Hold Push while walking left or right beside the cart; another player can push alongside you. Arrow keys and Space remain fallback controls. Escape cancels rebinding or closes this panel.</p>
             <div class="hc-settings-section">Interaction</div>
-            <label class="hc-setting hc-select"><span>Chore input</span><select data-setting="controls.interactMode"><option value="hold">Hold to work</option><option value="toggle">Press to start / stop</option></select></label>
-            <p class="hc-settings-note">Toggle mode still stops work when you open chat, open settings, leave, or the window loses focus. It sends the same server input as hold mode.</p>
+<label class="hc-setting hc-select"><span>Interaction input</span><select data-setting="controls.interactMode"><option value="hold">Hold to interact</option><option value="toggle">Tap to toggle</option></select></label>
+             <p class="hc-settings-note">Repairs always use the puzzle's buttons, regardless of this setting. Tap a ward with supplies to open its board; opening chat, settings or leaving releases held input.</p>
           </section>
         </div>
         <div class="hc-settings-foot"><p>No account. No network sync. Gameplay rules stay server-authoritative.</p><button class="hc-settings-reset">Restore defaults</button></div>
