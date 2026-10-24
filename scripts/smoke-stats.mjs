@@ -69,15 +69,14 @@ await sleep(900);
 check("holding E cannot auto-complete a puzzle", (await myState()).tasks.find((t) => t.id === task.id).progress === 0);
 await input({ interactHeld: false });
 const beforeWork = (await myState()).self.stamina;
-for (let turn = 0; turn < 16; turn++) {
+for (let turn = 0; turn < 20; turn++) {
   const board = (await myState()).minigame;
   if (!board) break;
-  // The nearest ward to the cart is the well: three visible dials.
-  check("well has a dial puzzle", board.kind === "align");
-  const dial = board.values.findIndex((value, i) => value !== board.targets[i]);
-  if (dial < 0) throw new Error("An unsolved board contains no unfinished dial");
-  const move = await input({ action: "ward_move", wardId: task.id, move: dial });
-  if (!move.ok) throw new Error(`Ward move rejected: ${move.error}`);
+  check("well has a rope and ratchet board", board.kind === "well");
+  const [height, tension] = board.values;
+  const moveIndex = height < board.targets[0] ? (tension >= 3 ? 1 : 0) : (tension > 2 ? 1 : 2);
+  const move = await input({ action: "ward_move", wardId: task.id, move: moveIndex });
+  if (!move.ok) throw new Error(`Winch move rejected: ${move.error}`);
 }
 const mid = await myState();
 check("puzzle moves drain stamina", mid.self.stamina < beforeWork);

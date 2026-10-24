@@ -1,5 +1,5 @@
-// Live multiplayer repair-board smoke: all three kinds, cancellation, wrong
-// inputs, and forged moves. Usage: node scripts/smoke-wards.mjs [baseUrl]
+// Live multiplayer repair-board smoke: three structure-specific jobs, cancellation,
+// wrong inputs and forged moves. Usage: node scripts/smoke-wards.mjs [baseUrl]
 const B = process.argv[2] ?? "http://127.0.0.1:3000";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ids = Array.from({ length: 4 }, () => crypto.randomUUID());
@@ -33,14 +33,6 @@ const walk = async (id, target) => {
   }
   throw new Error(`Could not walk to ${target}`);
 };
-const flip = (lamps, index) => {
-  const next = [...lamps];
-  for (const at of [index, index - 3, index + 3, index - 1, index + 1]) {
-    if (at < 0 || at > 8 || (Math.abs(at - index) === 1 && Math.floor(at / 3) !== Math.floor(index / 3))) continue;
-    next[at] = 1 - next[at];
-  }
-  return next;
-};
 try {
   ok((await input(ids[3], { action: "start" })).body.ok, "a four-player night begins");
   const snapshots = await Promise.all(ids.map(state));
@@ -48,9 +40,9 @@ try {
   const stranger = ids.find((id) => id !== crew);
   ok(!!crew, "a living crew seat can repair wards");
   const tasks = [
-    ["well", 680, "align"],
-    ["scarecrow", 1060, "sequence"],
-    ["lantern", 1450, "lights"],
+    ["well", 680, "well"],
+    ["scarecrow", 1060, "scarecrow"],
+    ["lantern", 1450, "lantern"],
   ];
   for (const [station, x, kind] of tasks) {
     await walk(crew, (await state(crew)).cartX);
@@ -63,37 +55,37 @@ try {
     ok(forged.status === 400, `${station}: player without a board cannot forge repair`);
     const invalid = await input(crew, { action: "ward_move", wardId: station, move: 99 });
     ok(invalid.status === 400, `${station}: out-of-range tile rejected`);
-    if (kind === "align") {
-      const dial = board.values.findIndex((v, i) => v !== board.targets[i]);
-      ok((await input(crew, { action: "ward_move", wardId: station, move: dial })).body.ok, "dial turns by one valid input");
+    if (kind === "well") {
+      ok((await input(crew, { action: "ward_move", wardId: station, move: 0 })).body.ok, "crank raises the bucket");
       const afterTurn = (await state(crew)).minigame;
       await input(crew, { action: "ward_cancel" });
-      ok((await state(crew)).minigame === null, "leaving the board closes only the UI");
+      ok((await state(crew)).minigame === null, "leaving the winch closes only the UI");
       await input(crew, { action: "interact" });
       board = (await state(crew)).minigame;
-      ok(board?.moves === afterTurn.moves && board.values[dial] === afterTurn.values[dial], "town-owned dial persists when reopened");
-      for (let i = 0; i < 14; i++) {
+      ok(board?.moves === afterTurn.moves && board.values[0] === afterTurn.values[0], "bucket height persists when reopened");
+      for (let i = 0; i < 20; i++) {
         board = (await state(crew)).minigame;
         if (!board) break;
-        const turn = board.values.findIndex((v, j) => v !== board.targets[j]);
-        ok((await input(crew, { action: "ward_move", wardId: station, move: turn })).body.ok, "dial move accepted");
+        const [height, tension] = board.values;
+        const move = height < board.targets[0] ? (tension >= 3 ? 1 : 0) : (tension > 2 ? 1 : 2);
+        ok((await input(crew, { action: "ward_move", wardId: station, move })).body.ok, "crank, ease or lock accepted");
       }
-    } else if (kind === "sequence") {
-      const wrong = (board.targets[0] + 1) % 4;
+    } else if (kind === "scarecrow") {
+      const wrong = (board.targets[0] + 1) % 16;
       await input(crew, { action: "ward_move", wardId: station, move: wrong });
       board = (await state(crew)).minigame;
-      ok(board.step === 0 && board.mistakes === 1, "wrong rune resets only its order");
-      for (const rune of board.targets) ok((await input(crew, { action: "ward_move", wardId: station, move: rune })).body.ok, "rune input accepted");
+      ok(board.step === 0 && board.mistakes === 1, "wrong stitch loosens the seam");
+      for (const stitch of board.targets) ok((await input(crew, { action: "ward_move", wardId: station, move: stitch })).body.ok, "stitch through a neighbouring hole");
     } else {
-      let moves = null;
-      for (let mask = 0; mask < 512; mask++) {
-        let trial = board.values;
-        const indices = [];
-        for (let i = 0; i < 9; i++) if (mask & (1 << i)) { trial = flip(trial, i); indices.push(i); }
-        if (trial.every((lit) => lit === 1)) { moves = indices; break; }
+      for (let i = 0; i < 20; i++) {
+        board = (await state(crew)).minigame;
+        if (!board) break;
+        const move = board.values[0] !== board.targets[0]
+          ? board.values[0] > board.targets[0] ? 0 : 1
+          : board.values[1] !== board.targets[1]
+            ? board.values[1] > board.targets[1] ? 2 : 3 : 4;
+        ok((await input(crew, { action: "ward_move", wardId: station, move })).body.ok, "wick, draft or match accepted");
       }
-      ok(!!moves, "server light grid has a legal solution");
-      for (const tile of moves) ok((await input(crew, { action: "ward_move", wardId: station, move: tile })).body.ok, "light tile input accepted");
     }
     const result = await state(crew);
     ok(result.tasks.find((t) => t.id === station).done && result.minigame === null, `${station}: only solution completes the ward`);
