@@ -295,7 +295,8 @@ export default function Home() {
             4–10 townsfolk. One or two among you are Hollow. The wards begin broken:
             take kits from the one cart, deliver them, then hold E to repair. Push the cart
             together to move it faster; carrying a kit slows and tires you. Drop it if you
-            must. The Hollow can ruin a mended ward.
+            must. Cages hold suspects, but the town wins only by mending every ward.
+            The Hollow can ruin a mended ward.
           </p>
         </div>
       </div>

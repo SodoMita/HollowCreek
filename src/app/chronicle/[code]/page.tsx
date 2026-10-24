@@ -2,7 +2,7 @@ import { db } from "@/db";
 import { gameEvents } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import Link from "next/link";
-import { getRoom } from "@/game/engine";
+import { chronicleIsOpen } from "@/game/chronicle-access";
 import { Lock } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -35,8 +35,7 @@ export default async function ChroniclePage({ params }: { params: Promise<{ code
   const { code } = await params;
   // The ledger is sealed while the night is still being lived — it names the
   // Hollow, and no soul may read the ending before it happens.
-  const live = getRoom(code);
-  if (live && (live.phase === "playing" || live.phase === "meeting")) {
+  if (!(await chronicleIsOpen(code))) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-[#0b0710] px-6 text-center">
         <Lock className="h-12 w-12 text-[#8f3b1f]" />

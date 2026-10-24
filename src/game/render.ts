@@ -272,11 +272,11 @@ export class Renderer {
 
     // --- players ---
     const sorted = [...snap.players].sort((a, b) => (a.id === snap.self.id ? 1 : 0) - (b.id === snap.self.id ? 1 : 0));
-    for (const p of sorted) {
+    const drawPlayer = (p: Snapshot["players"][number]) => {
       const px = (displayX.get(p.id) ?? p.x) - cam;
-      if (px < -100 || px > w + 100) continue;
+      if (px < -100 || px > w + 100) return;
       const ghost = !p.alive;
-      if (ghost && snap.self.alive) continue; // living can't see ghosts
+      if (ghost && snap.self.alive) return; // living can't see ghosts
       const isMate = snap.self.teammates.includes(p.id);
       const floatY = ghost ? -14 + Math.sin(t * 2 + p.x) * 5 : 0;
       ctx.save();
@@ -308,10 +308,12 @@ export class Renderer {
         ctx.fillText(label, px, ground - 62 + floatY);
       }
       if (p.bubble && this.settings.interface.speechBubbles) this.drawBubble(ctx, px, ground - 72 + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
-    }
+    };
 
-    // --- cages (front bars) ---
+    for (const p of sorted) if (p.caged) drawPlayer(p);
+    // Only prisoners stand behind the fronts; everyone else walks in front.
     for (const c of snap.cages) this.drawCage(ctx, c.x - cam, ground, true);
+    for (const p of sorted) if (!p.caged) drawPlayer(p);
 
     // --- falling leaves (quantity follows the detail preset) ---
     if (graphics.particles) {

@@ -575,7 +575,7 @@ export default function GameClient({ code }: { code: string }) {
               <div className="hc-rise max-h-[88dvh] w-[min(92vw,440px)] overflow-y-auto rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-4 text-center sm:p-6">
                 <h2 className="font-display text-4xl text-[#e9dfcf]">{s.round > 0 ? `Night ${s.round + 1} approaches` : "Gathering at dusk"}</h2>
                 <p className="mt-1 text-sm text-[#9c8b7a]">{s.round > 0 ? "The same souls, the same street — new roles when darkness falls" : "Share the town code with your fellow townsfolk"}</p>
-                <p className="mx-auto mt-3 max-w-sm text-sm leading-snug text-[#c9b8a4]">The wards are broken. Take a kit from the single movable cart, carry it to a ward, then hold E to repair. Multiple players push it faster.</p>
+                <p className="mx-auto mt-3 max-w-sm text-sm leading-snug text-[#c9b8a4]">The wards are broken. Take kits from the movable cart, then hold E to repair. Multiple players push it faster. Cages hold suspects; only mending every ward wins the night.</p>
                 <div className="mt-3 font-mono text-5xl tracking-[0.4em] text-[#d99a3d]">{s.code}</div>
                 <div className="mt-5 grid grid-cols-2 gap-2 text-left text-sm">
                   {s.players.map((p) => (
@@ -631,11 +631,46 @@ export default function GameClient({ code }: { code: string }) {
           {/* ---- end overlay ---- */}
           {s.phase === "ended" && (
             <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0b0710]/80 backdrop-blur-sm">
-              <div className="hc-rise max-h-[88dvh] w-[min(92vw,480px)] overflow-y-auto rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-5 text-center sm:p-8">
+              <div className="hc-rise max-h-[88dvh] w-[min(94vw,640px)] overflow-y-auto rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-4 text-center sm:p-7">
                 <p className={`font-display text-4xl sm:text-6xl ${s.winner === "hollow" ? "text-[#ff4a3a]" : "text-[#a8c98a]"}`}>
                   {s.winner === "hollow" ? "The Hollow wins" : "The town survives"}
                 </p>
                 <p className="mt-4 text-lg italic text-[#c9b8a4]">{s.winReason}</p>
+                {s.results && (
+                  <section className="mt-5 text-left" aria-label="Match results">
+                    <div className="mb-2 flex items-center justify-between text-xs uppercase tracking-widest text-[#c9b8a4]">
+                      <span>Who was who · this match</span>
+                      <span className="font-mono normal-case tracking-normal text-[#9c8b7a]">
+                        {Math.floor(s.results.durationSec / 60)}m {String(s.results.durationSec % 60).padStart(2, "0")}s
+                      </span>
+                    </div>
+                    <div className="max-h-[43dvh] space-y-2 overflow-y-auto pr-1">
+                      {s.results.players.map((player) => {
+                        const st = player.stats;
+                        const labels: [string, number][] = [
+                          ["Repaired", st.repairs], ["Kits", st.kitsDelivered], ["Kills", st.kills], ["Deaths", st.deaths],
+                          ["Jailed", st.timesCaged], ["Unlocked", st.cagesOpened], ["Votes", st.votes], ["Reports", st.reports],
+                          ["Ruins", st.ruins], ["Bells", st.bells], ["Snuffs", st.blackouts], ["Steps", st.distance],
+                        ];
+                        return (
+                          <div key={player.id} className="rounded border border-[#3a2733] bg-[#1d1420] p-2.5">
+                            <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+                              <span className="h-3 w-3 rounded-full" style={{ background: player.color }} />
+                              <strong className="text-[#e9dfcf]">{player.name}</strong>
+                              <span className={`ml-auto rounded px-2 py-0.5 text-[10px] uppercase tracking-wide ${player.role === "hollow" ? "bg-[#4a1210] text-[#ff8a7a]" : "bg-[#1d2a1a] text-[#a8c98a]"}`}>
+                                {player.role === "hollow" ? "Hollow" : "Townfolk"}
+                              </span>
+                              <span className="text-[10px] text-[#9c8b7a]">{!player.alive ? "dead" : player.caged ? "jailed" : "free"}</span>
+                            </div>
+                            <div className="grid grid-cols-4 gap-x-2 gap-y-1 text-[10px] text-[#9c8b7a] sm:text-xs">
+                              {labels.map(([label, value]) => <span key={label}>{label} <b className="text-[#e9dfcf]">{value}</b></span>)}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                )}
                 {s.self.id === s.hostId ? (
                   <button
                     onClick={() => send({ action: "restart" })}

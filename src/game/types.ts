@@ -10,6 +10,7 @@ export const INTERACT_RANGE = 80;
 export const TASK_HOLD_MS = 3200;
 export const MEETING_MS = 45000;
 export const CELL_HALF = 30;
+export const CAGE_UNLOCK_RANGE = 125;
 export const MEETING_FROM = 1880;
 export const MEETING_TO = 2520;
 export const BELL_X = 2200;
@@ -129,6 +130,37 @@ export interface FeedItem {
   at: number;
 }
 
+/** One player's deeds during this night, not their lifetime record. */
+export interface MatchStats {
+  repairs: number;
+  kitsDelivered: number;
+  kills: number;
+  deaths: number;
+  timesCaged: number;
+  cagesOpened: number;
+  votes: number;
+  reports: number;
+  ruins: number;
+  bells: number;
+  blackouts: number;
+  distance: number; // world units walked while alive
+}
+
+export interface MatchResult {
+  id: string;
+  name: string;
+  color: string;
+  role: Role;
+  alive: boolean;
+  caged: boolean;
+  stats: MatchStats;
+}
+
+export interface MatchResults {
+  durationSec: number;
+  players: MatchResult[];
+}
+
 export interface Snapshot {
   code: string;
   phase: Phase;
@@ -153,6 +185,8 @@ export interface Snapshot {
   feed: FeedItem[];
   winner: Role | null;
   winReason: string | null;
+  /** Roles and per-match stats are absent until the game is over. */
+  results: MatchResults | null;
   bellAt: number;
   flickerAt: number;
   blackoutUntil: number;

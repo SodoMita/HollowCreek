@@ -305,6 +305,36 @@ function reveal(hollow: boolean) {
 }
 
 // ----------------------------------------------------------------- HUD ----
+function renderMatchResults(s: Snapshot): string {
+  if (!s.results) return "";
+  const time = `${Math.floor(s.results.durationSec / 60)}m ${String(s.results.durationSec % 60).padStart(2, "0")}s`;
+  const cards = s.results.players.map((p) => {
+    const st = p.stats;
+    const rows: [string, number][] = [
+      ["Repaired", st.repairs], ["Kits", st.kitsDelivered], ["Kills", st.kills], ["Deaths", st.deaths],
+      ["Jailed", st.timesCaged], ["Unlocked", st.cagesOpened], ["Votes", st.votes], ["Reports", st.reports],
+      ["Ruins", st.ruins], ["Bells", st.bells], ["Snuffs", st.blackouts], ["Steps", st.distance],
+    ];
+    return `<div style="border:1px solid #3a2733;border-radius:6px;background:#1d1420;padding:9px;margin-top:6px">
+      <div style="display:flex;align-items:center;gap:8px;font-size:14px">
+        <span style="width:11px;height:11px;border-radius:50%;background:${esc(p.color)}"></span>
+        <b>${esc(p.name)}</b>
+        <span style="margin-left:auto;color:${p.role === "hollow" ? "#ff8a7a" : "#a8c98a"}">${p.role === "hollow" ? "HOLLOW" : "TOWNFOLK"}</span>
+        <small style="color:#9c8b7a">${!p.alive ? "dead" : p.caged ? "jailed" : "free"}</small>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:3px;margin-top:7px;font-size:10px;color:#9c8b7a">
+        ${rows.map(([label, value]) => `<span>${label} <b style="color:#e9dfcf">${value}</b></span>`).join("")}
+      </div>
+    </div>`;
+  }).join("");
+  return `<section aria-label="Match results" style="margin-top:16px;text-align:left">
+    <div style="display:flex;justify-content:space-between;gap:12px;color:#c9b8a4;font-size:11px;text-transform:uppercase;letter-spacing:.12em">
+      <span>Who was who · this match</span><span style="text-transform:none;letter-spacing:0">${time}</span>
+    </div>
+    <div style="max-height:42dvh;overflow-y:auto">${cards}</div>
+  </section>`;
+}
+
 function renderHud(s: Snapshot) {
   const me = s.players.find((p) => p.id === s.self.id);
   $("copycode").textContent = s.code;
@@ -397,7 +427,7 @@ function renderHud(s: Snapshot) {
         <h2>${s.round > 0 ? `Night ${s.round + 1} approaches` : "Gathering at dusk"}</h2>
         <p class="muted" style="margin-top:4px">${s.round > 0 ? "The same souls, the same street — new roles when darkness falls" : "Share the town code with your fellow townsfolk"}</p>
         <div class="bigcode">${s.code}</div>
-        <p style="margin-top:10px;color:#c9b8a4;font-size:13px">The wards are broken. Take kits from the one movable cart, carry them to a ward, then hold E to repair. More hands push the cart faster.</p>
+        <p style="margin-top:10px;color:#c9b8a4;font-size:13px">The wards are broken. Take kits from the one movable cart, then hold E to repair. More hands push it faster. Cages hold suspects; only repairing every ward wins.</p>
         <div class="roster">${s.players.map((p) => `<div class="seat"><span class="dot" style="background:${p.color}"></span><span>${esc(p.name)}</span>${p.isHost ? `<span class="host">host</span>` : ""}</div>`).join("")}</div>
         ${s.self.id === s.hostId
           ? `<button class="big" data-act="start" ${s.playerCount < 4 ? "disabled" : ""}>${s.playerCount < 4 ? "Waiting for more souls… (min 4)" : "Let night fall"}</button>`
@@ -412,6 +442,7 @@ function renderHud(s: Snapshot) {
       panel.innerHTML = `
         <h2 style="color:${s.winner === "hollow" ? "#ff4a3a" : "#a8c98a"};font-size:44px">${s.winner === "hollow" ? "The Hollow wins" : "The town survives"}</h2>
         <p style="margin-top:12px;font-style:italic;color:#c9b8a4">${esc(s.winReason ?? "")}</p>
+        ${renderMatchResults(s)}
         ${s.self.id === s.hostId ? `<button class="big" data-act="restart">Gather the same souls again</button>` : `<p class="muted" style="margin-top:14px">The lantern-bearer may gather this town for another night…</p>`}
         <div class="row" style="margin-top:12px;justify-content:center;gap:10px">
           <button class="chip" data-act="settings">⚙ Settings</button>

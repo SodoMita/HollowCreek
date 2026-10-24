@@ -19,6 +19,7 @@ await sleep(300);
 const initial = await Promise.all(ids.map((id) => state(code, id)));
 const s0 = initial[0];
 check("game started", s0.phase === "playing");
+check("role and match results remain sealed", s0.results === null && !s0.players.some((p) => "role" in p));
 check("every ward initially broken", s0.tasks.length === 9 && s0.tasks.every((t) => !t.done && !t.delivered && !t.progress));
 check("shared pool identical for every seat", initial.every((s) => s.tasks.map((t) => t.id).join(",") === s0.tasks.map((t) => t.id).join(",")));
 check("stamina and kit start in the right state", initial.every((s) => s.self.stamina === 1 && !s.self.hasSupply));
@@ -74,6 +75,7 @@ check("idling recovers stamina", (await myState()).self.stamina > before);
 
 const sealed = await fetch(`${B}/chronicle/${code}`).then((r) => r.text());
 check("chronicle sealed during match", sealed.includes("The ledger is sealed"));
+check("JSON chronicle sealed during match", (await fetch(`${B}/api/game/log?code=${code}`)).status === 403);
 const stats = await fetch(`${B}/api/game/stats`).then((r) => r.json());
 check("stats API shape", stats && typeof stats.global === "object" && Array.isArray(stats.rows));
 const page = await fetch(`${B}/stats`).then((r) => r.text());

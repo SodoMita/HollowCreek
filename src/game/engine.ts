@@ -4,6 +4,7 @@ import { desc, eq, lt } from "drizzle-orm";
 import {
   BELL_X, BLACKOUT_CD_MS, BLACKOUT_MS, BUBBLE_MS, CAGE_XS, CELL_HALF,
   CART_HELPER_BONUS, CART_MAX_SPEED, CART_PUSH_RANGE, CART_SOLO_SPEED,
+  CAGE_UNLOCK_RANGE,
   CARRY_SPEED, CARRY_VIGOR_DRAIN, GHOST_SPEED, INTERACT_RANGE, KILL_COOLDOWN_MS,
   KILL_RANGE, MEETING_FROM, MEETING_MS, MEETING_TO, PLAYER_COLORS,
   SABOTAGE_COOLDOWN_MS, SABOTAGE_VIGOR_COST, SPEED, STAMINA_BELL_COST,
@@ -14,13 +15,19 @@ import {
 } from "./types";
 import { bumpStats } from "./stats";
 import { shuffle } from "./rng";
-import type { FeedItem, InputBody, Phase, Role, RoomListing, Snapshot } from "./types";
+import type { FeedItem, InputBody, MatchStats, Phase, Role, RoomListing, Snapshot } from "./types";
 
 // ---------------------------------------------------------------------------
 // Internal state
 // ---------------------------------------------------------------------------
 
 interface TaskState { id: string; done: boolean; delivered: boolean; sabotaged: boolean; progress: number }
+
+const newMatchStats = (): MatchStats => ({
+  repairs: 0, kitsDelivered: 0, kills: 0, deaths: 0, timesCaged: 0,
+  cagesOpened: 0, votes: 0, reports: 0, ruins: 0, bells: 0,
+  blackouts: 0, distance: 0,
+});
 
 interface P {
   id: string;
@@ -42,6 +49,7 @@ interface P {
   hasSupply: boolean;
   cartHeld: boolean;
   sabotageAt: number;
+  match: MatchStats;
   bubbleText: string;
   bubbleUntil: number;
   interactHeld: boolean;
@@ -72,6 +80,7 @@ interface Room {
   nextFlicker: number;
   createdAt: number;
   startedAt: number;
+  endedAt: number;
   /** Shared town wards — any living townfolk may work any of them. */
   pool: TaskState[];
   blackoutUntil: number;
@@ -214,6 +223,7 @@ async function hydrateRoom(code: string): Promise<Room | undefined> {
     nextFlicker: Date.now() + 20000,
     createdAt: Date.now(),
     startedAt: 0,
+    endedAt: 0,
     pool: [],
     blackoutUntil: 0,
     blackoutReadyAt: 0,
@@ -240,6 +250,7 @@ async function hydrateRoom(code: string): Promise<Room | undefined> {
       hasSupply: false,
       cartHeld: false,
       sabotageAt: 0,
+      match: newMatchStats(),
       bubbleText: "",
       bubbleUntil: 0,
       interactHeld: false,
@@ -301,6 +312,7 @@ export function createRoom(playerId: string, name: string) {
     nextFlicker: Date.now() + 20000,
     createdAt: Date.now(),
     startedAt: 0,
+    endedAt: 0,
     pool: [],
     blackoutUntil: 0,
     blackoutReadyAt: 0,
@@ -377,6 +389,7 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
     hasSupply: false,
     cartHeld: false,
     sabotageAt: 0,
+    match: newMatchStats(),
     bubbleText: "",
     bubbleUntil: 0,
     interactHeld: false,
@@ -451,8 +464,9 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
   room.supplyDrops = [];
   room.cartX = SUPPLY_CART_START;
   room.cartPushers = 0;
-  for (const p of ps) { p.stamina = 1; p.exhausted = false; p.hasSupply = false; p.cartHeld = false; p.sabotageAt = 0; }
+  for (const p of ps) { p.stamina = 1; p.exhausted = false; p.hasSupply = false; p.cartHeld = false; p.sabotageAt = 0; p.match = newMatchStats(); }
   room.startedAt = Date.now();
+  room.endedAt = 0;
   room.round += 1;
   // The cage key hides somewhere on the outskirts.
   room.keyX = Math.random() < 0.5 ? 150 + Math.random() * 1400 : 2700 + Math.random() * 1350;
@@ -585,6 +599,7 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
     q.hasSupply = false;
     q.cartHeld = false;
     q.sabotageAt = 0;
+    q.match = newMatchStats();
     q.bubbleText = "";
     q.bubbleUntil = 0;
     q.interactHeld = false;
@@ -599,6 +614,7 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
   room.meeting = null;
   room.winner = null;
   room.winReason = null;
+  room.endedAt = 0;
   room.blackoutUntil = 0;
   room.blackoutReadyAt = 0;
   room.pool = [];
@@ -614,6 +630,17 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
 
 const dist = (a: number, b: number) => Math.abs(a - b);
 const inMeetingArea = (p: P) => p.caged || (p.x >= MEETING_FROM && p.x <= MEETING_TO);
+
+/** A key always targets the closest occupied lock within arm's reach. */
+function nearestOccupiedCage(room: Room, x: number): number {
+  let best = -1;
+  let bestDistance = CAGE_UNLOCK_RANGE;
+  room.cages.forEach((c, i) => {
+    const d = Math.abs(c.x - x);
+    if (c.occupant && d <= bestDistance) { best = i; bestDistance = d; }
+  });
+  return best;
+}
 
 function nearestBody(room: Room, p: P) {
   let best: Room["bodies"][number] | null = null;
@@ -651,6 +678,7 @@ function cagePlayer(room: Room, p: P): boolean {
   room.cages[idx].occupant = p.id;
   p.caged = true;
   p.cageIndex = idx;
+  p.match.timesCaged++;
   p.x = room.cages[idx].x;
   p.dir = 0;
   dropKey(room, p);
@@ -658,11 +686,16 @@ function cagePlayer(room: Room, p: P): boolean {
   return true;
 }
 
-function freePlayer(room: Room, p: P) {
-  if (!p.caged) return;
-  room.cages[p.cageIndex].occupant = null;
+function freePlayer(room: Room, p: P, stepOutside = true) {
+  if (!p.caged || p.cageIndex < 0) return;
+  const cage = room.cages[p.cageIndex];
+  cage.occupant = null;
   p.caged = false;
   p.cageIndex = -1;
+  if (stepOutside) {
+    p.x = Math.min(WORLD_W - 30, cage.x + CELL_HALF + 18);
+    p.dir = 0;
+  }
 }
 
 function beginMeeting(room: Room, reason: string, caller: P | null) {
@@ -677,17 +710,20 @@ function beginMeeting(room: Room, reason: string, caller: P | null) {
 }
 
 function doKill(room: Room, killer: P, victim: P) {
+  const victimWasCaged = victim.caged;
   victim.alive = false;
   victim.dir = 0;
   dropKey(room, victim);
   dropSupply(room, victim);
-  freePlayer(room, victim); // a killed prisoner dies inside the cell; body remains there
+  freePlayer(room, victim, false); // a killed prisoner dies inside the cell; body remains there
   room.bodies.push({ x: victim.x, color: victim.color, name: victim.name, id: victim.id });
   killer.killAt = Date.now() + KILL_COOLDOWN_MS;
   killer.stamina = Math.max(0, killer.stamina - STAMINA_KILL_COST);
   killer.x = victim.x; // lunge
   feed(room, "A scream cuts through the fog, then silence.");
-  record(room, killer, "kill", { victim: victim.name, victimId: victim.id, victimCaged: victim.caged });
+  killer.match.kills++;
+  victim.match.deaths++;
+  record(room, killer, "kill", { victim: victim.name, victimId: victim.id, victimCaged: victimWasCaged });
   bumpStats(killer.id, killer.name, { kills: 1 });
   bumpStats(victim.id, victim.name, { deaths: 1 });
   checkWin(room);
@@ -703,10 +739,13 @@ function checkWin(room: Room) {
   let winner: Role | null = null;
   let reason = "";
   if (tasksDone && crewAll.length > 0) { winner = "crew"; reason = "Every ward is restored. The Hollow starves and retreats."; }
-  else if (hollowFree === 0) { winner = "crew"; reason = "The Hollow Ones are dead or bound in iron. The town breathes again."; }
-  else if (hollowFree >= crewFree) { winner = "hollow"; reason = "The Hollow outnumber the living. Hollow Creek belongs to them now."; }
+  else if (crewAll.every((p) => !p.alive)) { winner = "hollow"; reason = "No living townfolk remain to mend the wards."; }
+  else if (hollowFree > 0 && hollowFree >= crewFree) { winner = "hollow"; reason = "The Hollow outnumber the free living townfolk. Hollow Creek belongs to them now."; }
+  // Cages are not proof and never grant a crew win. The town must finish wards.
   if (winner) {
     room.phase = "ended";
+    room.endedAt = Date.now();
+    markDirty(room);
     room.winner = winner;
     room.winReason = reason;
     room.meeting = null;
@@ -812,34 +851,37 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     p.stamina = Math.max(0, p.stamina - SABOTAGE_VIGOR_COST);
     const station = STATIONS.find((st) => st.id === ward.id)!;
     feed(room, `A crash comes from ${station.name.toLowerCase()}. That ward needs supplies again.`);
+    p.match.ruins++;
     record(room, p, "ward_ruined", { ward: ward.id });
     return { ok: true };
   }
 
   if (body.action === "interact" && p.alive) {
-    // report a body
-    if (room.phase === "playing" && !p.caged) {
-      const b = nearestBody(room, p);
-      if (b) {
-        record(room, p, "report", { body: b.name });
-        bumpStats(p.id, p.name, { reports: 1 });
-        feed(room, `${p.name} found ${b.name}'s body.`);
-        beginMeeting(room, `${p.name} found the body of ${b.name}`, p);
-        return { ok: true };
-      }
-    }
     // free a prisoner with the cage key
     if (p.hasKey) {
-      const ci = room.cages.findIndex((c) => c.occupant && dist(c.x, p.x) < INTERACT_RANGE);
+      const ci = nearestOccupiedCage(room, p.x);
       if (ci >= 0) {
         const occ = room.players.get(room.cages[ci].occupant!)!;
         freePlayer(room, occ);
+        p.match.cagesOpened++;
         p.hasKey = false;
         p.stamina = Math.max(0, p.stamina - STAMINA_UNLOCK_COST);
         room.keyX = room.cages[ci].x + 40; // the key falls by the open cage — the town learns where it lies
         feed(room, `${p.name} unlocks the cage. ${occ.name} steps free. The key clatters to the ground.`);
         record(room, p, "unlock_cage", { freed: occ.name });
         bumpStats(p.id, p.name, { unlocks: 1 });
+        return { ok: true };
+      }
+    }
+    // report a body
+    if (room.phase === "playing" && !p.caged) {
+      const b = nearestBody(room, p);
+      if (b) {
+        record(room, p, "report", { body: b.name });
+        bumpStats(p.id, p.name, { reports: 1 });
+        p.match.reports++;
+        feed(room, `${p.name} found ${b.name}'s body.`);
+        beginMeeting(room, `${p.name} found the body of ${b.name}`, p);
         return { ok: true };
       }
     }
@@ -851,10 +893,18 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
       record(room, p, "pickup_key", {});
       return { ok: true };
     }
+    // If the whole living town has been locked up, a prisoner may call a vote
+    // to free someone. This does not reveal roles or decide the match.
+    if (room.phase === "playing" && p.caged &&
+        [...room.players.values()].filter((q) => q.alive).every((q) => q.caged)) {
+      beginMeeting(room, `${p.name} calls a vote from the cages`, p);
+      return { ok: true };
+    }
     // ring the bell
     if (room.phase === "playing" && !p.caged && !p.bellUsed && dist(p.x, BELL_X) < INTERACT_RANGE) {
       p.bellUsed = true;
       p.stamina = Math.max(0, p.stamina - STAMINA_BELL_COST);
+      p.match.bells++;
       record(room, p, "ring_bell", {});
       bumpStats(p.id, p.name, { bells: 1 });
       beginMeeting(room, `${p.name} rang the bell`, p);
@@ -871,6 +921,7 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
           ward.delivered = true;
           p.hasSupply = false;
           feed(room, `${p.name} delivers a repair kit to ${STATIONS.find((st) => st.id === ward.id)!.name.toLowerCase()}.`);
+          p.match.kitsDelivered++;
           record(room, p, "supply_delivered", { ward: ward.id });
           return { ok: true };
         }
@@ -907,6 +958,7 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     if (p.role === "crew" && room.phase === "playing" && !p.caged && !p.bellUsed && dist(p.x, BELL_X) < INTERACT_RANGE + 20) {
       p.bellUsed = true;
       p.stamina = Math.max(0, p.stamina - STAMINA_BELL_COST);
+      p.match.bells++;
       record(room, p, "ring_bell", {});
       bumpStats(p.id, p.name, { bells: 1 });
       beginMeeting(room, `${p.name} rang the bell`, p);
@@ -921,6 +973,7 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     room.blackoutReadyAt = now + BLACKOUT_CD_MS;
     p.stamina = Math.max(0, p.stamina - STAMINA_BLACKOUT_COST);
     bumpStats(p.id, p.name, { blackouts: 1 });
+    p.match.blackouts++;
     feed(room, "Every lantern in town is snuffed at once. The dark rushes in.");
     record(room, p, "blackout", { caged: p.caged });
     return { ok: true };
@@ -940,6 +993,7 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     }
     if (!valid) return { ok: false, error: "Invalid vote." };
     p.vote = v;
+    p.match.votes++;
     record(room, p, "vote", { target: v });
     const alivePs = [...room.players.values()].filter((q) => q.alive);
     if (alivePs.every((q) => q.vote)) resolveMeeting(room);
@@ -1004,6 +1058,7 @@ function tick() {
       const speed = !p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : pushingIds.has(p.id) ? cartSpeed : SPEED;
       p.moving = p.dir !== 0;
       if (p.dir !== 0) p.facing = p.dir;
+      const wasX = p.x;
       p.x += p.dir * speed * dt;
       if (p.caged && p.cageIndex >= 0) {
         const cx = room.cages[p.cageIndex].x;
@@ -1015,6 +1070,7 @@ function tick() {
         p.stamina = Math.max(0, p.stamina - CARRY_VIGOR_DRAIN * dt * (pushingIds.has(p.id) ? 1.2 : 1));
         if (p.stamina <= 0) p.exhausted = true;
       }
+      if (p.alive) p.match.distance += Math.abs(p.x - wasX);
       // Shared ward repair: crews can work only after someone has carried a kit
       // here. Input is still just intent; the server checks position and state.
       let working = false;
@@ -1033,6 +1089,7 @@ function tick() {
           if (t.progress >= 1) {
             t.progress = 1;
             t.done = true;
+            p.match.repairs++;
             record(room, p, "task_complete", { task: t.id });
             bumpStats(p.id, p.name, { tasksDone: 1 });
             checkWin(room);
@@ -1095,13 +1152,15 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
   let hint: string | null = null;
   if (me.alive && room.phase !== "lobby") {
     const b = room.phase === "playing" && !me.caged ? nearestBody(room, me) : null;
-    const cageIdx = me.hasKey ? room.cages.findIndex((c) => c.occupant && dist(c.x, me.x) < INTERACT_RANGE) : -1;
+    const cageIdx = me.hasKey ? nearestOccupiedCage(room, me.x) : -1;
     const ward = room.pool.find((t) => !t.done && dist(STATIONS.find((s) => s.id === t.id)!.x, me.x) < INTERACT_RANGE);
     const dropped = room.supplyDrops.some((x) => dist(x, me.x) < INTERACT_RANGE);
     const atCart = dist(room.cartX, me.x) < INTERACT_RANGE;
     const nearCart = dist(room.cartX, me.x) <= CART_PUSH_RANGE;
-    if (b) hint = `Report ${b.name}'s body`;
-    else if (cageIdx >= 0) hint = `Unlock ${room.players.get(room.cages[cageIdx].occupant!)?.name}'s cage`;
+    if (room.phase === "playing" && me.caged && ps.filter((p) => p.alive).every((p) => p.caged))
+      hint = "E — call a vote to free someone";
+    else if (cageIdx >= 0) hint = `E — unlock ${room.players.get(room.cages[cageIdx].occupant!)?.name}'s cage`;
+    else if (b) hint = `Report ${b.name}'s body`;
     else if (room.keyX !== null && !me.caged && dist(room.keyX, me.x) < INTERACT_RANGE) hint = "Take the iron key";
     else if (room.phase === "playing" && !me.caged && !me.bellUsed && dist(me.x, BELL_X) < INTERACT_RANGE) hint = "Ring the bell";
     else if (room.phase === "playing" && !me.caged) {
@@ -1128,6 +1187,14 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
   );
 
   const doneTasks = room.pool.filter((t) => t.done).length;
+  const results = room.phase === "ended" ? {
+    durationSec: Math.max(0, Math.round((room.endedAt - room.startedAt) / 1000)),
+    players: ps.slice().sort((a, b) => a.joinedAt - b.joinedAt).map((p) => ({
+      id: p.id, name: p.name, color: p.color, role: p.role,
+      alive: p.alive, caged: p.caged,
+      stats: { ...p.match, distance: Math.round(p.match.distance) },
+    })),
+  } : null;
 
   // ---- server-side vision: a hacked client cannot wallhack ----
   const blackout = now < room.blackoutUntil;
@@ -1213,6 +1280,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     feed: room.feed.slice(-8),
     winner: room.winner,
     winReason: room.winReason,
+    results,
     bellAt: room.bellAt,
     flickerAt: room.flickerAt,
     blackoutUntil: room.blackoutUntil,
