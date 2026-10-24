@@ -1,340 +1,310 @@
-// Proximity voice chat for Hollow Creek. Microphone audio travels peer to peer
-// over WebRTC; the town server only relays the sealed signalling envelopes
-// (offer / answer / ICE). Every voice is attenuated by in-game distance and
-// panned by direction, mirroring who can see whose speech bubbles: the living
-// hear the living nearby, the dead hear everyone nearby.
-//
-// Framework-free so the React and the static client share it. No DOM or
-// browser API is touched at module scope; everything runs inside methods.
+// Opt-in proximity voice for both clients. Audio goes directly over encrypted
+// WebRTC; only SDP/ICE and a server-calculated distance gain use the game API.
+// Microphone capture NEVER begins until start() is called from a user click.
 import type { GameSettings } from "./settings";
 
-export const VOICE_FULL_RANGE = 300;
-export const VOICE_ZERO_RANGE = 1400;
-export const VOICE_PAN_RANGE = 700;
-const POLL_MS = 350;
-const PEER_TIMEOUT_MS = 5000;
-const MAX_PEERS = 9;
-
-/** 0..1 loudness for a voice heard from distancePx away. */
-export function voiceGainFor(distancePx: number): number {
-  if (!Number.isFinite(distancePx) || distancePx <= VOICE_FULL_RANGE) return 1;
-  if (distancePx >= VOICE_ZERO_RANGE) return 0;
-  return 1 - (distancePx - VOICE_FULL_RANGE) / (VOICE_ZERO_RANGE - VOICE_FULL_RANGE);
-}
-
-/** -1..1 stereo placement from a signed horizontal offset. */
-export function voicePanFor(dx: number): number {
-  if (!Number.isFinite(dx)) return 0;
-  return Math.max(-1, Math.min(1, dx / VOICE_PAN_RANGE));
-}
-
-/** Who may hear whom — the same privacy as speech bubbles. */
-export function isVoiceAudible(selfAlive: boolean, otherAlive: boolean): boolean {
-  return selfAlive ? otherAlive : true;
-}
-
-export interface VoicePeerView {
-  id: string;
-  x: number;
-  alive: boolean;
-}
-
 export interface VoiceStatus {
-  enabled: boolean;
+  active: boolean;
+  starting: boolean;
+  muted: boolean;
+  nearby: number;
+  connected: number;
   error: string | null;
 }
-
-interface SignalMsg {
-  id: number;
-  from: string;
-  to: string;
-  kind: "offer" | "answer" | "ice";
-  payload: string;
-}
-
-interface Peer {
+type PeerInfo = { id: string; name: string; gain: number; pan: number };
+type VoiceSignal = { from: string; type: "offer" | "answer" | "candidate"; data: RTCSessionDescriptionInit | RTCIceCandidateInit };
+type Peer = {
   pc: RTCPeerConnection;
+  pending: RTCIceCandidateInit[];
+  source: MediaStreamAudioSourceNode | null;
   gain: GainNode;
   pan: StereoPannerNode;
-  source: MediaStreamAudioSourceNode | null;
-  iceQueue: RTCIceCandidateInit[];
-  lastSeen: number;
-}
-
-const ICE_CONFIG: RTCConfiguration = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+};
+type Options = {
+  baseUrl: () => string;
+  roomCode: () => string;
+  playerId: () => string;
+  getSettings: () => GameSettings;
+  onStatus: (status: VoiceStatus) => void;
+};
+const ICE_SERVERS: RTCIceServer[] = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun.cloudflare.com:3478" },
+];
+const INITIAL: VoiceStatus = { active: false, starting: false, muted: false, nearby: 0, connected: 0, error: null };
 
 export class VoiceChat {
+  private stream: MediaStream | null = null;
   private ctx: AudioContext | null = null;
   private voiceBus: GainNode | null = null;
-  private stream: MediaStream | null = null;
+  private session = "";
+  private iceServers: RTCIceServer[] = ICE_SERVERS;
   private peers = new Map<string, Peer>();
-  private code = "";
-  private playerId = "";
-  private baseUrl = "";
-  private lastSignalId = 0;
-  private lastPoll = 0;
-  private status: VoiceStatus = { enabled: false, error: null };
-
-  constructor(
-    private getSettings: () => GameSettings,
-    private onStatus: (status: VoiceStatus) => void = () => undefined,
-  ) {}
-
-  get enabled() {
-    return this.status.enabled;
-  }
-
-  private setStatus(patch: Partial<VoiceStatus>) {
+  private earlyCandidates = new Map<string, RTCIceCandidateInit[]>();
+  private levels = new Map<string, { gain: number; pan: number }>();
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private polling = false;
+  private generation = 0;
+  private destroyed = false;
+  private status: VoiceStatus = { ...INITIAL };
+  constructor(private options: Options) {}
+  get current(): VoiceStatus { return { ...this.status }; }
+  private emit(patch: Partial<VoiceStatus>) {
     this.status = { ...this.status, ...patch };
-    this.onStatus(this.status);
+    if (!this.destroyed) this.options.onStatus({ ...this.status });
+  }
+  private url(path = "") { return this.options.baseUrl().replace(/\/$/, "") + "/api/game/voice" + path; }
+  private storageKey() { return `hc_voice_${this.options.roomCode()}_${this.options.playerId()}`; }
+  private async post(action: string, more: Record<string, unknown> = {}, keepalive = false) {
+    const res = await fetch(this.url(), {
+      method: "POST", headers: { "content-type": "application/json" }, keepalive,
+      body: JSON.stringify({ code: this.options.roomCode(), playerId: this.options.playerId(),
+        session: this.session, action, ...more }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error ?? "Town voice is not answering.");
+    return data;
   }
 
-  /** Absolute server origin for portal-hosted clients; "" means same origin. */
-  setBaseUrl(url: string) {
-    this.baseUrl = url.replace(/\/$/, "");
-  }
-
-  setServer(code: string, playerId: string) {
-    if (this.code !== code.toUpperCase() || this.playerId !== playerId) {
-      this.code = code.toUpperCase();
-      this.playerId = playerId;
-      this.lastSignalId = 0;
-      for (const id of [...this.peers.keys()]) this.dropPeer(id);
-    }
-  }
-
-  /** Toggle the microphone. Off by default — the town never listens unasked. */
-  async setEnabled(on: boolean) {
-    if (on === this.status.enabled) return;
-    if (!on) {
-      this.teardown();
-      this.setStatus({ enabled: false, error: null });
+  async start() {
+    if (this.stream || this.status.starting || this.destroyed) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === "undefined") {
+      this.emit({ error: "Voice needs a secure browser with microphone and WebRTC support." });
       return;
     }
-    if (typeof RTCPeerConnection === "undefined" || typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      this.setStatus({ enabled: false, error: "Voice chat is not supported in this browser." });
-      return;
-    }
+    const generation = ++this.generation;
+    this.emit({ starting: true, error: null });
+    let captured: MediaStream | null = null;
     try {
-      const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AC) throw new Error("no audio");
-      this.ctx = new AC();
-      if (this.ctx.state === "suspended") await this.ctx.resume().catch(() => undefined);
+      const AudioContextClass = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextClass) throw new Error("Web Audio is unavailable in this browser.");
+      this.ctx = new AudioContextClass();
       this.voiceBus = this.ctx.createGain();
       this.voiceBus.connect(this.ctx.destination);
       this.applyMix();
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      if (this.ctx.state === "suspended") await this.ctx.resume();
+      captured = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false,
       });
-      this.setStatus({ enabled: true, error: null });
-    } catch {
-      this.teardown();
-      this.setStatus({ enabled: false, error: "Microphone blocked — allow it to speak." });
-    }
-  }
-
-  /** Follow the settings mixer (voice slider shares the master mute). */
-  applyMix() {
-    if (!this.ctx || !this.voiceBus) return;
-    const a = this.getSettings().audio;
-    const t = this.ctx.currentTime;
-    this.voiceBus.gain.cancelScheduledValues(t);
-    this.voiceBus.gain.setTargetAtTime(a.muted ? 0 : a.voice * a.voice, t, 0.035);
-  }
-
-  /**
-   * Drive one step: poll signalling (throttled), sync the peer mesh with the
-   * roster, and attenuate every voice by the authoritative positions.
-   */
-  async tick(self: { id: string; x: number; alive: boolean }, roster: VoicePeerView[]) {
-    if (!this.status.enabled || !this.code || !this.playerId) return;
-    const now = Date.now();
-    this.syncPeers(roster, now);
-    this.updateVolumes(self, roster);
-    if (now - this.lastPoll < POLL_MS) return;
-    this.lastPoll = now;
-    let messages: SignalMsg[] = [];
-    try {
-      const res = await fetch(
-        `${this.baseUrl}/api/game/voice?code=${encodeURIComponent(this.code)}&playerId=${encodeURIComponent(this.playerId)}&since=${this.lastSignalId}`,
-      );
-      if (!res.ok) return;
-      const data = await res.json();
-      messages = Array.isArray(data.messages) ? data.messages : [];
-    } catch {
-      return; // a hiccup costs one round of handshakes, nothing more
-    }
-    for (const msg of messages) {
-      if (typeof msg.id === "number" && msg.id > this.lastSignalId) this.lastSignalId = msg.id;
-      await this.handleSignal(msg).catch(() => undefined);
-    }
-  }
-
-  destroy() {
-    this.teardown();
-    this.setStatus({ enabled: false, error: null });
-  }
-
-  // ------------------------------------------------------------- internals
-
-  private teardown() {
-    for (const id of [...this.peers.keys()]) this.dropPeer(id);
-    if (this.stream) {
-      for (const track of this.stream.getTracks()) track.stop();
+      if (generation !== this.generation || this.destroyed) { captured.getTracks().forEach((t) => t.stop()); return; }
+      this.stream = captured;
+      try { this.session = sessionStorage.getItem(this.storageKey()) ?? ""; } catch { /* private mode */ }
+      const joined = await this.post("join");
+      if (generation !== this.generation || this.destroyed) { this.stop(); return; }
+      this.session = joined.session;
+      try { sessionStorage.setItem(this.storageKey(), this.session); } catch { /* private mode */ }
+      await this.loadIceServers();
+      if (generation !== this.generation || this.destroyed) { this.stop(); return; }
+      this.emit({ active: true, starting: false, muted: false, error: null });
+      this.timer = setInterval(() => void this.poll(), 1000);
+      void this.poll();
+    } catch (err) {
+      captured?.getTracks().forEach((t) => t.stop());
       this.stream = null;
-    }
-    if (this.ctx) {
-      void this.ctx.close().catch(() => undefined);
+      this.session = "";
+      if (this.ctx) void this.ctx.close().catch(() => { /* already closed */ });
       this.ctx = null;
       this.voiceBus = null;
+      if (generation !== this.generation) return;
+      const message = err instanceof Error ? err.message : "Could not open the microphone.";
+      this.emit({ starting: false, active: false, error: /permission|denied|notallowed/i.test(message)
+        ? "Microphone denied. Allow it for this HTTPS page (or its embedding site)." : message });
     }
   }
 
-  private dropPeer(id: string) {
+  async resumePlayback() {
+    if (!this.ctx) return;
+    try { await this.ctx.resume(); this.emit({ error: null }); }
+    catch { this.emit({ error: "Browser blocked voice playback. Tap Enable sound." }); }
+  }
+  private async loadIceServers() {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2500);
+    try {
+      const query = new URLSearchParams({ code: this.options.roomCode(), playerId: this.options.playerId(), session: this.session, config: "1" });
+      const response = await fetch(this.url("?" + query), { signal: controller.signal, cache: "no-store" });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (Array.isArray(data.iceServers) && data.iceServers.every((entry: RTCIceServer) =>
+        entry && typeof entry.urls === "string" && /^(stun|turn|turns):/.test(entry.urls))) {
+        this.iceServers = data.iceServers;
+      }
+    } catch { /* STUN remains available if configuration cannot load */ }
+    finally { clearTimeout(timeout); }
+  }
+  /** Shared master mute and the separate, saved voice-volume slider. */
+  applyMix() {
+    if (!this.ctx || !this.voiceBus) return;
+    const a = this.options.getSettings().audio;
+    const t = this.ctx.currentTime;
+    this.voiceBus.gain.cancelScheduledValues(t);
+    this.voiceBus.gain.setTargetAtTime(a.muted ? 0 : a.master * a.voice * a.voice, t, 0.05);
+  }
+  setMuted(muted: boolean) {
+    this.stream?.getAudioTracks().forEach((track) => { track.enabled = !muted; });
+    this.emit({ muted });
+  }
+  stop() {
+    ++this.generation;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    const wasSession = this.session;
+    if (wasSession) void this.post("leave", {}, true).catch(() => { /* presence expires server-side */ });
+    this.session = "";
+    for (const id of [...this.peers.keys()]) this.closePeer(id);
+    this.earlyCandidates.clear();
+    this.levels.clear();
+    if (this.ctx) void this.ctx.close().catch(() => { /* already closed */ });
+    this.ctx = null;
+    this.voiceBus = null;
+    this.stream?.getTracks().forEach((track) => track.stop());
+    this.stream = null;
+    this.emit({ ...INITIAL });
+  }
+  destroy() { this.stop(); this.destroyed = true; }
+
+  private async poll() {
+    if (!this.stream || !this.session || this.polling || this.destroyed) return;
+    this.polling = true;
+    const generation = this.generation;
+    try {
+      const query = new URLSearchParams({ code: this.options.roomCode(), playerId: this.options.playerId(), session: this.session });
+      const res = await fetch(this.url("?" + query), { cache: "no-store" });
+      if (generation !== this.generation) return;
+      if (!res.ok) {
+        if (res.status === 403) {
+          const joined = await this.post("join");
+          this.session = joined.session;
+          try { sessionStorage.setItem(this.storageKey(), this.session); } catch { /* no storage */ }
+          return;
+        }
+        throw new Error("Voice connection lost. Retrying…");
+      }
+      const state = await res.json() as { peers: PeerInfo[]; signals: VoiceSignal[] };
+      if (generation !== this.generation) return;
+      const nearby = new Map(state.peers.map((peer) => [peer.id, peer]));
+      this.levels = new Map(state.peers.map((peer) => [peer.id, { gain: peer.gain, pan: peer.pan }]));
+      for (const [id] of this.peers) if (!nearby.has(id)) this.closePeer(id);
+      for (const signal of state.signals) if (nearby.has(signal.from)) await this.receive(signal);
+      for (const peer of state.peers) {
+        const existing = this.peers.get(peer.id);
+        if (existing) this.updatePeerLevels(existing, peer);
+        else if (this.options.playerId() < peer.id) void this.offer(peer);
+      }
+      this.emit({ nearby: state.peers.length, connected: [...this.peers.values()].filter((peer) => peer.pc.connectionState === "connected").length,
+        error: null });
+    } catch (error) {
+      if (generation === this.generation) this.emit({ error: error instanceof Error ? error.message : "Voice is reconnecting." });
+    } finally { this.polling = false; }
+  }
+
+  private makePeer(id: string, level: { gain: number; pan: number }): Peer {
+    const ctx = this.ctx;
+    const bus = this.voiceBus;
+    if (!ctx || !bus) throw new Error("Voice output is not ready.");
+    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
+    const gain = ctx.createGain();
+    gain.gain.value = Math.max(0, Math.min(1, level.gain));
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = Math.max(-1, Math.min(1, level.pan));
+    gain.connect(pan);
+    pan.connect(bus);
+    const peer: Peer = { pc, gain, pan, source: null, pending: this.earlyCandidates.get(id) ?? [] };
+    this.earlyCandidates.delete(id);
+    this.peers.set(id, peer);
+    this.stream?.getAudioTracks().forEach((track) => pc.addTrack(track, this.stream!));
+    pc.ontrack = (event) => {
+      if (!this.ctx || this.peers.get(id)?.pc !== pc) return;
+      try {
+        peer.source?.disconnect();
+        const inbound = event.streams[0] ?? new MediaStream([event.track]);
+        peer.source = this.ctx.createMediaStreamSource(inbound);
+        peer.source.connect(gain);
+        if (this.ctx.state === "suspended") void this.ctx.resume().catch(() =>
+          this.emit({ error: "Browser blocked voice playback. Tap Enable sound." }));
+      } catch { this.emit({ error: "Voice playback failed on this device." }); }
+    };
+    pc.onicecandidate = (event) => {
+      if (event.candidate && this.peers.get(id)?.pc === pc)
+        void this.signal(id, "candidate", event.candidate.toJSON());
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "failed" || pc.connectionState === "closed") this.closePeer(id);
+      this.emit({ connected: [...this.peers.values()].filter((entry) => entry.pc.connectionState === "connected").length });
+    };
+    return peer;
+  }
+  private updatePeerLevels(peer: Peer, requested: { gain: number; pan: number }) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    peer.gain.gain.setTargetAtTime(Math.max(0, Math.min(1, requested.gain)), t, 0.12);
+    peer.pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, requested.pan)), t, 0.12);
+  }
+  private closePeer(id: string) {
     const peer = this.peers.get(id);
     if (!peer) return;
     this.peers.delete(id);
+    peer.pc.onicecandidate = null;
+    peer.pc.ontrack = null;
+    peer.pc.onconnectionstatechange = null;
     try {
       peer.source?.disconnect();
+      peer.gain.disconnect();
+      peer.pan.disconnect();
       peer.pc.close();
-    } catch { /* already gone */ }
+    } catch { /* already disconnected */ }
   }
-
-  private ensurePeer(id: string): Peer | null {
-    if (!this.ctx || !this.voiceBus || !this.stream) return null;
-    let peer = this.peers.get(id);
-    if (peer) return peer;
+  private async signal(to: string, type: VoiceSignal["type"], data: RTCSessionDescriptionInit | RTCIceCandidateInit) {
+    try { await this.post("signal", { to, type, data }); }
+    catch { /* peer has moved away or left; next poll closes it */ }
+  }
+  private async offer(info: PeerInfo) {
+    if (this.peers.has(info.id) || !this.stream) return;
     try {
-      const pc = new RTCPeerConnection(ICE_CONFIG);
-      for (const track of this.stream.getTracks()) pc.addTrack(track, this.stream);
-      const gain = this.ctx.createGain();
-      gain.gain.value = 0;
-      const pan = this.ctx.createStereoPanner();
-      gain.connect(pan).connect(this.voiceBus);
-      const entry: Peer = { pc, gain, pan, source: null, iceQueue: [], lastSeen: Date.now() };
-      pc.ontrack = (event) => {
-        try {
-          entry.source?.disconnect();
-          entry.source = this.ctx!.createMediaStreamSource(event.streams[0]);
-          entry.source.connect(entry.gain);
-        } catch { /* a late track is harmless */ }
-      };
-      pc.onicecandidate = (event) => {
-        if (event.candidate) void this.postSignal(id, "ice", JSON.stringify(event.candidate.toJSON()));
-      };
-      pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "failed" || pc.connectionState === "closed") this.dropPeer(id);
-      };
-      this.peers.set(id, entry);
-      peer = entry;
-    } catch {
-      return null;
-    }
-    return peer;
+      const peer = this.makePeer(info.id, { gain: info.gain, pan: info.pan });
+      await peer.pc.setLocalDescription(await peer.pc.createOffer());
+      if (peer.pc.localDescription) await this.signal(info.id, "offer", peer.pc.localDescription.toJSON());
+    } catch { this.closePeer(info.id); }
   }
-
-  private syncPeers(roster: VoicePeerView[], now: number) {
-    const live = new Set(roster.map((p) => p.id));
-    for (const [id, peer] of this.peers) {
-      if (!live.has(id)) {
-        if (now - peer.lastSeen > PEER_TIMEOUT_MS) this.dropPeer(id);
-      } else {
-        peer.lastSeen = now;
-      }
-    }
-    if (this.peers.size >= MAX_PEERS) return;
-    for (const p of roster) {
-      if (p.id === this.playerId || this.peers.has(p.id)) continue;
-      const peer = this.ensurePeer(p.id);
-      if (!peer) continue;
-      peer.lastSeen = now;
-      // Lower id calls, so exactly one side of every pair dials.
-      if (this.playerId < p.id && peer.pc.signalingState === "stable") {
-        void this.offer(p.id, peer);
-      }
+  private async flushCandidates(peer: Peer) {
+    for (const candidate of peer.pending.splice(0)) {
+      try { await peer.pc.addIceCandidate(candidate); } catch { /* stale ICE candidate */ }
     }
   }
-
-  private async offer(id: string, peer: Peer) {
-    try {
-      const offer = await peer.pc.createOffer();
-      await peer.pc.setLocalDescription(offer);
-      await this.postSignal(id, "offer", JSON.stringify(peer.pc.localDescription));
-    } catch {
-      this.dropPeer(id);
+  private async receive(signal: VoiceSignal) {
+    const info = signal.from;
+    if (signal.type === "candidate") {
+      const candidate = signal.data as RTCIceCandidateInit;
+      const peer = this.peers.get(info);
+      if (!peer) {
+        const queue = this.earlyCandidates.get(info) ?? [];
+        queue.push(candidate);
+        this.earlyCandidates.set(info, queue.slice(-40));
+      } else if (!peer.pc.remoteDescription) peer.pending.push(candidate);
+      else try { await peer.pc.addIceCandidate(candidate); } catch { /* stale candidate */ }
+      return;
     }
-  }
-
-  private async handleSignal(msg: SignalMsg) {
-    if (!msg.from || msg.from === this.playerId || typeof msg.payload !== "string") return;
-    const peer = this.ensurePeer(msg.from);
-    if (!peer) return;
-    peer.lastSeen = Date.now();
-    if (msg.kind === "offer") {
+    if (signal.type === "offer") {
+      if (!this.stream) return;
+      // Only one side normally offers (lexicographic seat ID). A stale offer can
+      // still arrive after a reconnect, so start a fresh peer rather than glare.
+      this.closePeer(info);
       try {
-        await peer.pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(msg.payload)));
-        const answer = await peer.pc.createAnswer();
-        await peer.pc.setLocalDescription(answer);
-        await this.postSignal(msg.from, "answer", JSON.stringify(peer.pc.localDescription));
-        await this.flushIce(peer);
-      } catch {
-        this.dropPeer(msg.from);
-      }
-    } else if (msg.kind === "answer") {
-      try {
-        if (peer.pc.signalingState !== "stable") {
-          await peer.pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(msg.payload)));
-          await this.flushIce(peer);
-        }
-      } catch {
-        this.dropPeer(msg.from);
-      }
-    } else if (msg.kind === "ice") {
-      try {
-        const candidate = JSON.parse(msg.payload) as RTCIceCandidateInit;
-        if (peer.pc.remoteDescription) await peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
-        else peer.iceQueue.push(candidate);
-      } catch { /* a stray candidate is harmless */ }
+        const peer = this.makePeer(info, this.levels.get(info) ?? { gain: 0, pan: 0 });
+        await peer.pc.setRemoteDescription(signal.data as RTCSessionDescriptionInit);
+        await this.flushCandidates(peer);
+        await peer.pc.setLocalDescription(await peer.pc.createAnswer());
+        if (peer.pc.localDescription) await this.signal(info, "answer", peer.pc.localDescription.toJSON());
+      } catch { this.closePeer(info); }
+      return;
     }
-  }
-
-  private async flushIce(peer: Peer) {
-    const queued = peer.iceQueue;
-    peer.iceQueue = [];
-    for (const candidate of queued) {
+    const peer = this.peers.get(info);
+    if (peer && peer.pc.signalingState === "have-local-offer") {
       try {
-        await peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch { /* keep the rest flowing */ }
+        await peer.pc.setRemoteDescription(signal.data as RTCSessionDescriptionInit);
+        await this.flushCandidates(peer);
+      } catch { this.closePeer(info); }
     }
-  }
-
-  private updateVolumes(self: { id: string; x: number; alive: boolean }, roster: VoicePeerView[]) {
-    const byId = new Map(roster.map((p) => [p.id, p]));
-    for (const [id, peer] of this.peers) {
-      const p = byId.get(id);
-      let gain = 0;
-      let pan = 0;
-      if (p && isVoiceAudible(self.alive, p.alive)) {
-        const dx = p.x - self.x;
-        gain = voiceGainFor(Math.abs(dx));
-        pan = voicePanFor(dx);
-      }
-      const t = this.ctx?.currentTime;
-      if (t !== undefined) {
-        peer.gain.gain.setTargetAtTime(gain, t, 0.08);
-        peer.pan.pan.setTargetAtTime(pan, t, 0.08);
-      }
-    }
-  }
-
-  private async postSignal(to: string, kind: "offer" | "answer" | "ice", payload: string) {
-    if (!this.code || !this.playerId) return;
-    try {
-      await fetch(`${this.baseUrl}/api/game/voice`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code: this.code, playerId: this.playerId, to, kind, payload }),
-      });
-    } catch { /* next poll retries the handshake */ }
   }
 }

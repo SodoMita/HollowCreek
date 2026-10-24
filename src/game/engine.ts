@@ -1192,61 +1192,6 @@ if (!g.__hollowLoop) {
 }
 
 // ---------------------------------------------------------------------------
-// Voice signalling — WebRTC SDP/ICE envelopes relayed between town members.
-// Voice audio itself travels peer to peer and never touches this server.
-// ---------------------------------------------------------------------------
-
-interface VoiceSignal {
-  id: number;
-  from: string;
-  to: string;
-  kind: "offer" | "answer" | "ice";
-  payload: string;
-  at: number;
-}
-
-const voiceInbox = new Map<string, VoiceSignal[]>();
-let voiceSeq = 0;
-const VOICE_SIGNAL_TTL_MS = 30000;
-const VOICE_MAX_ROOM_SIGNALS = 300;
-
-export function postVoiceSignal(
-  code: string, from: string, to: string, kind: string, payload: string,
-): { ok: boolean; error?: string } {
-  const room = rooms.get(code.toUpperCase());
-  if (!room) return { ok: false, error: "No such town." };
-  if (!room.players.has(from)) return { ok: false, error: "Unknown soul." };
-  if (typeof to !== "string" || to === from || !room.players.has(to)) {
-    return { ok: false, error: "No such listener." };
-  }
-  if (kind !== "offer" && kind !== "answer" && kind !== "ice") return { ok: false, error: "Bad signal." };
-  if (typeof payload !== "string" || payload.length === 0 || payload.length > 8192) {
-    return { ok: false, error: "Bad envelope." };
-  }
-  const key = code.toUpperCase();
-  const now = Date.now();
-  const live = (voiceInbox.get(key) ?? []).filter((m) => now - m.at < VOICE_SIGNAL_TTL_MS);
-  live.push({ id: ++voiceSeq, from, to, kind, payload, at: now });
-  while (live.length > VOICE_MAX_ROOM_SIGNALS) live.shift();
-  voiceInbox.set(key, live);
-  return { ok: true };
-}
-
-export function takeVoiceSignals(
-  code: string, playerId: string, since: number,
-): { ok: boolean; error?: string; messages?: { id: number; from: string; kind: string; payload: string }[] } {
-  const room = rooms.get(code.toUpperCase());
-  if (!room) return { ok: false, error: "No such town." };
-  if (!room.players.has(playerId)) return { ok: false, error: "Unknown soul." };
-  const key = code.toUpperCase();
-  const now = Date.now();
-  const live = (voiceInbox.get(key) ?? []).filter((m) => now - m.at < VOICE_SIGNAL_TTL_MS);
-  const mine = live.filter((m) => m.to === playerId && m.id > since);
-  voiceInbox.set(key, live.filter((m) => !(m.to === playerId && m.id > since)));
-  return { ok: true, messages: mine.map(({ id, from, kind, payload }) => ({ id, from, kind, payload })) };
-}
-
-// ---------------------------------------------------------------------------
 // Snapshot (per-viewer, roles hidden)
 // ---------------------------------------------------------------------------
 

@@ -4,7 +4,7 @@
 import { Renderer } from "../src/game/render";
 import { WardPanel } from "../src/game/ward-ui";
 import { AudioDirector } from "../src/game/audio";
-import { VoiceChat } from "../src/game/voice";
+import { VoiceChat, type VoiceStatus } from "../src/game/voice";
 import { SettingsStore, applyDocumentPreferences, keyLabel, matchesControl, type BindableAction } from "../src/game/settings";
 import { SettingsDialog } from "../src/game/settings-ui";
 import { BELL_X } from "../src/game/types";
@@ -86,6 +86,31 @@ let lastDir = 0;
 const displayX = new Map<string, number>();
 const settingsStore = new SettingsStore();
 const audio = new AudioDirector(settingsStore);
+let lastVoiceKey = "";
+const voice = new VoiceChat({ baseUrl: () => server, roomCode: () => roomCode,
+  playerId: getPid, getSettings: () => settingsStore.value, onStatus: updateVoiceHud });
+function updateVoiceHud(status: VoiceStatus) {
+  $("voicebtn").textContent = status.starting ? "…" : status.active ? "◉" : "🎙";
+  $("voicebtn").setAttribute("aria-label", status.active ? "Leave proximity voice" : "Join proximity voice");
+  $("voicebtn").title = status.active
+    ? `${status.connected} connected, ${status.nearby} within earshot · ${keyLabel(settingsStore.value.controls.talk)} to leave`
+    : `Join proximity voice (${keyLabel(settingsStore.value.controls.talk)}) · microphone permission`;
+  $("micmute").style.display = status.active ? "inline-block" : "none";
+  $("micmute").textContent = status.muted ? "🔇" : "🎙";
+  $("micmute").title = status.muted ? "Unmute microphone" : "Mute microphone";
+  $("voicestatus").style.display = status.error && roomCode ? "block" : "none";
+  $("voicestatus").innerHTML = status.error
+    ? `${esc(status.error)}${status.error.includes("Enable sound") ? ` <button data-act="voiceplay" style="text-decoration:underline">Enable sound</button>` : ""}` : "";
+  const key = JSON.stringify([status.active, status.starting, status.muted, status.error]);
+  if (lastVoiceKey !== key) {
+    lastVoiceKey = key;
+    overlayKey = "";
+    if (snap?.phase === "lobby" || snap?.phase === "ended") renderHud(snap);
+  }
+  document.querySelectorAll<HTMLElement>("[data-voicepeers]").forEach((label) => {
+    label.textContent = `${status.connected} connected · ${status.nearby} within earshot · the dead hear only the dead`;
+  });
+}
 const wardPanel = new WardPanel(document.body, {
   move: (wardId, move) => { void send({ action: "ward_move", wardId, move }); },
   close: () => { void send({ action: "ward_cancel" }); },
@@ -94,22 +119,11 @@ const wardPanel = new WardPanel(document.body, {
 let interactToggled = false;
 let tasksOpen = window.innerWidth > 640;
 const settingsDialog = new SettingsDialog(settingsStore, document.body, { onOpen: releaseInputs });
-const voice = new VoiceChat(() => settingsStore.value, (status) => {
-  $("mic").style.borderColor = status.enabled ? "#6b8e23" : "";
-  $("mic").style.color = status.enabled ? "#a8c98a" : "";
-  if (status.error) toast(status.error);
-});
 settingsStore.subscribe((settings) => {
   applyDocumentPreferences(settings);
   $("mute").textContent = settings.audio.muted ? "🔇" : "🔊";
   voice.applyMix();
 });
-async function toggleMic() {
-  audio.start();
-  voice.setBaseUrl(server);
-  voice.setServer(roomCode, getPid());
-  await voice.setEnabled(!voice.enabled);
-}
 applyDocumentPreferences(settingsStore.value);
 
 async function api(path: string, body?: unknown, base = server, timeoutMs = 0): Promise<any> {
@@ -231,6 +245,7 @@ function esc(s: string) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 
 // ---------------------------------------------------------------- room ----
 function enterRoom(code: string) {
+  voice.stop();
   cancelProbe();
   roomCode = code;
   snap = null;
@@ -250,7 +265,7 @@ function enterRoom(code: string) {
   void poll();
 }
 function leaveToMenu() {
-  voice.destroy();
+  voice.stop();
   releaseInputs();
   const departingCode = roomCode;
   const departingServer = server;
@@ -278,6 +293,7 @@ function beaconLeave() {
   } catch { /* noop */ }
 }
 window.addEventListener("pagehide", beaconLeave);
+window.addEventListener("pagehide", () => voice.stop());
 
 function showRoomError(message: string) {
   if (roomError === message) return;
@@ -307,12 +323,6 @@ async function poll() {
     snap = s;
     wardPanel.update(s.minigame, s.self.stamina, s.self.exhausted);
     audio.update(s);
-    voice.setBaseUrl(server);
-    voice.setServer(roomCode, getPid());
-    void voice.tick(
-      { id: s.self.id, x: s.players.find((p) => p.id === s.self.id)?.x ?? 0, alive: s.self.alive },
-      s.players.filter((p) => p.id !== s.self.id).map((p) => ({ id: p.id, x: p.x, alive: p.alive })),
-    );
     if (lastPhase === "lobby" && s.phase === "playing") reveal(s.self.role === "hollow");
     lastPhase = s.phase;
     renderHud(s);
@@ -334,6 +344,14 @@ function reveal(hollow: boolean) {
 }
 
 // ----------------------------------------------------------------- HUD ----
+function voiceControlsMarkup() {
+  const v = voice.current;
+  return `<div class="row" style="margin-top:10px;justify-content:center;align-items:center;flex-wrap:wrap">
+    <button class="chip" data-act="voice" ${v.starting ? "disabled" : ""}>${v.starting ? "Asking for microphone…" : v.active ? "Leave voice chat" : "Join proximity voice"}</button>
+    ${v.active ? `<button class="chip" data-act="micmute">${v.muted ? "Unmute mic" : "Mute mic"}</button>` : ""}
+    </div>${v.active ? `<p class="muted" data-voicepeers style="margin-top:4px">${v.connected} connected · ${v.nearby} within earshot · the dead hear only the dead</p>` : ""}
+    ${v.error ? `<p role="alert" style="color:#e29a84;font-size:12px">${esc(v.error)}${v.error.includes("Enable sound") ? ` <button data-act="voiceplay" style="text-decoration:underline">Enable sound</button>` : ""}</p>` : ""}`;
+}
 function renderMatchResults(s: Snapshot): string {
   if (!s.results) return "";
   const time = `${Math.floor(s.results.durationSec / 60)}m ${String(s.results.durationSec % 60).padStart(2, "0")}s`;
@@ -465,6 +483,7 @@ function renderHud(s: Snapshot) {
           <button class="chip" data-act="settings">⚙ Settings</button>
           <button class="chip" data-act="menu" style="border-color:#84624c;padding:10px 12px;flex:1">← Back to towns</button>
         </div>
+        ${voiceControlsMarkup()}
         <p class="muted">4–10 players · 1–2 of you will be Hollow</p>`;
     } else if (s.phase === "ended") {
       ov.style.display = "flex";
@@ -472,6 +491,7 @@ function renderHud(s: Snapshot) {
         <h2 style="color:${s.winner === "hollow" ? "#ff4a3a" : "#a8c98a"};font-size:44px">${s.winner === "hollow" ? "The Hollow wins" : "The town survives"}</h2>
         <p style="margin-top:12px;font-style:italic;color:#c9b8a4">${esc(s.winReason ?? "")}</p>
         ${renderMatchResults(s)}
+        ${voiceControlsMarkup()}
         ${s.self.id === s.hostId ? `<button class="big" data-act="restart">Gather the same souls again</button>` : `<p class="muted" style="margin-top:14px">The lantern-bearer may gather this town for another night…</p>`}
         <div class="row" style="margin-top:12px;justify-content:center;gap:10px">
           <button class="chip" data-act="settings">⚙ Settings</button>
@@ -526,7 +546,6 @@ function bound(action: BindableAction, e: KeyboardEvent) {
 window.addEventListener("keydown", (e) => {
   audio.start();
   if (settingsDialog.isOpen || !roomCode) return;
-
   if (wardPanel.isOpen) {
     if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
     return; // Puzzle buttons own Tab, Enter and Space.
@@ -542,8 +561,8 @@ window.addEventListener("keydown", (e) => {
   else if (bound("push", e) && !e.repeat) { void send({ cartHeld: true }); e.preventDefault(); }
   else if (bound("drop", e) && !e.repeat) { void send({ action: "drop_supply" }); e.preventDefault(); }
   else if (bound("ruin", e) && !e.repeat) { void send({ action: "sabotage" }); e.preventDefault(); }
-  else if (bound("talk", e) && !e.repeat) { void toggleMic(); e.preventDefault(); }
   else if (bound("chat", e) && !e.repeat) { openChat(); e.preventDefault(); }
+  else if (bound("talk", e) && !e.repeat) { if (voice.current.active) voice.stop(); else void voice.start(); e.preventDefault(); }
 });
 window.addEventListener("keyup", (e) => {
   if (settingsDialog.isOpen || wardPanel.isOpen || !roomCode) return;
@@ -585,12 +604,13 @@ $("supplydrop").addEventListener("click", () => void send({ action: "drop_supply
 $("ruinbtn").addEventListener("click", () => void send({ action: "sabotage" }));
 $("settings").addEventListener("click", () => settingsDialog.open());
 $("menusettings").addEventListener("click", () => settingsDialog.open());
+$("voicebtn").addEventListener("click", () => { if (voice.current.active) voice.stop(); else void voice.start(); });
+$("micmute").addEventListener("click", () => voice.setMuted(!voice.current.muted));
 $("mute").addEventListener("click", () => {
   audio.start();
   audio.setMuted(!audio.muted);
 });
 $("mute").textContent = audio.muted ? "🔇" : "🔊";
-$("mic").addEventListener("click", () => void toggleMic());
 $("copycode").addEventListener("click", () => { void navigator.clipboard?.writeText(roomCode); toast("Town code copied"); });
 document.addEventListener("click", (e) => {
   const t = e.target as HTMLElement;
@@ -600,6 +620,9 @@ document.addEventListener("click", (e) => {
     else if (act.dataset.act === "restart") void send({ action: "restart" });
     else if (act.dataset.act === "menu") leaveToMenu();
     else if (act.dataset.act === "settings") settingsDialog.open();
+    else if (act.dataset.act === "voice") { if (voice.current.active) voice.stop(); else void voice.start(); }
+    else if (act.dataset.act === "micmute") voice.setMuted(!voice.current.muted);
+    else if (act.dataset.act === "voiceplay") void voice.resumePlayback();
   }
   const v = t.closest("[data-vote]") as HTMLElement | null;
   if (v) void send({ action: "vote", vote: v.dataset.vote });

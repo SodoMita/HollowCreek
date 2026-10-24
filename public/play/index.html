@@ -69,6 +69,9 @@
   #topbar { top:0; left:0; right:0; display:flex; justify-content:space-between; align-items:flex-start; gap:8px; padding:8px; padding-top:max(8px,env(safe-area-inset-top)); }
   #topbar .right { display:flex; gap:6px; align-items:center; }
   #supplydrop { display:none; background:#4a3323; color:#f2cf91; font-size:11px; padding:6px 8px; }
+  #voicebtn { color:#b8d8a4; border-color:#648262; font-size:13px; }
+  #micmute { display:none; color:#b8d8a4; font-size:13px; }
+  #voicestatus { display:none; top:50px; right:8px; max-width:min(75vw,280px); border-color:#6e3433; color:#e29a84; font-size:12px; z-index:8; }
   #pushbtn { display:none; align-self:flex-start; padding:4px 9px; color:#f2cf91; background:rgba(51,35,31,.92); font-size:11px; touch-action:none; }
   #ruinbtn { display:none; bottom:calc(92px + env(safe-area-inset-bottom)); right:10px; border-color:#733743; background:rgba(51,15,20,.94); color:#ffd0bf; font-size:12px; }
   #ruinbtn:disabled { opacity:.5; cursor:default; }
@@ -147,7 +150,7 @@
         <h1>Hollow<br/>Creek</h1>
         <p>The harvest was good. Then the church bell rang on its own, and not everyone who came home was <em>people</em> anymore.</p>
         <p>Walk the one long street. The wards have been smashed: bring kits from the one movable cart, then press E at a ward to play its repair puzzle. Push together to roll the cart faster. When the bell tolls, walk to the square and vote — the condemned are caged in iron, still able to plead.</p>
-        <p class="muted">A / D walk · E interact · hold Shift + walk to push · G drop kit · R ruin (Hollow) · Q ability · F snuff · Enter speak · T voice chat. Rebind controls, adjust the mixer, and tune graphics/accessibility in Settings.</p>
+        <p class="muted">A / D walk · E interact · hold Shift + walk to push · G drop kit · R ruin (Hollow) · Q ability · F snuff · Enter speak · T proximity voice. Rebind controls, adjust the mixer, and tune graphics/accessibility in Settings.</p>
       </div>
       <div class="card">
         <h2>Enter the town</h2>
@@ -179,12 +182,14 @@
       <div class="right">
         <span id="role" class="crew"></span>
         <button class="chip" id="supplydrop" title="Drop repair kit (G)" aria-label="Drop repair kit">Drop kit</button>
-        <button class="chip" id="mute" aria-label="Mute audio">🔊</button>
-        <button class="chip" id="mic" title="Voice chat on/off (T)" aria-label="Toggle voice chat">🎙</button>
+        <button class="chip" id="mute" aria-label="Mute score and effects">🔊</button>
+        <button class="chip" id="voicebtn" aria-label="Join proximity voice" title="Join proximity voice">🎙</button>
+        <button class="chip" id="micmute" aria-label="Mute microphone" title="Mute microphone">🎙</button>
         <button class="chip" id="settings" aria-label="Open settings">⚙</button>
         <button class="chip" id="leave" aria-label="Leave town">✕</button>
       </div>
     </div>
+    <div class="hud chip" id="voicestatus" role="alert"></div>
     <div class="hud" id="taskwrap"><div class="lbl">Town wards restored</div><div id="taskbar"><div id="taskfill"></div></div></div>
     <div class="hud chip" id="tasks"></div>
     <div class="hud" id="feed"></div>

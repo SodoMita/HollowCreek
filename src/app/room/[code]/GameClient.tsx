@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { DoorOpen, Flame, ScrollText, Trophy, Zap } from "lucide-react";
+import { DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
 import { Renderer } from "@/game/render";
 import { WardPanel } from "@/game/ward-ui";
 import { AudioDirector } from "@/game/audio";
-import { VoiceChat } from "@/game/voice";
+import { VoiceChat, type VoiceStatus } from "@/game/voice";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
 import { BELL_X } from "@/game/types";
@@ -28,7 +28,7 @@ export default function GameClient({ code }: { code: string }) {
   const [chatText, setChatText] = useState("");
   const [roleBanner, setRoleBanner] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
-  const [micOn, setMicOn] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>({ active: false, starting: false, muted: false, nearby: 0, connected: 0, error: null });
   const [tasksOpen, setTasksOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(createDefaultSettings);
@@ -88,6 +88,7 @@ export default function GameClient({ code }: { code: string }) {
     if (leavingRef.current) return;
     leavingRef.current = true;
     setLeaving(true);
+    voiceRef.current?.stop();
     const body = JSON.stringify({ code, playerId: getPid() });
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 2000);
@@ -142,8 +143,6 @@ export default function GameClient({ code }: { code: string }) {
       settingsDialogRef.current = null;
       audioRef.current?.destroy();
       audioRef.current = null;
-      voiceRef.current?.destroy();
-      voiceRef.current = null;
     };
   }, [getSettingsStore, releaseInputs]);
 
@@ -151,26 +150,6 @@ export default function GameClient({ code }: { code: string }) {
     if (!audioRef.current) audioRef.current = new AudioDirector(getSettingsStore());
     audioRef.current.start();
   }, [getSettingsStore]);
-
-  const getVoice = useCallback(() => {
-    if (!voiceRef.current) {
-      voiceRef.current = new VoiceChat(() => getSettingsStore().value, (status) => {
-        setMicOn(status.enabled);
-        if (status.error) {
-          setToast(status.error);
-          setTimeout(() => setToast(null), 2600);
-        }
-      });
-    }
-    return voiceRef.current;
-  }, [getSettingsStore]);
-
-  const toggleMic = useCallback(async () => {
-    ensureAudio();
-    const voice = getVoice();
-    voice.setServer(code, getPid());
-    await voice.setEnabled(!voice.enabled);
-  }, [code, ensureAudio, getVoice]);
 
   // Shared repair panel: built once, never re-mounted on each 100ms state poll.
   useEffect(() => {
@@ -182,6 +161,16 @@ export default function GameClient({ code }: { code: string }) {
     wardPanelRef.current = panel;
     return () => { panel.destroy(); wardPanelRef.current = null; };
   }, [releaseInputs, send]);
+
+  // Voice is off by default. Only the Voice button calls getUserMedia().
+  useEffect(() => {
+    const voice = new VoiceChat({ baseUrl: () => "", roomCode: () => code,
+      playerId: getPid, getSettings: () => getSettingsStore().value, onStatus: setVoiceStatus });
+    voiceRef.current = voice;
+    const goodbye = () => voice.stop();
+    window.addEventListener("pagehide", goodbye);
+    return () => { window.removeEventListener("pagehide", goodbye); voice.destroy(); voiceRef.current = null; };
+  }, [code, getSettingsStore]);
 
   // ---- join + poll ----
   useEffect(() => {
@@ -209,10 +198,6 @@ export default function GameClient({ code }: { code: string }) {
           wardPanelRef.current?.update(s.minigame, s.self.stamina, s.self.exhausted);
           setSnap(s);
           audioRef.current?.update(s);
-          voiceRef.current?.tick(
-            { id: s.self.id, x: s.players.find((p) => p.id === s.self.id)?.x ?? 0, alive: s.self.alive },
-            s.players.filter((p) => p.id !== s.self.id).map((p) => ({ id: p.id, x: p.x, alive: p.alive })),
-          );
           if (lastPhase.current === "lobby" && s.phase === "playing") {
             setRoleBanner(s.self.role === "hollow" ? "hollow" : "crew");
             setTimeout(() => setRoleBanner(null), 4500);
@@ -273,7 +258,11 @@ export default function GameClient({ code }: { code: string }) {
       else if (bound("drop") && !e.repeat) { void send({ action: "drop_supply" }); e.preventDefault(); }
       else if (bound("ruin") && !e.repeat) { void send({ action: "sabotage" }); e.preventDefault(); }
       else if (bound("chat") && !e.repeat) { openChat(); e.preventDefault(); }
-      else if (bound("talk") && !e.repeat) { void toggleMic(); e.preventDefault(); }
+      else if (bound("talk") && !e.repeat) {
+        const voice = voiceRef.current;
+        if (voice) { if (voice.current.active) voice.stop(); else void voice.start(); }
+        e.preventDefault();
+      }
     };
     const up = (e: KeyboardEvent) => {
       if (settingsDialogRef.current?.isOpen || wardPanelRef.current?.isOpen) return;
@@ -291,7 +280,7 @@ export default function GameClient({ code }: { code: string }) {
       window.removeEventListener("keydown", down); window.removeEventListener("keyup", up);
       window.removeEventListener("pointerdown", unlockAudio); window.removeEventListener("blur", releaseInputs);
     };
-  }, [computeDir, send, ensureAudio, getSettingsStore, interactDown, interactUp, openChat, releaseInputs, toggleMic]);
+  }, [computeDir, send, ensureAudio, getSettingsStore, interactDown, interactUp, openChat, releaseInputs]);
 
   // ---- render loop ----
   useEffect(() => {
@@ -354,6 +343,14 @@ export default function GameClient({ code }: { code: string }) {
     setChatOpen(false);
   };
 
+  const toggleVoice = () => {
+    const voice = voiceRef.current;
+    if (!voice || voiceStatus.starting) return;
+    if (voiceStatus.active) voice.stop();
+    else void voice.start();
+  };
+  const toggleMic = () => voiceRef.current?.setMuted(!voiceStatus.muted);
+
   // ------------------------------------------------------------------ UI ---
 
   if (joinError) {
@@ -415,9 +412,10 @@ export default function GameClient({ code }: { code: string }) {
                 </div>
               </div>
             )}
-            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-              <span className={`rounded px-2 py-1 font-display text-sm sm:px-3 sm:py-1.5 sm:text-lg ${!s.self.alive ? "bg-[#2a2a3a]/80 text-[#9aa]" : s.self.role === "hollow" ? "bg-[#4a1210]/90 text-[#ff6a5a]" : "bg-[#1d2a1a]/80 text-[#a8c98a]"}`}>
-                {!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "The Hollow" : "Townfolk"}
+            <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+              <span className={`rounded px-1 py-1 font-display text-xs sm:px-3 sm:py-1.5 sm:text-lg ${!s.self.alive ? "bg-[#2a2a3a]/80 text-[#9aa]" : s.self.role === "hollow" ? "bg-[#4a1210]/90 text-[#ff6a5a]" : "bg-[#1d2a1a]/80 text-[#a8c98a]"}`}>
+                <span className="sm:hidden">{!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "Hollow" : "Crew"}</span>
+                <span className="hidden sm:inline">{!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "The Hollow" : "Townfolk"}</span>
                 {s.self.caged && s.self.alive ? " · Caged" : ""}
               </span>
               <button
@@ -425,12 +423,16 @@ export default function GameClient({ code }: { code: string }) {
                 title={muted ? "Unmute" : "Mute"}
                 className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] sm:py-1.5"
               >{muted ? "🔇" : "🔊"}</button>
-              <button
-                onClick={() => void toggleMic()}
-                title={micOn ? `Voice chat on — nearby souls hear you (${keyLabel(settings.controls.talk)})` : `Voice chat off (${keyLabel(settings.controls.talk)})`}
-                aria-label="Toggle voice chat"
-                className={`rounded border px-2 py-1 sm:py-1.5 ${micOn ? "border-[#6b8e23] bg-[#1d2a1a]/80 text-[#a8c98a]" : "border-[#3a2733] bg-[#140d18]/80 text-[#9c8b7a] hover:text-[#d99a3d]"}`}
-              >🎙</button>
+              <button onClick={toggleVoice} disabled={voiceStatus.starting} aria-label={voiceStatus.active ? "Leave proximity voice" : "Join proximity voice"}
+                aria-pressed={voiceStatus.active} title={voiceStatus.active ? `Voice: ${voiceStatus.connected} connected, ${voiceStatus.nearby} nearby · ${keyLabel(settings.controls.talk)} to leave` : `Join proximity voice (${keyLabel(settings.controls.talk)}) — asks for microphone permission`}
+                className={`rounded border px-1.5 py-1 sm:py-1.5 ${voiceStatus.active ? "border-[#6b8e5a] bg-[#1d2a1a]/90 text-[#b8d8a4]" : "border-[#3a2733] bg-[#140d18]/80 text-[#c9b8a4]"}`}>
+                {voiceStatus.starting ? "…" : <Volume2 className="h-4 w-4" />}
+              </button>
+              {voiceStatus.active && <button onClick={toggleMic} aria-label={voiceStatus.muted ? "Unmute microphone" : "Mute microphone"}
+                title={voiceStatus.muted ? "Unmute microphone" : "Mute microphone"}
+                className="rounded border border-[#3a2733] bg-[#140d18]/80 px-1.5 py-1 text-[#c9b8a4] sm:py-1.5">
+                {voiceStatus.muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+              </button>}
               <button
                 onClick={() => settingsDialogRef.current?.open()}
                 title="Settings"
@@ -440,6 +442,13 @@ export default function GameClient({ code }: { code: string }) {
               <button onClick={() => void leaveToTownList()} disabled={leaving} aria-label="Back to towns" className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#e06a5a] disabled:opacity-50 sm:px-3 sm:py-1.5"><span className="sm:hidden">←</span><span className="hidden sm:inline">Back</span></button>
             </div>
           </div>
+
+          {s.phase !== "lobby" && voiceStatus.error && (
+            <p role="alert" className="absolute right-2 top-12 z-20 max-w-[min(70vw,250px)] rounded border border-[#6e3433] bg-[#1c1216]/95 px-3 py-2 text-xs text-[#e29a84]">
+              {voiceStatus.error}
+              {voiceStatus.error.includes("Enable sound") && <button onClick={() => void voiceRef.current?.resumePlayback()} className="ml-2 underline">Enable sound</button>}
+            </p>
+          )}
 
           {/* ---- task list ---- */}
           {s.phase !== "lobby" && s.self.alive && s.tasks.length > 0 && (
@@ -659,6 +668,20 @@ export default function GameClient({ code }: { code: string }) {
                   className="mt-3 w-full rounded border border-[#84624c] px-4 py-2 text-sm text-[#e9dfcf] hover:bg-[#33231f] disabled:opacity-50">
                   {leaving ? "Leaving…" : "← Back to towns"}
                 </button>
+                <div className="mt-3 flex flex-wrap justify-center gap-2">
+                  <button onClick={toggleVoice} disabled={voiceStatus.starting}
+                    className="rounded border border-[#648262] px-3 py-2 text-sm text-[#b8d8a4] disabled:opacity-50">
+                    {voiceStatus.starting ? "Asking for microphone…" : voiceStatus.active ? "Leave voice chat" : "Join proximity voice"}
+                  </button>
+                  {voiceStatus.active && <button onClick={toggleMic} className="rounded border border-[#3a2733] px-3 py-2 text-sm text-[#c9b8a4]">
+                    {voiceStatus.muted ? "Unmute mic" : "Mute mic"}
+                  </button>}
+                </div>
+                {voiceStatus.active && <p className="mt-2 text-xs text-[#9c8b7a]">{voiceStatus.connected} connected · {voiceStatus.nearby} within earshot. Farther voices fade; the dead hear only the dead.</p>}
+                {voiceStatus.error && <p role="alert" className="mt-2 text-xs text-[#e29a84]">
+                  {voiceStatus.error}
+                  {voiceStatus.error.includes("Enable sound") && <button onClick={() => void voiceRef.current?.resumePlayback()} className="ml-2 underline">Enable sound</button>}
+                </p>}
                 <p className="mt-3 text-xs text-[#6b5a55]">4–10 players · 1–2 of you will be Hollow</p>
               </div>
             </div>
@@ -726,6 +749,12 @@ export default function GameClient({ code }: { code: string }) {
                     </div>
                   </section>
                 )}
+                <div className="mt-3 flex flex-wrap justify-center gap-2">
+                  <button onClick={toggleVoice} disabled={voiceStatus.starting} className="rounded border border-[#648262] px-3 py-2 text-sm text-[#b8d8a4] disabled:opacity-50">
+                    {voiceStatus.starting ? "Opening mic…" : voiceStatus.active ? "Leave voice" : "Join proximity voice"}
+                  </button>
+                  {voiceStatus.active && <button onClick={toggleMic} className="rounded border border-[#3a2733] px-3 py-2 text-sm text-[#c9b8a4]">{voiceStatus.muted ? "Unmute mic" : "Mute mic"}</button>}
+                </div>
                 {s.self.id === s.hostId ? (
                   <button
                     onClick={() => send({ action: "restart" })}
