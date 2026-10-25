@@ -1,17 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { loadRoom } from "@/game/engine";
-import { voiceCanHear, voiceGainFor, voicePanFor } from "@/game/voice-range";
+import { EXPANDED_ICE_SERVERS, voiceCanHear, voiceGainFor, voicePanFor } from "@/game/voice-range";
 
 export const dynamic = "force-dynamic";
 
 const PRESENCE_MS = 12_000;
-const MAX_SIGNAL_BYTES = 24_000;
+const MAX_SIGNAL_BYTES = 64_000;
 type SignalType = "offer" | "answer" | "candidate";
 type Signal = { from: string; type: SignalType; data: Record<string, unknown> };
+export type AudioPacket = {
+  id: number;
+  from: string;
+  chunk: string;
+  rate: number;
+  at: number;
+};
 type VoiceRoom = {
   listeners: Map<string, { session: string; seen: number }>;
   inbox: Map<string, Signal[]>;
+  audioQueue: AudioPacket[];
+  audioSeq: number;
   rates: Map<string, { start: number; count: number }>;
 };
 const globalVoice = globalThis as typeof globalThis & { __hollowVoiceRooms?: Map<string, VoiceRoom> };
@@ -21,7 +30,7 @@ globalVoice.__hollowVoiceRooms = rooms;
 function voiceRoom(code: string): VoiceRoom {
   let current = rooms.get(code);
   if (!current) {
-    current = { listeners: new Map(), inbox: new Map(), rates: new Map() };
+    current = { listeners: new Map(), inbox: new Map(), audioQueue: [], audioSeq: 0, rates: new Map() };
     rooms.set(code, current);
   }
   return current;
@@ -64,10 +73,7 @@ export async function GET(req: NextRequest) {
   }
   v.listeners.get(playerId)!.seen = Date.now();
   if (req.nextUrl.searchParams.get("config") === "1") {
-    const iceServers: { urls: string; username?: string; credential?: string }[] = [
-      { urls: "stun:stun.l.google.com:19302" },
-      { urls: "stun:stun.cloudflare.com:3478" },
-    ];
+    const iceServers: { urls: string; username?: string; credential?: string }[] = [...EXPANDED_ICE_SERVERS];
     const urls = process.env.VOICE_TURN_URL;
     const username = process.env.VOICE_TURN_USERNAME;
     const credential = process.env.VOICE_TURN_CREDENTIAL;
@@ -84,7 +90,22 @@ export async function GET(req: NextRequest) {
   const signals = (v.inbox.get(playerId) ?? []).filter((msg) =>
     v.listeners.has(msg.from) && volume(room, playerId, msg.from) > 0);
   v.inbox.set(playerId, []);
-  return NextResponse.json({ ok: true, peers, signals }, { headers: { "Cache-Control": "no-store" } });
+
+  // Server audio relay fallback: filter queued audio from speakers in earshot
+  const sinceAudio = Number(req.nextUrl.searchParams.get("sinceAudio") ?? "0") || 0;
+  const now = Date.now();
+  const nearbySpeakers = new Set(peers.map((p) => p.id));
+  const audioChunks = v.audioQueue
+    .filter((c) => c.id > sinceAudio && c.from !== playerId && nearbySpeakers.has(c.from) && now - c.at < 3500)
+    .map((c) => ({
+      id: c.id,
+      from: c.from,
+      chunk: c.chunk,
+      rate: c.rate,
+    }));
+  const lastAudioSeq = v.audioSeq;
+
+  return NextResponse.json({ ok: true, peers, signals, audioChunks, lastAudioSeq }, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function POST(req: NextRequest) {
@@ -118,6 +139,24 @@ export async function POST(req: NextRequest) {
     v.rates.delete(playerId);
     if (v.listeners.size === 0) rooms.delete(code);
     return NextResponse.json({ ok: true });
+  }
+  if (action === "audio") {
+    const chunk = typeof body.chunk === "string" ? body.chunk : "";
+    if (!chunk || chunk.length > 35000) return bad("Invalid audio chunk.", 400);
+    const rate = Number(body.rate) || 12000;
+    const packet: AudioPacket = {
+      id: ++v.audioSeq,
+      from: playerId,
+      chunk,
+      rate,
+      at: Date.now(),
+    };
+    v.audioQueue.push(packet);
+    const cutoff = Date.now() - 3500;
+    while (v.audioQueue.length > 0 && (v.audioQueue[0].at < cutoff || v.audioQueue.length > 160)) {
+      v.audioQueue.shift();
+    }
+    return NextResponse.json({ ok: true, id: v.audioSeq });
   }
   if (action !== "signal") return bad("Unknown voice action.", 400);
   const to = typeof body.to === "string" ? body.to : "";

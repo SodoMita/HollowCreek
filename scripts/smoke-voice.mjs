@@ -47,10 +47,24 @@ try {
   ok((await voice(hollow, "join", "")).status === 409, "second tab cannot hijack an active mic session");
 
   await moveTo(crew, await where(hollow));
-  let near = await poll(hollow, hs);
-  const nearPeer = near.body.peers.find((p) => p.id === crew);
-  ok(near.status === 200 && nearPeer?.gain > 0.85, "nearby voice is full volume");
-  ok(!near.body.peers.some((p) => "x" in p || "role" in p), "voice list does not expose positions or roles");
+  let nearPeer = null;
+  for (let i = 0; i < 20; i++) {
+    const near = await poll(hollow, hs);
+    nearPeer = near.body.peers?.find((p) => p.id === crew);
+    if (nearPeer && nearPeer.gain > 0.85) break;
+    await sleep(200);
+  }
+  ok(!!nearPeer && nearPeer.gain > 0.85, "nearby voice is full volume");
+  const nearCheck = await poll(hollow, hs);
+  ok(!nearCheck.body.peers.some((p) => "x" in p || "role" in p), "voice list does not expose positions or roles");
+
+  // Verify server audio relay routing fallback when nearby
+  const audioPcmB64 = Buffer.from(new Int16Array([10, 20, 30, 40])).toString("base64");
+  const audioPost = await voice(hollow, "audio", hs, { chunk: audioPcmB64, rate: 12000 });
+  ok(audioPost.status === 200, "microphone audio packets can be routed through game server");
+  const crewRelayPoll = await poll(crew, cs);
+  ok(crewRelayPoll.body.audioChunks?.some((c) => c.from === hollow), "in-earshot listener receives server audio packet");
+
   const offer = await voice(hollow, "signal", hs, { to: crew, type: "offer", data: { type: "offer", sdp: "v=0\r\n" } });
   ok(offer.status === 200, "nearby encrypted WebRTC offer can be signaled");
   ok((await poll(crew, cs)).body.signals.some((s) => s.type === "offer" && s.from === hollow), "answering peer receives offer");
@@ -70,6 +84,9 @@ try {
   ok(!(await poll(hollow, hs)).body.peers.some((p) => p.id === crew), "out-of-earshot voice is not connected");
   ok((await voice(hollow, "signal", hs, { to: crew, type: "offer", data: { type: "offer", sdp: "v=0" } })).status === 403,
     "server refuses signaling beyond earshot");
+  await voice(hollow, "audio", hs, { chunk: audioPcmB64, rate: 12000 });
+  const farRelayPoll = await poll(crew, cs);
+  ok(!farRelayPoll.body.audioChunks?.some((c) => c.from === hollow), "out-of-earshot listener does not receive audio packets");
 
   await moveTo(crew, origin);
   const deadline = Date.now() + 16000;

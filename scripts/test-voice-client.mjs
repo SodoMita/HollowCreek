@@ -33,6 +33,28 @@ class AudioContextFake {
   createGain() { return new Gain(); }
   createStereoPanner() { return new Panner(); }
   createMediaStreamSource(inbound) { assert.equal(inbound, stream); return new Node(); }
+  createScriptProcessor() {
+    const proc = new Node();
+    proc.onaudioprocess = null;
+    return proc;
+  }
+  createBuffer(channels, length, sampleRate) {
+    return {
+      numberOfChannels: channels,
+      length,
+      sampleRate,
+      duration: length / sampleRate,
+      getChannelData: () => new Float32Array(length),
+    };
+  }
+  createBufferSource() {
+    return {
+      buffer: null,
+      connect(node) { return node; },
+      start() {},
+      stop() {},
+    };
+  }
   async resume() { this.state = "running"; }
   async close() { this.state = "closed"; }
 }
@@ -136,6 +158,13 @@ assert.equal(connections[1].candidates.length, 1, "ICE before offer flushed on a
 const second = voice.peers.get("p0");
 assert.equal(second.gain.gain.value, 0.4);
 assert.equal(second.pan.pan.value, -0.3);
+
+// Test Server Audio Relay routing when WebRTC is not connected
+const testPcm = new Int16Array([50, 150, -250, 350, 1000]);
+const testB64 = Buffer.from(testPcm.buffer).toString("base64");
+voice.playRelayChunk(second, { chunk: testB64, rate: 12000 });
+assert.ok(second.nextPlayTime > 0, "server audio chunk scheduled and routed through Web Audio nodes");
+
 voice.stop();
 assert.equal(tracksStopped, 1, "voice off releases the microphone");
 assert.equal(contexts[0].state, "closed", "voice off closes output context");

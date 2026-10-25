@@ -91,10 +91,10 @@ let lastVoiceKey = "";
 const voice = new VoiceChat({ baseUrl: () => server, roomCode: () => roomCode,
   playerId: getPid, getSettings: () => settingsStore.value, onStatus: updateVoiceHud });
 function updateVoiceHud(status: VoiceStatus) {
-  $("voicebtn").textContent = status.starting ? "…" : status.active ? "◉" : "🎙";
+  $("voicebtn").textContent = status.starting ? "…" : status.speaking ? "🗣" : status.active ? "◉" : "🎙";
   $("voicebtn").setAttribute("aria-label", status.active ? "Leave proximity voice" : "Join proximity voice");
   $("voicebtn").title = status.active
-    ? `${status.connected} connected, ${status.nearby} within earshot · ${keyLabel(settingsStore.value.controls.talk)} to leave`
+    ? `Voice: ${status.connected} in earshot (${status.p2pCount} P2P, ${status.relayCount} Relay) · ${status.speaking ? "Speaking" : "Listening"} · ${keyLabel(settingsStore.value.controls.talk)} to leave`
     : `Join proximity voice (${keyLabel(settingsStore.value.controls.talk)}) · microphone permission`;
   $("micmute").style.display = status.active ? "inline-block" : "none";
   $("micmute").textContent = status.muted ? "🔇" : "🎙";
@@ -102,14 +102,14 @@ function updateVoiceHud(status: VoiceStatus) {
   $("voicestatus").style.display = status.error && roomCode ? "block" : "none";
   $("voicestatus").innerHTML = status.error
     ? `${esc(status.error)}${status.error.includes("Enable sound") ? ` <button data-act="voiceplay" style="text-decoration:underline">Enable sound</button>` : ""}` : "";
-  const key = JSON.stringify([status.active, status.starting, status.muted, status.error]);
+  const key = JSON.stringify([status.active, status.starting, status.muted, status.speaking, status.p2pCount, status.relayCount, status.error]);
   if (lastVoiceKey !== key) {
     lastVoiceKey = key;
     overlayKey = "";
     if (snap?.phase === "lobby" || snap?.phase === "ended") renderHud(snap);
   }
   document.querySelectorAll<HTMLElement>("[data-voicepeers]").forEach((label) => {
-    label.textContent = `${status.connected} connected · ${status.nearby} within earshot · the dead hear only the dead`;
+    label.textContent = `${status.connected} connected (${status.p2pCount} P2P, ${status.relayCount} Server Relay) · ${status.nearby} in earshot${status.speaking ? " · ● Speaking" : ""}`;
   });
 }
 const wardPanel = new WardPanel(document.body, {

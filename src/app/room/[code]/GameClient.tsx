@@ -29,7 +29,18 @@ export default function GameClient({ code }: { code: string }) {
   const [chatText, setChatText] = useState("");
   const [roleBanner, setRoleBanner] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
-  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>({ active: false, starting: false, muted: false, nearby: 0, connected: 0, error: null });
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>({
+    active: false,
+    starting: false,
+    muted: false,
+    nearby: 0,
+    connected: 0,
+    p2pCount: 0,
+    relayCount: 0,
+    mode: "idle",
+    speaking: false,
+    error: null,
+  });
   const [tasksOpen, setTasksOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(createDefaultSettings);
@@ -425,9 +436,9 @@ export default function GameClient({ code }: { code: string }) {
                 className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] sm:py-1.5"
               >{muted ? "🔇" : "🔊"}</button>
               <button onClick={toggleVoice} disabled={voiceStatus.starting} aria-label={voiceStatus.active ? "Leave proximity voice" : "Join proximity voice"}
-                aria-pressed={voiceStatus.active} title={voiceStatus.active ? `Voice: ${voiceStatus.connected} connected, ${voiceStatus.nearby} nearby · ${keyLabel(settings.controls.talk)} to leave` : `Join proximity voice (${keyLabel(settings.controls.talk)}) — asks for microphone permission`}
-                className={`rounded border px-1.5 py-1 sm:py-1.5 ${voiceStatus.active ? "border-[#6b8e5a] bg-[#1d2a1a]/90 text-[#b8d8a4]" : "border-[#3a2733] bg-[#140d18]/80 text-[#c9b8a4]"}`}>
-                {voiceStatus.starting ? "…" : <Volume2 className="h-4 w-4" />}
+                aria-pressed={voiceStatus.active} title={voiceStatus.active ? `Voice: ${voiceStatus.connected} connected (${voiceStatus.p2pCount} P2P, ${voiceStatus.relayCount} Relay) · ${voiceStatus.nearby} nearby · ${voiceStatus.speaking ? "Speaking" : "Listening"} · ${keyLabel(settings.controls.talk)} to leave` : `Join proximity voice (${keyLabel(settings.controls.talk)}) — asks for microphone permission`}
+                className={`rounded border px-1.5 py-1 sm:py-1.5 ${voiceStatus.active ? (voiceStatus.speaking ? "border-[#ffd98a] bg-[#3a2a16] text-[#ffd98a]" : "border-[#6b8e5a] bg-[#1d2a1a]/90 text-[#b8d8a4]") : "border-[#3a2733] bg-[#140d18]/80 text-[#c9b8a4]"}`}>
+                {voiceStatus.starting ? "…" : <Volume2 className={`h-4 w-4 ${voiceStatus.speaking ? "animate-pulse text-[#ffd98a]" : ""}`} />}
               </button>
               {voiceStatus.active && <button onClick={toggleMic} aria-label={voiceStatus.muted ? "Unmute microphone" : "Mute microphone"}
                 title={voiceStatus.muted ? "Unmute microphone" : "Mute microphone"}
@@ -681,7 +692,7 @@ export default function GameClient({ code }: { code: string }) {
                     {voiceStatus.muted ? "Unmute mic" : "Mute mic"}
                   </button>}
                 </div>
-                {voiceStatus.active && <p className="mt-2 text-xs text-[#9c8b7a]">{voiceStatus.connected} connected · {voiceStatus.nearby} within earshot. Farther voices fade; the dead hear only the dead.</p>}
+                {voiceStatus.active && <p className="mt-2 text-xs text-[#9c8b7a]">{voiceStatus.connected} connected ({voiceStatus.p2pCount} P2P, {voiceStatus.relayCount} Server Relay) · {voiceStatus.nearby} in earshot. Farther voices fade; the dead hear only the dead.{voiceStatus.speaking ? " · ● Speaking" : ""}</p>}
                 {voiceStatus.error && <p role="alert" className="mt-2 text-xs text-[#e29a84]">
                   {voiceStatus.error}
                   {voiceStatus.error.includes("Enable sound") && <button onClick={() => void voiceRef.current?.resumePlayback()} className="ml-2 underline">Enable sound</button>}
