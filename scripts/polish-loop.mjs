@@ -145,7 +145,7 @@ function prepareClone() {
 
   if (!existsSync(join(clone, "node_modules"))) {
     if (existsSync(join(root, "node_modules"))) {
-      spawnSync("ln", ["-sf", join(root, "node_modules"), join(clone, "node_modules")]);
+      spawnSync("cp", ["-a", join(root, "node_modules"), join(clone, "node_modules")]);
     } else {
       execute("npm", ["ci", "--no-audit", "--no-fund"], clone, 240_000, {
         ...agentEnv,
