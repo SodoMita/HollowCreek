@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  if (process.env.HOLLOW_POLISH_WORKER !== "1") {
+  if (process.env.HOLLOW_POLISH_WORKER === "0") {
     return Response.json({ enabled: false }, { headers: { "Cache-Control": "no-store" } });
   }
   try {

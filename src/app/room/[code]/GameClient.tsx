@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
+import Link from "next/link";
+import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
 import { Renderer } from "@/game/render";
 import { WardPanel } from "@/game/ward-ui";
 import { AudioDirector } from "@/game/audio";
@@ -662,7 +663,10 @@ export default function GameClient({ code }: { code: string }) {
                   <p className="mt-6 text-[#9c8b7a]">Waiting for the host to let night fall…</p>
                 )}
                 <div className="mt-4 flex justify-center gap-2">
-                  <button onClick={() => settingsDialogRef.current?.open()} className="rounded border border-[#3a2733] px-4 py-1.5 text-sm text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]">⚙ Settings</button>
+                  <button onClick={() => settingsDialogRef.current?.open()} className="rounded border border-[#3a2733] px-3 py-1.5 text-sm text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]">⚙ Settings</button>
+                  <Link href="/tutorial" className="flex items-center gap-1.5 rounded border border-[#3a2733] px-3 py-1.5 text-sm text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]">
+                    <BookOpen className="h-3.5 w-3.5 text-[#d99a3d]" /> Tutorial
+                  </Link>
                 </div>
                 <button onClick={() => void leaveToTownList()} disabled={leaving}
                   className="mt-3 w-full rounded border border-[#84624c] px-4 py-2 text-sm text-[#e9dfcf] hover:bg-[#33231f] disabled:opacity-50">

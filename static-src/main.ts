@@ -45,6 +45,7 @@ function bindServer(s: string) {
   server = s.replace(/\/$/, "");
   ($("server") as HTMLInputElement).value = server;
   ($("fullsite") as HTMLAnchorElement).href = server + "/";
+  if ($("tutoriallink")) ($("tutoriallink") as HTMLAnchorElement).href = server + "/tutorial";
 }
 async function probeServers() {
   const epoch = ++probeEpoch;
@@ -157,6 +158,7 @@ function initMenu() {
   ($("name") as HTMLInputElement).value = localStorage.getItem("hc_name") ?? "";
   ($("server") as HTMLInputElement).value = server;
   ($("fullsite") as HTMLAnchorElement).href = server + "/";
+  if ($("tutoriallink")) ($("tutoriallink") as HTMLAnchorElement).href = server + "/tutorial";
   $("server").addEventListener("change", () => {
     cancelProbe();
     bindServer(($("server") as HTMLInputElement).value.trim() || DEFAULT_SERVER);

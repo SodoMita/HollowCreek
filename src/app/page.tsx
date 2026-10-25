@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, DoorOpen, Flame, Moon, Plus, RefreshCw, Skull, Trophy, Users } from "lucide-react";
+import { Bell, BookOpen, DoorOpen, Flame, Moon, Plus, RefreshCw, Skull, Trophy, Users } from "lucide-react";
 import Link from "next/link";
 import type { RoomListing } from "@/game/types";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, type GameSettings } from "@/game/settings";
@@ -180,6 +180,12 @@ export default function Home() {
                 aria-label="Open settings"
               >⚙ Settings</button>
               <Link
+                href="/tutorial"
+                className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition hover:border-[#c9762f]/40 hover:text-[#ffd98a]"
+              >
+                <BookOpen className="h-3.5 w-3.5 text-[#d99a3d]" /> Tutorial
+              </Link>
+              <Link
                 href="/stats"
                 className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition hover:border-[#c9762f]/40 hover:text-[#d99a3d]"
               >
@@ -202,6 +208,12 @@ export default function Home() {
           >
             <Plus className="h-5 w-5" strokeWidth={2.5} /> Found a new town
           </button>
+          <Link
+            href="/tutorial"
+            className="mt-2.5 flex w-full items-center justify-center gap-2 rounded border border-[#84624c]/80 bg-[#1f151c]/90 px-4 py-2.5 font-display text-lg tracking-wide text-[#ffd98a] transition hover:bg-[#321f28]"
+          >
+            <BookOpen className="h-4 w-4 text-[#d99a3d]" /> Walk Alone · Singleplayer Tutorial
+          </Link>
           <div className="my-5 flex items-center gap-3 text-xs text-[#5a4a50]">
             <div className="h-px flex-1 bg-[#3a2733]" /> or travel to one <div className="h-px flex-1 bg-[#3a2733]" />
           </div>
