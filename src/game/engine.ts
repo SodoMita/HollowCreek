@@ -494,8 +494,8 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
   room.nextFlicker = Date.now() + 15000 + Math.random() * 15000;
   feed(room, "Night falls. Bring kits from the cart to the broken wards. Deliver a kit to open its repair puzzle; each solved board mends a ward.");
   feed(room, "Something wearing a human shape walks among you.");
-  feed(room, "Nyx, the cat-eared keeper of the night watch, leaves her iron key somewhere on the street and slips into the fog.");
-  feed(room, "Five houses stand along the creek. Their doors are locked; the iron key turns them, and their walls go see-through once someone steps inside.");
+  feed(room, "The iron key is somewhere on the street. It unlocks every house, and locks them again.");
+  feed(room, "Locked houses: stand at the door and press interact to unlock or enter. Walls go see-through while anyone is inside.");
   record(room, null, "game_start", { players: ps.map((p) => ({ id: p.id, name: p.name, role: p.role })) });
   checkWin(room);
   return { ok: true };

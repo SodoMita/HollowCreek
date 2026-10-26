@@ -43,6 +43,7 @@ const sources = {
   settings: read("src/game/settings.ts"),
   settingsUi: read("src/game/settings-ui.ts"),
   gameClient: read("src/app/room/[code]/GameClient.tsx"),
+  tutorial: read("src/app/tutorial/TutorialClient.tsx"),
   notes: read("NYX-NOTES.md"),
 };
 
@@ -56,7 +57,7 @@ const checks = [
   ["doors need the key", /if \(!p\.hasKey\) return \{ ok: false, error: `\$\{b\.name\} is locked/.test(sources.engine)],
   ["indoor movement bounds", /INTERIOR_HALF/.test(sources.engine) && /p\.inside = null/.test(sources.engine)],
   ["transparent walls in snapshot", /transparent: occupants > 0/.test(sources.engine)],
-  ["cutaway renderer", /private drawBuilding/.test(sources.render) && /WALLS THIN/.test(sources.render)],
+  ["cutaway renderer", /private drawBuilding/.test(sources.render) && /interior cutaway/.test(sources.render)],
   ["music bus", /musicBus/.test(sources.audio)],
   ["ambience bus", /ambienceBus/.test(sources.audio)],
   ["effects bus", /effectsBus/.test(sources.audio)],
@@ -66,6 +67,11 @@ const checks = [
   ["settings dialog has all mixer channels", (sources.settingsUi.match(/audio\.(master|music|ambience|effects)/g) ?? []).length >= 4],
   ["lock binding exists", /lock: "KeyL"/.test(sources.settings) && /bound\("lock"\)/.test(sources.gameClient)],
   ["clients send intent, not positions", !/body\.x\b/.test(sources.engine) && /body\.action === "door"/.test(sources.engine)],
+  ["singleplayer camera is not rebuilt per step", /rendererRef\.current \?\? new Renderer\(\)/.test(sources.tutorial) && /snapshotBuilder\.current\(\)/.test(sources.tutorial)],
+  ["camera snaps on the first frame", /if \(!this\.cameraReady\) \{ this\.cameraX = targetCam/.test(sources.render)],
+  ["houses draw a roof over the cutaway", /shingled planes with eaves/.test(sources.render)],
+  ["creek foreground exists", /the creek itself, below the bank/.test(sources.render)],
+  ["no duplicate floating house labels", !/fillText\(def\.name, 0, nameY\)/.test(sources.render)],
   ["no unfinished markers", !/\b(TODO|FIXME|XXX)\b/.test(Object.values(sources).join("\n"))],
 ];
 

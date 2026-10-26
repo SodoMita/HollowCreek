@@ -156,21 +156,17 @@ export default function Home() {
             still able to plead… until a key, a vote, or the Hollow sets them free.
           </p>
 
-          {/* Nyx — this household's night creature, and your host */}
-          <div className="hc-rise-3 mt-7 flex max-w-lg gap-4 rounded-lg border border-[#4a2f3c] bg-[#150d1b]/80 p-3 backdrop-blur">
-            <div className="relative h-32 w-24 shrink-0 overflow-hidden rounded border border-[#6b3a48]">
-              <Image src="/nyx.jpg" alt="Nyx, the catgirl of the Hollow Creek night watch" fill sizes="96px" className="object-cover object-top" priority />
+          {/* night watch plaque — short and factual */}
+          <div className="hc-rise-3 mt-6 flex max-w-lg items-center gap-3 rounded-lg border border-[#3a2733] bg-[#150d1b]/80 p-2.5 backdrop-blur">
+            <div className="relative h-20 w-16 shrink-0 overflow-hidden rounded border border-[#4a2f3c]">
+              <Image src="/nyx.jpg" alt="Nyx, keeper of the Hollow Creek night watch" fill sizes="64px" className="object-cover object-top" priority />
             </div>
-            <div className="min-w-0">
-              <p className="font-body text-[11px] uppercase tracking-[0.3em] text-[#c9762f]">Keeper of the night watch</p>
-              <h2 className="font-display text-2xl leading-tight text-[#ffd98a]">Nyx</h2>
-              <p className="mt-1 text-sm leading-snug text-[#c9b8a4]">
-                Cat-eared, key-bearing, and the only one who walks the creek after dusk.
-                She lends you her iron key — <span className="text-[#d99a3d]">mrrp</span> of warning included.
-                Locks answer to her; walls turn to glass when a house is occupied.
-              </p>
-              <p className="mt-1.5 text-[11px] italic text-[#8f7d6b]">
-                “Five houses on my beat. Enter uninvited and the town sees straight through the walls, little mouse.”
+            <div className="min-w-0 text-sm">
+              <p className="font-body text-[10px] uppercase tracking-[0.28em] text-[#c9762f]">Night watch</p>
+              <p className="font-display text-lg leading-tight text-[#ffd98a]">Nyx</p>
+              <p className="text-xs leading-snug text-[#9c8b7a]">
+                Cat-eared keeper of the creek. She leaves the iron key on the street each night —
+                it opens and locks all five houses, and their walls turn see-through while someone is inside.
               </p>
             </div>
           </div>

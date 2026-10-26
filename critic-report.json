@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-26T07:54:02.022Z",
+  "generatedAt": "2026-10-26T08:37:08.332Z",
   "branch": "",
   "roster": [
     "mimo",
@@ -104,6 +104,26 @@
     },
     {
       "name": "clients send intent, not positions",
+      "pass": true
+    },
+    {
+      "name": "singleplayer camera is not rebuilt per step",
+      "pass": true
+    },
+    {
+      "name": "camera snaps on the first frame",
+      "pass": true
+    },
+    {
+      "name": "houses draw a roof over the cutaway",
+      "pass": true
+    },
+    {
+      "name": "creek foreground exists",
+      "pass": true
+    },
+    {
+      "name": "no duplicate floating house labels",
       "pass": true
     },
     {

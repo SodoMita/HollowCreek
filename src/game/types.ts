@@ -79,37 +79,37 @@ export interface Building {
 
 export const STATIONS: Station[] = [
   // --- west reach: the ferry landing below the bridge ---
-  { id: "ferry", name: "Refloat the ferry winch", x: 130, kind: "well" },
+  { id: "ferry", name: "Refloat the ferry winch", x: 80, kind: "well" },
   // --- original street ---
   { id: "pumpkins", name: "Repair the harvest shed", x: 280, kind: "pumpkins" },
-  { id: "well", name: "Rebuild the well winch", x: 680, kind: "well" },
-  { id: "scarecrow", name: "Restitch the scarecrow", x: 1060, kind: "scarecrow" },
-  { id: "lantern", name: "Rewire the street lantern", x: 1450, kind: "lantern" },
-  { id: "chapel", name: "Restore the chapel lights", x: 1720, kind: "chapel" },
+  { id: "well", name: "Rebuild the well winch", x: 850, kind: "well" },
+  { id: "scarecrow", name: "Restitch the scarecrow", x: 1090, kind: "scarecrow" },
+  { id: "lantern", name: "Rewire the street lantern", x: 1380, kind: "lantern" },
+  { id: "chapel", name: "Restore the chapel lights", x: 1650, kind: "chapel" },
   { id: "mill", name: "Replace the sawmill blades", x: 2760, kind: "mill" },
-  { id: "graves", name: "Rebuild the grave markers", x: 3200, kind: "graves" },
-  { id: "radio", name: "Repair the radio tower", x: 3650, kind: "radio" },
-  { id: "silo", name: "Patch the grain silo", x: 4000, kind: "silo" },
+  { id: "graves", name: "Rebuild the grave markers", x: 3060, kind: "graves" },
+  { id: "radio", name: "Repair the radio tower", x: 3760, kind: "radio" },
+  { id: "silo", name: "Patch the grain silo", x: 4070, kind: "silo" },
   // --- east reach: orchard, beacon and quarry beyond the creek ---
-  { id: "orchard", name: "Rebind the orchard press", x: 4520, kind: "pumpkins" },
-  { id: "beacon", name: "Rekindle the watch beacon", x: 5180, kind: "lantern" },
-  { id: "quarry", name: "Plug the quarry pump", x: 6060, kind: "silo" },
+  { id: "orchard", name: "Rebind the orchard press", x: 4380, kind: "pumpkins" },
+  { id: "beacon", name: "Rekindle the watch beacon", x: 5070, kind: "lantern" },
+  { id: "quarry", name: "Plug the quarry pump", x: 6220, kind: "silo" },
 ];
 
 /** Houses with interiors. Each door needs the iron key to be opened or locked. */
 export const BUILDINGS: Building[] = [
   {
     id: "lodge", name: "Ferryman's Lodge", interiorName: "The Ferryman's Lodge",
-    x: 480, half: 165, kind: "lodge", doorStyle: "arch",
+    x: 560, half: 140, kind: "lodge", doorStyle: "arch",
     props: [
-      { name: "Ledger table", x: 480, kind: "table" },
-      { name: "Peat stove", x: 370, kind: "stove" },
-      { name: "Rope shelf", x: 580, kind: "shelf" },
+      { name: "Ledger table", x: 560, kind: "table" },
+      { name: "Peat stove", x: 470, kind: "stove" },
+      { name: "Rope shelf", x: 652, kind: "shelf" },
     ],
   },
   {
     id: "schoolhouse", name: "Hollow Creek School", interiorName: "The Old Schoolroom",
-    x: 3420, half: 175, kind: "lodge", doorStyle: "plank",
+    x: 3420, half: 140, kind: "lodge", doorStyle: "plank",
     props: [
       { name: "Chalk desk", x: 3420, kind: "table" },
       { name: "Cold stove", x: 3320, kind: "stove" },
@@ -118,42 +118,42 @@ export const BUILDINGS: Building[] = [
   },
   {
     id: "cider", name: "Cider House", interiorName: "The Cider Cellar",
-    x: 4850, half: 170, kind: "cider", doorStyle: "plank",
+    x: 4700, half: 140, kind: "cider", doorStyle: "plank",
     props: [
-      { name: "Press table", x: 4850, kind: "table" },
-      { name: "Cider barrels", x: 4740, kind: "barrel" },
-      { name: "Cellar lamp", x: 4950, kind: "lamp" },
+      { name: "Press table", x: 4700, kind: "table" },
+      { name: "Cider barrels", x: 4610, kind: "barrel" },
+      { name: "Cellar lamp", x: 4790, kind: "lamp" },
     ],
   },
   {
     id: "post", name: "Watchtower Post", interiorName: "The Signal Office",
-    x: 5650, half: 160, kind: "post", doorStyle: "arch",
+    x: 5400, half: 140, kind: "post", doorStyle: "arch",
     props: [
-      { name: "Telegraph desk", x: 5650, kind: "table" },
-      { name: "Parcel crates", x: 5540, kind: "crate" },
-      { name: "Signal lamp", x: 5750, kind: "lamp" },
+      { name: "Telegraph desk", x: 5400, kind: "table" },
+      { name: "Parcel crates", x: 5300, kind: "crate" },
+      { name: "Signal lamp", x: 5490, kind: "lamp" },
     ],
   },
   {
     id: "quarryoffice", name: "Quarry Office", interiorName: "The Quarry Office",
-    x: 6250, half: 150, kind: "quarry", doorStyle: "iron",
+    x: 5900, half: 140, kind: "quarry", doorStyle: "iron",
     props: [
-      { name: "Survey table", x: 6250, kind: "table" },
-      { name: "Dynamite crate", x: 6150, kind: "crate" },
-      { name: "Oil lamp", x: 6340, kind: "lamp" },
+      { name: "Survey table", x: 5900, kind: "table" },
+      { name: "Dynamite crate", x: 5800, kind: "crate" },
+      { name: "Oil lamp", x: 5990, kind: "lamp" },
     ],
   },
 ];
 
 /** Wards that only exist behind a locked door. */
 export const INTERIOR_STATIONS: Station[] = [
-  { id: "lodge_ledger", name: "Rekindle the lodge hearth", x: 480, kind: "lantern", inside: "lodge" },
-  { id: "signal_desk", name: "Rebuild the signal relays", x: 5650, kind: "radio", inside: "post" },
+  { id: "lodge_ledger", name: "Rekindle the lodge hearth", x: 620, kind: "lantern", inside: "lodge" },
+  { id: "signal_desk", name: "Rebuild the signal relays", x: 5460, kind: "radio", inside: "post" },
 ];
 
 export const ALL_STATIONS: Station[] = [...STATIONS, ...INTERIOR_STATIONS];
 
-export const INTERIOR_HALF = 140;
+export const INTERIOR_HALF = 118;
 export const buildingById = (id: string | null | undefined): Building | undefined =>
   id ? BUILDINGS.find((b) => b.id === id) : undefined;
 export const stationById = (id: string): Station | undefined => ALL_STATIONS.find((s) => s.id === id);

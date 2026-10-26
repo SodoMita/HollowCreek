@@ -191,6 +191,8 @@ export default function TutorialClient() {
   const lastDir = useRef(0);
   const displayX = useRef(new Map<string, number>());
   const lastStepTime = useRef(0);
+  /** The renderer keeps the camera; rebuilding it resets the view. */
+  const rendererRef = useRef<Renderer | null>(null);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -698,6 +700,13 @@ export default function TutorialClient() {
     danger,
   ]);
 
+  // One renderer for the whole session: its cameraX is the tutorial camera.
+  // buildSnapshot changes identity with every step, so it must be read through
+  // a ref — otherwise this effect re-ran, a fresh Renderer started at camera 0,
+  // and the singleplayer view snapped back to the start of the street.
+  const snapshotBuilder = useRef(buildSnapshot);
+  snapshotBuilder.current = buildSnapshot;
+
   // Main canvas render loop
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -705,7 +714,8 @@ export default function TutorialClient() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const renderer = new Renderer();
+    const renderer = rendererRef.current ?? new Renderer();
+    rendererRef.current = renderer;
     const store = getSettingsStore();
     renderer.setSettings(store.value);
 
@@ -733,13 +743,14 @@ export default function TutorialClient() {
 
     resize();
     window.addEventListener("resize", resize);
+    window.visualViewport?.addEventListener("resize", resize);
 
     const loop = (nowMs: number) => {
       raf = requestAnimationFrame(loop);
       const dt = Math.min(0.05, (nowMs - last) / 1000);
       last = nowMs;
 
-      const snap = buildSnapshot();
+      const snap = snapshotBuilder.current();
       for (const p of snap.players) {
         const cur = displayX.current.get(p.id);
         if (cur === undefined || Math.abs(cur - p.x) > 300) displayX.current.set(p.id, p.x);
@@ -755,8 +766,9 @@ export default function TutorialClient() {
       unsub();
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
+      window.visualViewport?.removeEventListener("resize", resize);
     };
-  }, [buildSnapshot, getSettingsStore]);
+  }, [getSettingsStore]);
 
   // Practice modal helper
   const openPracticeWard = (kind: WardKind) => {

@@ -70,11 +70,48 @@ Five buildings are part of the authoritative world (`BUILDINGS` in `src/game/typ
 Server authority was kept intact: clients still send intent only, and every door,
 key and interior gate is validated in `src/game/engine.ts`.
 
+## 4. Singleplayer camera bug (fixed)
+
+`TutorialClient` rebuilt its `Renderer` whenever `buildSnapshot` changed identity — and
+`buildSnapshot` is a `useCallback` that depends on the simulated player position, so it
+changed on every step. Each rebuild produced a fresh `Renderer` whose `cameraX` started at
+`0`, so the singleplayer view snapped back toward the start of the street while walking.
+
+- One renderer is now kept in `rendererRef` for the whole session, and the snapshot builder
+  is read through a ref so the render effect no longer re-runs per step.
+- `Renderer.render` also had a first-frame ease-in from camera `0`; it now snaps to the
+  player's framed position on the first frame, then smooths.
+- `visualViewport` resize listeners are attached in the tutorial too (mobile URL bars).
+- Regression test: first frame framed on player, stable across frames, follows the player,
+  and an eastern spawn does not ease in from `0`.
+
+## 5. Buildings rebuilt (they were flat slabs)
+
+The first pass drew houses as rectangles with a floating caption. Reviewed by rendering
+the real canvas offscreen and looking at the frames, then rebuilt:
+
+- stone plinth, porch boards, clapboard courses with eave shadow, corner boards;
+- gable roof with shingle courses, ridge, chimney and smoke. **The roof stays solid over a
+  cutaway**, so an occupied house still reads as a house;
+- two shuttered windows with warm glass gradients and sills, porch lantern, arch/plank/iron
+  door with lintel, steps, brass keyhole; light spills across the threshold when open;
+- per-house silhouettes: woodpile + bench (lodge), bell cupola (school), striped awning +
+  barrels (cider), signal mast (post), parapet + crane jib + chute (quarry);
+- one painted sign per house with a compact status line — the duplicate floating labels,
+  colliding markers and stray awning shelf are gone;
+- interiors: brighter cutaway, floorboards, ceiling beam and hanging lamp, furniture, and
+  the indoor ward as a wall-mounted board clear of the doorway;
+- street: packed-earth road with wheel ruts, cobbles, leaf drifts, split-rail fence, grass,
+  and the creek itself in the foreground with reeds and moon dashes;
+- ward badges now sit just above their own structure and only appear within 560px;
+- street re-laid so every house has clear ground between it and the nearest ward.
+
 ## Persona
 
-Nyx is now part of the product: a portrait and night-watch lore block on the landing
-page, the app metadata, and the in-game start feed. She keeps the key, walks the creek
-after dusk, and warns that walls are thin.
+Nyx is a short, factual night-watch plaque on the landing page (portrait + one sentence
+about the key). The earlier theatrical quotes and lore paragraph are gone, the metadata is
+back to the game's own description, and the start-of-night feed now explains the door
+mechanics instead of narrating a character.
 
 ## Validation
 
