@@ -1,7 +1,7 @@
 // Persistent, client-only preferences. These never change authoritative gameplay.
 export type GraphicsQuality = "low" | "medium" | "high";
 export type InteractMode = "hold" | "toggle";
-export type BindableAction = "left" | "right" | "interact" | "ability" | "blackout" | "push" | "drop" | "ruin" | "chat" | "talk";
+export type BindableAction = "left" | "right" | "interact" | "ability" | "blackout" | "push" | "drop" | "ruin" | "lock" | "chat" | "talk";
 
 export interface GameSettings {
   audio: {
@@ -81,6 +81,7 @@ const DEFAULTS: GameSettings = {
     push: "ShiftLeft",
     drop: "KeyG",
     ruin: "KeyR",
+    lock: "KeyL",
     chat: "Enter",
     talk: "KeyT",
     interactMode: "hold",
@@ -88,7 +89,7 @@ const DEFAULTS: GameSettings = {
 };
 
 const STORAGE_KEY = "hc_settings_v1";
-const ACTIONS: BindableAction[] = ["left", "right", "interact", "ability", "blackout", "push", "drop", "ruin", "chat", "talk"];
+const ACTIONS: BindableAction[] = ["left", "right", "interact", "ability", "blackout", "push", "drop", "ruin", "lock", "chat", "talk"];
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const num = (v: unknown, fallback: number, lo = 0, hi = 1) =>

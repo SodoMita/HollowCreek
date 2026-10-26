@@ -12,9 +12,9 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Hollow Creek — an autumn horror of townsfolk and things",
+  title: "Hollow Creek · Nyx's Nightwatch",
   description:
-    "A 1D multiplayer social-deduction horror. Walk the autumn street, do your chores, ring the bell — and cage the Hollow before it wears your face.",
+    "A multiplayer night of wards, locked houses and things wearing human faces — kept by Nyx, catgirl of the night watch.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

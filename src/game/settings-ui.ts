@@ -17,6 +17,7 @@ const ACTIONS: { id: BindableAction; label: string }[] = [
   { id: "push", label: "Push cart (hold + walk)" },
   { id: "drop", label: "Drop carried kit" },
   { id: "ruin", label: "Hollow: ruin a ward" },
+  { id: "lock", label: "Lock / unlock a door" },
   { id: "chat", label: "Speak" },
   { id: "talk", label: "Voice chat on/off" },
 ];

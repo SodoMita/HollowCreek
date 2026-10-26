@@ -8,6 +8,7 @@ import { Renderer } from "@/game/render";
 import { WardPanel } from "@/game/ward-ui";
 import { AudioDirector } from "@/game/audio";
 import { VoiceChat, type VoiceStatus } from "@/game/voice";
+import { BUILDINGS } from "@/game/types";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
 import { BELL_X } from "@/game/types";
@@ -160,7 +161,10 @@ export default function GameClient({ code }: { code: string }) {
 
   const ensureAudio = useCallback(() => {
     if (!audioRef.current) audioRef.current = new AudioDirector(getSettingsStore());
+    // start() is idempotent; resume() retries the context after the first
+    // gesture, which browsers require before any sound can be heard.
     audioRef.current.start();
+    audioRef.current.resume();
   }, [getSettingsStore]);
 
   // Shared repair panel: built once, never re-mounted on each 100ms state poll.
@@ -269,6 +273,7 @@ export default function GameClient({ code }: { code: string }) {
       else if (bound("push") && !e.repeat) { void send({ cartHeld: true }); e.preventDefault(); }
       else if (bound("drop") && !e.repeat) { void send({ action: "drop_supply" }); e.preventDefault(); }
       else if (bound("ruin") && !e.repeat) { void send({ action: "sabotage" }); e.preventDefault(); }
+      else if (bound("lock") && !e.repeat) { void send({ action: "lock" }); e.preventDefault(); }
       else if (bound("chat") && !e.repeat) { openChat(); e.preventDefault(); }
       else if (bound("talk") && !e.repeat) {
         const voice = voiceRef.current;
@@ -460,6 +465,14 @@ export default function GameClient({ code }: { code: string }) {
               {voiceStatus.error}
               {voiceStatus.error.includes("Enable sound") && <button onClick={() => void voiceRef.current?.resumePlayback()} className="ml-2 underline">Enable sound</button>}
             </p>
+          )}
+
+          {/* ---- indoors: you are behind a door, and the walls are thin ---- */}
+          {s.self.inside && (
+            <div className="hc-hud-item absolute left-1/2 top-14 z-20 -translate-x-1/2 rounded border border-[#d99a3d]/60 bg-[#1b1220]/90 px-3 py-1.5 text-center text-xs text-[#ffd98a] backdrop-blur sm:top-20 sm:text-sm">
+              ⌂ Inside {BUILDINGS.find((b) => b.id === s.self.inside)?.interiorName ?? "the house"}
+              <span className="ml-2 hidden text-[#c9b8a4] sm:inline">E at the door to step out · walls are see-through</span>
+            </div>
           )}
 
           {/* ---- task list ---- */}
