@@ -86,3 +86,13 @@ after dusk, and warns that walls are thin.
   - key pickup, door unlock, entry, transparency, indoor ward in pool, lock from inside,
     exit, locked-door refusal for a keyless soul, re-open, second soul entering — all pass.
 - `npx drizzle-kit push` — schema unchanged, applied cleanly.
+
+## Critics (opencode subagents)
+
+`@opencode/cli` (v2.1.4) is installed. `node scripts/nightwatch-critics.mjs` runs the
+critic roster (`NYX_CRITICS`, default `mimo,deepseek,big-pickle,glm-5.3`) through
+`opencode run --model …` and then a model-free deterministic audit of the branch. A
+model that cannot be reached is written into `critic-report.json` as **skipped** rather
+than quietly counted as a pass. In this sandbox no hosted provider keys are configured,
+so all four model critics are recorded as skipped; the deterministic audit (20 invariants
+covering the mixer, map, doors, interiors, server authority and hygiene) is green.
