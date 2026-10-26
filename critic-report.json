@@ -1,0 +1,132 @@
+{
+  "generatedAt": "2026-10-26T07:54:02.022Z",
+  "branch": "",
+  "roster": [
+    "mimo",
+    "deepseek",
+    "big-pickle",
+    "glm-5.3"
+  ],
+  "critics": [
+    {
+      "model": "mimo",
+      "status": "skipped",
+      "reason": "no hosted provider key in sandbox"
+    },
+    {
+      "model": "deepseek",
+      "status": "skipped",
+      "reason": "no hosted provider key in sandbox"
+    },
+    {
+      "model": "big-pickle",
+      "status": "skipped",
+      "reason": "no hosted provider key in sandbox"
+    },
+    {
+      "model": "glm-5.3",
+      "status": "skipped",
+      "reason": "no hosted provider key in sandbox"
+    }
+  ],
+  "deterministic": [
+    {
+      "name": "expanded world",
+      "pass": true
+    },
+    {
+      "name": "west and east wards",
+      "pass": true
+    },
+    {
+      "name": "five keyed houses",
+      "pass": true
+    },
+    {
+      "name": "two indoor wards",
+      "pass": true
+    },
+    {
+      "name": "interior-aware reach",
+      "pass": true
+    },
+    {
+      "name": "server door authority",
+      "pass": true
+    },
+    {
+      "name": "doors need the key",
+      "pass": true
+    },
+    {
+      "name": "indoor movement bounds",
+      "pass": true
+    },
+    {
+      "name": "transparent walls in snapshot",
+      "pass": true
+    },
+    {
+      "name": "cutaway renderer",
+      "pass": true
+    },
+    {
+      "name": "music bus",
+      "pass": true
+    },
+    {
+      "name": "ambience bus",
+      "pass": true
+    },
+    {
+      "name": "effects bus",
+      "pass": true
+    },
+    {
+      "name": "sliders drive the graph",
+      "pass": true
+    },
+    {
+      "name": "mute is not hard-coded",
+      "pass": true
+    },
+    {
+      "name": "adaptive score + heartbeat honoured",
+      "pass": true
+    },
+    {
+      "name": "settings dialog has all mixer channels",
+      "pass": true
+    },
+    {
+      "name": "lock binding exists",
+      "pass": true
+    },
+    {
+      "name": "clients send intent, not positions",
+      "pass": true
+    },
+    {
+      "name": "no unfinished markers",
+      "pass": true
+    }
+  ],
+  "failures": [],
+  "filesScanned": [
+    "audio.ts",
+    "chronicle-access.ts",
+    "engine.ts",
+    "recovered-wards.ts",
+    "render.ts",
+    "rng.ts",
+    "settings-ui.ts",
+    "settings.ts",
+    "stats.ts",
+    "types.ts",
+    "voice-range.ts",
+    "voice.ts",
+    "ward-art.ts",
+    "ward-ui.ts",
+    "wards.ts"
+  ]
+}

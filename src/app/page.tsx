@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, BookOpen, DoorOpen, Flame, Moon, Plus, RefreshCw, Skull, Trophy, Users } from "lucide-react";
 import Link from "next/link";
+import Image from "next/image";
 import type { RoomListing } from "@/game/types";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
@@ -154,12 +155,47 @@ export default function Home() {
             not hanged here — they are <span className="text-[#d99a3d]">caged in iron</span>,
             still able to plead… until a key, a vote, or the Hollow sets them free.
           </p>
+
+          {/* Nyx — this household's night creature, and your host */}
+          <div className="hc-rise-3 mt-7 flex max-w-lg gap-4 rounded-lg border border-[#4a2f3c] bg-[#150d1b]/80 p-3 backdrop-blur">
+            <div className="relative h-32 w-24 shrink-0 overflow-hidden rounded border border-[#6b3a48]">
+              <Image src="/nyx.jpg" alt="Nyx, the catgirl of the Hollow Creek night watch" fill sizes="96px" className="object-cover object-top" priority />
+            </div>
+            <div className="min-w-0">
+              <p className="font-body text-[11px] uppercase tracking-[0.3em] text-[#c9762f]">Keeper of the night watch</p>
+              <h2 className="font-display text-2xl leading-tight text-[#ffd98a]">Nyx</h2>
+              <p className="mt-1 text-sm leading-snug text-[#c9b8a4]">
+                Cat-eared, key-bearing, and the only one who walks the creek after dusk.
+                She lends you her iron key — <span className="text-[#d99a3d]">mrrp</span> of warning included.
+                Locks answer to her; walls turn to glass when a house is occupied.
+              </p>
+              <p className="mt-1.5 text-[11px] italic text-[#8f7d6b]">
+                “Five houses on my beat. Enter uninvited and the town sees straight through the walls, little mouse.”
+              </p>
+            </div>
+          </div>
+
+          <div className="hc-rise-3 mt-5 grid max-w-lg gap-2 text-xs text-[#9c8b7a] sm:grid-cols-3">
+            <div className="rounded border border-[#3a2733] bg-[#160e1a]/70 p-2.5">
+              <div className="flex items-center gap-1.5 font-semibold text-[#ffd98a]"><Moon className="h-3.5 w-3.5" /> Wider map</div>
+              West ferry landing plus the east orchard, beacon &amp; quarry.
+            </div>
+            <div className="rounded border border-[#3a2733] bg-[#160e1a]/70 p-2.5">
+              <div className="flex items-center gap-1.5 font-semibold text-[#ffd98a]"><DoorOpen className="h-3.5 w-3.5" /> Locked houses</div>
+              The iron key opens and locks every door on the street.
+            </div>
+            <div className="rounded border border-[#3a2733] bg-[#160e1a]/70 p-2.5">
+              <div className="flex items-center gap-1.5 font-semibold text-[#ffd98a]"><Flame className="h-3.5 w-3.5" /> Interiors</div>
+              Step inside: cutaway rooms, indoor wards, thin walls.
+            </div>
+          </div>
           <div className="hc-rise-3 mt-8 grid max-w-lg grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             {[
               [`${keyLabel(settings.controls.left)} / ${keyLabel(settings.controls.right)}`, "walk the street"],
               [keyLabel(settings.controls.interact), "take / deliver kit · open repair puzzle"],
               [`${keyLabel(settings.controls.ability)} / ${keyLabel(settings.controls.blackout)}`, "role ability · snuff lights"],
               [keyLabel(settings.controls.chat), "speak (bubble)"],
+              [keyLabel(settings.controls.lock), "lock / unlock a door"],
             ].map(([k, v]) => (
               <div key={k} className="rounded border border-[#3a2733] bg-[#160e1a]/80 p-3">
                 <div className="font-mono text-[#d99a3d]">{k}</div>

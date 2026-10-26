@@ -10,13 +10,14 @@ import {
   KILL_RANGE, MEETING_FROM, MEETING_MS, MEETING_TO, PLAYER_COLORS,
   SABOTAGE_COOLDOWN_MS, SABOTAGE_VIGOR_COST, SPEED, STAMINA_BELL_COST,
   STAMINA_BLACKOUT_COST, STAMINA_IDLE_REGEN, STAMINA_KILL_COST,
-  STAMINA_UNLOCK_COST, STATIONS, SUPPLY_CART_START, TICK_MS,
+  STAMINA_UNLOCK_COST, ALL_STATIONS, BUILDINGS, INTERIOR_HALF, SUPPLY_CART_START, TICK_MS,
+  buildingById, stationReachable,
   VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW, WORLD_W,
 } from "./types";
 import { bumpStats } from "./stats";
 import { shuffle } from "./rng";
 import { applyWardMove, createWardPuzzle, validWardMove, wardProgress, wardSolved, wardView, type WardPuzzle } from "./wards";
-import type { FeedItem, InputBody, MatchStats, Phase, Role, RoomListing, Snapshot } from "./types";
+import type { Building, FeedItem, InputBody, MatchStats, Phase, Role, RoomListing, Snapshot } from "./types";
 
 // ---------------------------------------------------------------------------
 // Internal state
@@ -48,6 +49,10 @@ interface P {
   bellUsed: boolean;
   hasKey: boolean;
   hasSupply: boolean;
+  /** Behind a door: the id of the building whose room this soul stands in. */
+  inside: string | null;
+  /** The street position remembered while indoors. */
+  streetX: number;
   cartHeld: boolean;
   sabotageAt: number;
   match: MatchStats;
@@ -73,6 +78,8 @@ interface Room {
   cartX: number;
   cartPushers: number;
   cages: { x: number; occupant: string | null }[];
+  /** Locked doors, keyed by building id. Shared by the whole town. */
+  doors: Record<string, boolean>;
   feed: FeedItem[];
   meeting: { endsAt: number; reason: string } | null;
   winner: Role | null;
@@ -216,6 +223,7 @@ async function hydrateRoom(code: string): Promise<Room | undefined> {
     cartX: SUPPLY_CART_START,
     cartPushers: 0,
     cages: CAGE_XS.map((x) => ({ x, occupant: null })),
+    doors: Object.fromEntries(BUILDINGS.map((b) => [b.id, false])),
     feed: [],
     meeting: null,
     winner: null,
@@ -250,6 +258,8 @@ async function hydrateRoom(code: string): Promise<Room | undefined> {
       bellUsed: false,
       hasKey: false,
       hasSupply: false,
+      inside: null,
+      streetX: BELL_X + (i - 1) * 60,
       cartHeld: false,
       sabotageAt: 0,
       match: newMatchStats(),
@@ -306,6 +316,7 @@ export function createRoom(playerId: string, name: string) {
     cartX: SUPPLY_CART_START,
     cartPushers: 0,
     cages: CAGE_XS.map((x) => ({ x, occupant: null })),
+    doors: Object.fromEntries(BUILDINGS.map((b) => [b.id, false])),
     feed: [],
     meeting: null,
     winner: null,
@@ -390,6 +401,8 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
     bellUsed: false,
     hasKey: false,
     hasSupply: false,
+    inside: null,
+    streetX: BELL_X + (room.players.size - 2) * 60,
     cartHeld: false,
     sabotageAt: 0,
     match: newMatchStats(),
@@ -465,20 +478,24 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
   // a chore, and nothing is redistributed — anyone living can work anything.
   // Every ward is visibly broken at dusk. The shared pool has a task for every
   // structure, so nothing magically repairs itself when the night begins.
-  room.pool = STATIONS.map(({ id }) => ({ id, done: false, delivered: false, sabotaged: false, progress: 0, puzzle: null, previewUntil: 0 }));
+  room.pool = ALL_STATIONS.map(({ id }) => ({ id, done: false, delivered: false, sabotaged: false, progress: 0, puzzle: null, previewUntil: 0 }));
   room.supplyDrops = [];
   room.cartX = SUPPLY_CART_START;
   room.cartPushers = 0;
-  for (const p of ps) { p.stamina = 1; p.exhausted = false; p.hasSupply = false; p.cartHeld = false; p.sabotageAt = 0; p.activeWard = null; p.match = newMatchStats(); }
+  room.doors = Object.fromEntries(BUILDINGS.map((b) => [b.id, false]));
+  for (const p of ps) { p.stamina = 1; p.exhausted = false; p.hasSupply = false; p.cartHeld = false; p.sabotageAt = 0; p.activeWard = null; p.inside = null; p.match = newMatchStats(); }
   room.startedAt = Date.now();
   room.endedAt = 0;
   room.round += 1;
   // The cage key hides somewhere on the outskirts.
-  room.keyX = Math.random() < 0.5 ? 150 + Math.random() * 1400 : 2700 + Math.random() * 1350;
+  // The iron key can be anywhere on the expanded map — including the new outskirts.
+  room.keyX = 90 + Math.random() * (WORLD_W - 180);
   room.phase = "playing";
   room.nextFlicker = Date.now() + 15000 + Math.random() * 15000;
   feed(room, "Night falls. Bring kits from the cart to the broken wards. Deliver a kit to open its repair puzzle; each solved board mends a ward.");
   feed(room, "Something wearing a human shape walks among you.");
+  feed(room, "Nyx, the cat-eared keeper of the night watch, leaves her iron key somewhere on the street and slips into the fog.");
+  feed(room, "Five houses stand along the creek. Their doors are locked; the iron key turns them, and their walls go see-through once someone steps inside.");
   record(room, null, "game_start", { players: ps.map((p) => ({ id: p.id, name: p.name, role: p.role })) });
   checkWin(room);
   return { ok: true };
@@ -602,6 +619,8 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
     q.bellUsed = false;
     q.hasKey = false;
     q.hasSupply = false;
+    q.inside = null;
+    q.streetX = BELL_X + (i - 3) * 60;
     q.cartHeld = false;
     q.sabotageAt = 0;
     q.match = newMatchStats();
@@ -612,6 +631,7 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
     q.vote = null;
   }
   room.bodies = [];
+  room.doors = Object.fromEntries(BUILDINGS.map((b) => [b.id, false]));
   room.keyX = null;
   room.supplyDrops = [];
   room.cartX = SUPPLY_CART_START;
@@ -635,6 +655,58 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
 // ---------------------------------------------------------------------------
 
 const dist = (a: number, b: number) => Math.abs(a - b);
+
+/** The door this soul is standing at, or the room they are already inside. */
+function buildingNear(p: P, id?: string): Building | undefined {
+  if (p.inside) return buildingById(p.inside);
+  const b = id ? buildingById(id) : BUILDINGS.find((candidate) => dist(candidate.x, p.x) <= INTERACT_RANGE);
+  if (!b) return undefined;
+  return dist(b.x, p.x) <= INTERACT_RANGE ? b : undefined;
+}
+
+/** E at a door: step in when it is open, turn the iron key when it is not. */
+function useDoor(room: Room, p: P, requested?: string): { ok: boolean; error?: string } {
+  if (room.phase === "ended") return { ok: false, error: "The night is over." };
+  const b = buildingNear(p, requested);
+  if (!b) return { ok: false, error: "No door within reach." };
+  if (p.inside === b.id) {
+    p.inside = null;
+    p.x = Math.max(30, Math.min(WORLD_W - 30, b.x + (p.facing >= 0 ? 40 : -40)));
+    p.dir = 0;
+    p.activeWard = null;
+    feed(room, `${p.name} steps out of ${b.name}.`);
+    record(room, p, "leave_building", { building: b.id });
+    return { ok: true };
+  }
+  if (p.inside) return { ok: false, error: "You are already indoors." };
+  if (!room.doors[b.id]) {
+    if (!p.hasKey) return { ok: false, error: `${b.name} is locked. The iron key opens it.` };
+    room.doors[b.id] = true;
+    feed(room, `${p.name}'s iron key turns. ${b.name} is unlocked.`);
+    record(room, p, "unlock_building", { building: b.id });
+    return { ok: true };
+  }
+  p.streetX = p.x;
+  p.inside = b.id;
+  p.x = b.x;
+  p.dir = 0;
+  p.activeWard = null;
+  feed(room, `${p.name} slips inside ${b.interiorName}. The walls go thin so the town can see in.`);
+  record(room, p, "enter_building", { building: b.id });
+  return { ok: true };
+}
+
+/** L turns a door's lock with the iron key without walking through it. */
+function useLock(room: Room, p: P, requested?: string): { ok: boolean; error?: string } {
+  const b = buildingNear(p, requested);
+  if (!b) return { ok: false, error: "No door within reach." };
+  if (!p.hasKey) return { ok: false, error: "Only the iron key turns a lock." };
+  const open = !room.doors[b.id];
+  room.doors[b.id] = open;
+  feed(room, `${p.name} ${open ? "unlocks" : "locks"} ${b.name}.`);
+  record(room, p, open ? "unlock_building" : "lock_building", { building: b.id });
+  return { ok: true };
+}
 const inMeetingArea = (p: P) => p.caged || (p.x >= MEETING_FROM && p.x <= MEETING_TO);
 
 /** A key always targets the closest occupied lock within arm's reach. */
@@ -682,11 +754,11 @@ function dropSupply(room: Room, p: P) {
 function tryDeliverSupply(room: Room, p: P): boolean {
   if (room.phase !== "playing" || p.caged || !p.hasSupply) return false;
   const ward = room.pool.find((t) => !t.done && !t.delivered &&
-    dist(STATIONS.find((st) => st.id === t.id)!.x, p.x) < INTERACT_RANGE);
+    stationReachable(ALL_STATIONS.find((st) => st.id === t.id)!, p.inside, p.x));
   if (!ward) return false;
   ward.delivered = true;
   p.hasSupply = false;
-  feed(room, `${p.name} delivers a repair kit to ${STATIONS.find((st) => st.id === ward.id)!.name.toLowerCase()}.`);
+  feed(room, `${p.name} delivers a repair kit to ${ALL_STATIONS.find((st) => st.id === ward.id)!.name.toLowerCase()}.`);
   p.match.kitsDelivered++;
   record(room, p, "supply_delivered", { ward: ward.id });
   if (p.role === "crew" && !p.exhausted && p.stamina > 0) void beginRepair(room, p, ward);
@@ -701,6 +773,7 @@ function cagePlayer(room: Room, p: P): boolean {
   p.cageIndex = idx;
   p.match.timesCaged++;
   p.x = room.cages[idx].x;
+  p.inside = null;
   p.dir = 0;
   p.activeWard = null;
   dropKey(room, p);
@@ -723,7 +796,7 @@ function freePlayer(room: Room, p: P, stepOutside = true) {
 function beginRepair(room: Room, p: P, task: TaskState): { ok: boolean; error?: string } {
   if (p.role !== "crew") return { ok: true }; // Hollow may stand here and pretend
   if (p.exhausted || p.stamina <= 0) return { ok: false, error: "Rest your vigor before repairing." };
-  const st = STATIONS.find((s) => s.id === task.id)!;
+  const st = ALL_STATIONS.find((s) => s.id === task.id)!;
   if (!task.puzzle) {
     task.puzzle = createWardPuzzle(st.kind, randomInt(1, 0x7fffffff));
     if (task.puzzle.kind === "scarecrow") task.previewUntil = Date.now() + 3200;
@@ -863,6 +936,8 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
   }
 
   if (body.action === "start") return startGame(room, p.id);
+  if (body.action === "door") return useDoor(room, p, body.building);
+  if (body.action === "lock") return useLock(room, p, body.building);
   if (body.action === "restart") return restartGame(room, p.id);
 
   if (body.action === "drop_supply" && p.alive && room.phase === "playing" && p.hasSupply) {
@@ -880,10 +955,10 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
 
   if (body.action === "ward_move") {
     const task = room.pool.find((t) => t.id === p.activeWard && t.id === body.wardId);
-    const station = task && STATIONS.find((s) => s.id === task.id);
+    const station = task && ALL_STATIONS.find((s) => s.id === task.id);
     if (room.phase !== "playing" || p.role !== "crew" || !p.alive || p.caged || !task ||
         !station || !task.delivered || task.done || !task.puzzle || p.dir !== 0 ||
-        dist(station.x, p.x) >= INTERACT_RANGE + 35) {
+        !stationReachable(station, p.inside, p.x, INTERACT_RANGE + 35)) {
       p.activeWard = null;
       return { ok: false, error: "Stand beside a supplied ward to repair it." };
     }
@@ -924,7 +999,7 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     const now = Date.now();
     if (now < p.sabotageAt) return { ok: false, error: "The ruin is not ready yet." };
     const ward = room.pool.find((t) => !t.sabotaged && (t.done || t.delivered) &&
-      dist(STATIONS.find((st) => st.id === t.id)!.x, p.x) < INTERACT_RANGE);
+      stationReachable(ALL_STATIONS.find((st) => st.id === t.id)!, p.inside, p.x));
     if (!ward) return { ok: false, error: "Find a supplied or repaired ward to ruin." };
     // One ruin per ward each night keeps the repair victory reachable.
     ward.sabotaged = true;
@@ -936,7 +1011,7 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     for (const q of room.players.values()) if (q.activeWard === ward.id) q.activeWard = null;
     p.sabotageAt = now + SABOTAGE_COOLDOWN_MS;
     p.stamina = Math.max(0, p.stamina - SABOTAGE_VIGOR_COST);
-    const station = STATIONS.find((st) => st.id === ward.id)!;
+    const station = ALL_STATIONS.find((st) => st.id === ward.id)!;
     feed(room, `A crash comes from ${station.name.toLowerCase()}. That ward needs supplies again.`);
     p.match.ruins++;
     record(room, p, "ward_ruined", { ward: ward.id });
@@ -970,6 +1045,14 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
         feed(room, `${p.name} found ${b.name}'s body.`);
         beginMeeting(room, `${p.name} found the body of ${b.name}`, p);
         return { ok: true };
+      }
+    }
+    // Doors answer E too: enter through an open one, or turn the key.
+    if (room.phase !== "ended") {
+      const door = buildingNear(p);
+      if (door) {
+        const res = useDoor(room, p, door.id);
+        if (res.ok) return res;
       }
     }
     if (tryDeliverSupply(room, p)) return { ok: true };
@@ -1019,10 +1102,10 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
         }
       }
       const ready = room.pool.find((t) => !t.done && t.delivered &&
-        dist(STATIONS.find((st) => st.id === t.id)!.x, p.x) < INTERACT_RANGE);
+        stationReachable(ALL_STATIONS.find((st) => st.id === t.id)!, p.inside, p.x));
       if (ready) return beginRepair(room, p, ready);
       const broken = room.pool.find((t) => !t.done && !t.delivered &&
-        dist(STATIONS.find((st) => st.id === t.id)!.x, p.x) < INTERACT_RANGE);
+        stationReachable(ALL_STATIONS.find((st) => st.id === t.id)!, p.inside, p.x));
       if (broken) return { ok: false, error: "Bring a repair kit from the cart first." };
     }
   }
@@ -1146,6 +1229,15 @@ function tick() {
       } else {
         p.x = Math.max(30, Math.min(WORLD_W - 30, p.x));
       }
+      if (p.inside) {
+        const roomBuilding = buildingById(p.inside);
+        if (!roomBuilding) p.inside = null;
+        else {
+          const near = roomBuilding.x - INTERIOR_HALF + 26;
+          const far = roomBuilding.x + INTERIOR_HALF - 26;
+          p.x = Math.max(near, Math.min(far, p.x));
+        }
+      }
       if (p.alive && !p.caged && p.dir !== 0 && (p.hasSupply || pushingIds.has(p.id))) {
         p.stamina = Math.max(0, p.stamina - CARRY_VIGOR_DRAIN * dt * (pushingIds.has(p.id) ? 1.2 : 1));
         if (p.stamina <= 0) p.exhausted = true;
@@ -1154,9 +1246,9 @@ function tick() {
       // Repair sessions are driven by validated tile moves, never by a held key.
       if (p.activeWard) {
         const task = room.pool.find((t) => t.id === p.activeWard);
-        const station = task && STATIONS.find((s) => s.id === task.id);
+        const station = task && ALL_STATIONS.find((s) => s.id === task.id);
         if (room.phase !== "playing" || !p.alive || p.caged || p.dir !== 0 ||
-            !task?.delivered || task.done || !station || dist(station.x, p.x) >= INTERACT_RANGE + 35) {
+            !task?.delivered || task.done || !station || !stationReachable(station, p.inside, p.x, INTERACT_RANGE + 35)) {
           p.activeWard = null;
         }
       }
@@ -1208,7 +1300,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
   const killCd = Math.max(0, me.killAt - now);
   const target = me.role === "hollow" ? killTarget(room, me) : null;
   const ruinTarget = room.pool.find((t) => !t.sabotaged && (t.done || t.delivered) &&
-    dist(STATIONS.find((st) => st.id === t.id)!.x, me.x) < INTERACT_RANGE);
+    stationReachable(ALL_STATIONS.find((st) => st.id === t.id)!, me.inside, me.x));
   const canSabotage = me.role === "hollow" && me.alive && !me.caged &&
     room.phase === "playing" && now >= me.sabotageAt && !!ruinTarget;
 
@@ -1216,7 +1308,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
   if (me.alive && room.phase !== "lobby") {
     const b = room.phase === "playing" && !me.caged ? nearestBody(room, me) : null;
     const cageIdx = me.hasKey ? nearestOccupiedCage(room, me.x) : -1;
-    const ward = room.pool.find((t) => !t.done && dist(STATIONS.find((s) => s.id === t.id)!.x, me.x) < INTERACT_RANGE);
+    const ward = room.pool.find((t) => !t.done && stationReachable(ALL_STATIONS.find((s) => s.id === t.id)!, me.inside, me.x));
     const dropped = room.supplyDrops.some((x) => dist(x, me.x) < INTERACT_RANGE);
     const atCart = dist(room.cartX, me.x) < INTERACT_RANGE;
     const nearCart = dist(room.cartX, me.x) <= CART_PUSH_RANGE;
@@ -1227,6 +1319,22 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     else if (room.phase === "playing" && !me.caged && ward && !ward.delivered && me.hasSupply)
       hint = "E — deliver kit and open repair";
     else if (room.keyX !== null && !me.caged && dist(room.keyX, me.x) < INTERACT_RANGE) hint = "Take the iron key";
+    else if (me.inside) {
+      const roomBuilding = buildingById(me.inside);
+      const roomWard = room.pool.find((t) => !t.done) && ALL_STATIONS.find((s) => s.inside === me.inside && !room.pool.find((t) => t.id === s.id)?.done);
+      if (roomWard && stationReachable(roomWard, me.inside, me.x)) {
+        const wardState = room.pool.find((t) => t.id === roomWard.id)!;
+        hint = wardState.delivered
+          ? (me.exhausted ? "Spent — catch your breath" : "E — open the indoor repair puzzle")
+          : "Indoor ward — bring a repair kit through the door";
+      } else hint = `Inside ${roomBuilding?.interiorName ?? "the house"} — E at the door to step out`;
+    }
+    else if (!me.caged && buildingNear(me)) {
+      const door = buildingNear(me)!;
+      hint = !room.doors[door.id]
+        ? (me.hasKey ? `E — unlock ${door.name} with the iron key` : `${door.name} is locked — find the iron key`)
+        : `E — enter ${door.name}`;
+    }
     else if (room.phase === "playing" && !me.caged && !me.bellUsed && dist(me.x, BELL_X) < INTERACT_RANGE) hint = "Ring the bell";
     else if (room.phase === "playing" && !me.caged) {
       if (canSabotage) hint = "R — ruin this ward";
@@ -1254,7 +1362,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
   const activeTask = room.phase === "playing" && me.alive && !me.caged && me.role === "crew"
     ? room.pool.find((t) => t.id === me.activeWard && t.delivered && !t.done)
     : undefined;
-  const activeStation = activeTask && STATIONS.find((s) => s.id === activeTask.id);
+  const activeStation = activeTask && ALL_STATIONS.find((s) => s.id === activeTask.id);
   const minigame = activeTask?.puzzle && activeStation
     ? wardView(activeTask.id, activeStation.name, activeTask.puzzle, Math.max(0, activeTask.previewUntil - now)) : null;
   const results = room.phase === "ended" ? {
@@ -1298,6 +1406,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
       caged: me.caged,
       hasKey: me.hasKey,
       hasSupply: me.hasSupply,
+      inside: me.inside,
       bellUsed: me.bellUsed,
       killCooldownMs: killCd,
       canKill: !!target && killCd <= 0,
@@ -1325,6 +1434,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
           caged: p.caged,
           hasKey: seen && p.hasKey,
           hasSupply: seen && p.hasSupply,
+          inside: seen ? p.inside : null,
           voted: p.vote !== null,
           isHost: p.isHost,
           bubble:
@@ -1339,8 +1449,21 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     cartX: Math.round(room.cartX * 10) / 10,
     cartPushers: room.cartPushers,
     cages: room.cages.map((c) => ({ x: c.x, occupant: c.occupant })),
+    buildings: BUILDINGS.map((b) => {
+      const occupants = ps.filter((q) => q.inside === b.id && q.alive).length;
+      const ward = ALL_STATIONS.find((s) => s.inside === b.id);
+      return {
+        id: b.id,
+        x: b.x,
+        half: b.half,
+        doorOpen: !!room.doors[b.id],
+        occupants,
+        transparent: occupants > 0,
+        wardDone: ward ? !!room.pool.find((t) => t.id === ward.id)?.done : false,
+      };
+    }),
     tasks: room.pool.map((t) => {
-      const st = STATIONS.find((s) => s.id === t.id)!;
+      const st = ALL_STATIONS.find((s) => s.id === t.id)!;
       return { id: t.id, name: st.name, x: st.x, done: t.done, delivered: t.delivered, sabotaged: t.sabotaged, progress: t.progress };
     }),
     minigame,

@@ -26,6 +26,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Renderer } from "@/game/render";
+import { BUILDINGS } from "@/game/types";
 import { WardPanel } from "@/game/ward-ui";
 import {
   WARD_JOBS,
@@ -203,7 +204,10 @@ export default function TutorialClient() {
 
   const ensureAudio = useCallback(() => {
     if (!audioRef.current) audioRef.current = new AudioDirector(getSettingsStore());
+    // start() is idempotent; resume() retries the context after the first
+    // gesture, which browsers require before any sound can be heard.
     audioRef.current.start();
+    audioRef.current.resume();
   }, [getSettingsStore]);
 
   // Advance tutorial chapter
@@ -557,6 +561,7 @@ export default function TutorialClient() {
         caged: false,
         hasKey,
         hasSupply,
+        inside: null,
         bellUsed: false,
         killCooldownMs: 0,
         canKill: false,
@@ -581,6 +586,7 @@ export default function TutorialClient() {
           caged: false,
           hasKey,
           hasSupply,
+          inside: null,
           voted: myVote !== null,
           bubble: null,
           isHost: true,
@@ -596,6 +602,7 @@ export default function TutorialClient() {
           caged: cagedNeighbor,
           hasKey: false,
           hasSupply: false,
+          inside: null,
           voted: false,
           bubble: cagedNeighbor ? { text: "The key is west of the square! Unlock me!", until: Date.now() + 5000 } : null,
           isHost: false,
@@ -611,6 +618,7 @@ export default function TutorialClient() {
           caged: false,
           hasKey: false,
           hasSupply: false,
+          inside: null,
           voted: false,
           bubble: null,
           isHost: false,
@@ -621,6 +629,15 @@ export default function TutorialClient() {
       supplyDrops,
       cartX,
       cartPushers,
+      buildings: BUILDINGS.map((b) => ({
+        id: b.id,
+        x: b.x,
+        half: b.half,
+        doorOpen: false,
+        occupants: 0,
+        transparent: false,
+        wardDone: false,
+      })),
       cages: [
         { x: CAGE_XS[0], occupant: cagedNeighbor ? "nils" : null },
         { x: CAGE_XS[1], occupant: null },

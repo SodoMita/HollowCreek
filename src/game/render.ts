@@ -1,8 +1,8 @@
 // Canvas renderer for Hollow Creek — pure drawing, no game logic.
 import {
-  BELL_X, CAGE_XS, MEETING_FROM, MEETING_TO, STATIONS, WORLD_W,
+  BELL_X, BUILDINGS, CAGE_XS, INTERIOR_STATIONS, MEETING_FROM, MEETING_TO, STATIONS, WORLD_W,
 } from "./types";
-import type { Snapshot, Station } from "./types";
+import type { Building, Snapshot, Station } from "./types";
 import { createDefaultSettings, type GameSettings } from "./settings";
 import { drawBrokenWard, drawKit, drawSupplyCart } from "./ward-art";
 
@@ -270,6 +270,14 @@ export class Renderer {
       }
     }
 
+    // --- houses: facades, locked doors, and cutaway interiors ---
+    for (const state of snap.buildings) {
+      const def = BUILDINGS.find((b) => b.id === state.id);
+      if (!def) continue;
+      const bx = state.x - cam;
+      if (bx > -520 && bx < w + 520) this.drawBuilding(ctx, def, state, bx, ground, t, now, snap);
+    }
+
     // --- players ---
     const sorted = [...snap.players].sort((a, b) => (a.id === snap.self.id ? 1 : 0) - (b.id === snap.self.id ? 1 : 0));
     const drawPlayer = (p: Snapshot["players"][number]) => {
@@ -279,35 +287,39 @@ export class Renderer {
       if (ghost && snap.self.alive) return; // living can't see ghosts
       const isMate = snap.self.teammates.includes(p.id);
       const floatY = ghost ? -14 + Math.sin(t * 2 + p.x) * 5 : 0;
+      // Someone behind a door is drawn on the room's floor so the cutaway reads.
+      const indoors = p.inside ? snap.buildings.find((b) => b.id === p.inside) : undefined;
+      const baseY = indoors ? ground - 58 : ground + floatY;
+      const scale = indoors ? 0.72 : 1;
       ctx.save();
       if (ghost) ctx.globalAlpha = 0.45;
-      if (!ghost) {
+      if (!ghost && !indoors) {
         ctx.fillStyle = "rgba(0,0,0,.35)";
         ctx.beginPath(); ctx.ellipse(px, ground + 2, 17, 4, 0, 0, Math.PI * 2); ctx.fill();
       }
-      this.drawFigure(ctx, px, ground + floatY, p.color, p.facing, p.moving, ghost, isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t, 1);
+      this.drawFigure(ctx, px, baseY, p.color, p.facing, p.moving, ghost, isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t, scale);
       ctx.restore();
       // A kit stays visible on its carrier until someone delivers it.
-      if (p.hasSupply) drawKit(ctx, px - 23, ground - 16 + floatY);
+      if (p.hasSupply) drawKit(ctx, px - 23 * scale, baseY - 16 * scale);
       // key icon
       if (p.hasKey) {
         ctx.fillStyle = "#e8b93c";
         ctx.font = "12px serif";
         ctx.textAlign = "center";
-        ctx.fillText("🗝", px + 16, ground - 52 + floatY);
+        ctx.fillText("🗝", px + 16, baseY - 52 + floatY);
       }
       // name and speech are optional HUD layers; the figures remain identifiable by color.
       if (this.settings.interface.playerNames) {
         ctx.font = "600 12px system-ui, sans-serif";
         ctx.textAlign = "center";
-        const label = p.name + (snap.phase === "meeting" && p.voted ? " ✓" : "");
+        const label = p.name + (indoors ? " ⌂" : "") + (snap.phase === "meeting" && p.voted ? " ✓" : "");
         const width = ctx.measureText(label).width;
         ctx.fillStyle = "rgba(5,3,8,.55)";
-        ctx.beginPath(); ctx.roundRect(px - width / 2 - 5, ground - 75 + floatY, width + 10, 17, 5); ctx.fill();
+        ctx.beginPath(); ctx.roundRect(px - width / 2 - 5, baseY - 75 + floatY, width + 10, 17, 5); ctx.fill();
         ctx.fillStyle = p.id === snap.self.id ? "#ffd98a" : isMate ? "#ff7a6a" : "rgba(245,235,220,.96)";
-        ctx.fillText(label, px, ground - 62 + floatY);
+        ctx.fillText(label, px, baseY - 62 + floatY);
       }
-      if (p.bubble && this.settings.interface.speechBubbles) this.drawBubble(ctx, px, ground - 72 + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
+      if (p.bubble && this.settings.interface.speechBubbles) this.drawBubble(ctx, px, baseY - 72 + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
     };
 
     for (const p of sorted) if (p.caged) drawPlayer(p);
@@ -422,6 +434,254 @@ export class Renderer {
         const ly = top - 9 + ((seed * 19 + j * 23) % 50);
         ctx.beginPath(); ctx.arc(lx, ly, 2.2, 0, Math.PI * 2); ctx.fill();
       }
+    }
+    ctx.restore();
+  }
+
+  /** A house on the creek. Locked doors need the iron key; occupied rooms turn
+   *  transparent so the whole street can watch whoever stepped inside. */
+  private drawBuilding(
+    ctx: CanvasRenderingContext2D,
+    def: Building,
+    state: Snapshot["buildings"][number],
+    x: number,
+    groundY: number,
+    t: number,
+    now: number,
+    snap: Snapshot,
+  ) {
+    const half = state.half;
+    const blackout = now < snap.blackoutUntil;
+    const highlight = snap.self.inside === def.id;
+    const flick = this.settings.graphics.flicker && !this.settings.graphics.reducedMotion && now - snap.flickerAt < 900 ? Math.random() * 0.5 : 0;
+    ctx.save();
+    ctx.translate(x, groundY);
+
+    // stone footings
+    ctx.fillStyle = "#17100e";
+    ctx.beginPath(); ctx.roundRect(-half - 8, -12, half * 2 + 16, 14, 4); ctx.fill();
+
+    if (state.transparent) {
+      // ---- cutaway: the room behind the wall ----
+      const glowOn = !blackout;
+      const room = ctx.createLinearGradient(0, -152, 0, 0);
+      room.addColorStop(0, glowOn ? "rgba(66,44,34,.96)" : "rgba(22,16,20,.97)");
+      room.addColorStop(0.65, glowOn ? "rgba(96,60,38,.94)" : "rgba(28,20,24,.97)");
+      room.addColorStop(1, "rgba(20,13,12,.98)");
+      ctx.fillStyle = room;
+      ctx.fillRect(-half + 4, -150, half * 2 - 8, 150);
+      // plank floor
+      ctx.strokeStyle = "rgba(190,140,86,.22)";
+      ctx.lineWidth = 1;
+      for (let i = -half + 14; i < half - 8; i += 22) {
+        ctx.beginPath(); ctx.moveTo(i, -52); ctx.lineTo(i + 6, 0); ctx.stroke();
+      }
+      // wall studs
+      ctx.strokeStyle = "rgba(36,20,14,.55)";
+      ctx.lineWidth = 5;
+      for (let i = -half + 20; i < half - 10; i += 62) { ctx.beginPath(); ctx.moveTo(i, -148); ctx.lineTo(i, 0); ctx.stroke(); }
+      // room props: small interior locations
+      for (const prop of def.props) {
+        this.drawProp(ctx, prop.x - def.x, prop.kind, glowOn ? 1 : 0.45);
+      }
+      // the indoor ward, if this house has one
+      const indoor = INTERIOR_STATIONS.find((st) => st.inside === def.id);
+      if (indoor) {
+        const task = snap.tasks.find((tk) => tk.id === indoor.id);
+        const px = indoor.x - def.x;
+        ctx.save();
+        ctx.translate(px, -52);
+        ctx.fillStyle = "#3a2418";
+        ctx.fillRect(-30, -16, 60, 8);
+        ctx.fillRect(-27, -8, 5, 16);
+        ctx.fillRect(22, -8, 5, 16);
+        if (!task?.done) {
+          ctx.fillStyle = "#d8c9b4";
+          ctx.font = "10px serif";
+          ctx.textAlign = "center";
+          ctx.fillText("✖", 0, -22);
+          ctx.fillStyle = "rgba(230,140,80,.85)";
+          ctx.fillText(task?.delivered ? "kit ready" : "needs kit", 0, 26);
+        } else {
+          ctx.fillStyle = "#a8c98a";
+          ctx.font = "11px serif";
+          ctx.textAlign = "center";
+          ctx.fillText("✦", 0, -24);
+        }
+        ctx.restore();
+      }
+      // hanging lamp
+      ctx.strokeStyle = "#2a1a12"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(0, -148); ctx.lineTo(0, -118); ctx.stroke();
+      ctx.fillStyle = glowOn ? "#ffcf7a" : "#4a3a2a";
+      if (glowOn) { ctx.shadowColor = "#ffb45c"; this.glow(ctx, 26); }
+      ctx.beginPath(); ctx.arc(0, -113, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      // translucent front wall + window frames over the cutaway
+      ctx.fillStyle = `rgba(32,20,18,${0.3 + flick})`;
+      ctx.fillRect(-half, -150, half * 2, 150);
+      ctx.strokeStyle = "rgba(18,11,10,.85)";
+      ctx.lineWidth = 7;
+      ctx.strokeRect(-half, -150, half * 2, 150);
+      const winA = glowOn ? 0.42 : 0.05;
+      ctx.strokeStyle = `rgba(255,200,130,${winA})`;
+      ctx.lineWidth = 3;
+      ctx.strokeRect(-half + 34, -122, 52, 40);
+      ctx.strokeRect(half - 86, -122, 52, 40);
+      // "walls are thin" caption
+      ctx.fillStyle = "rgba(255,220,170,.62)";
+      ctx.font = "9px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("WALLS THIN — OCCUPIED", 0, -158);
+    } else {
+      // ---- solid facade ----
+      ctx.fillStyle = def.kind === "quarry" ? "#2a2523" : "#241511";
+      ctx.beginPath(); ctx.roundRect(-half, -150, half * 2, 150, 4); ctx.fill();
+      // roof
+      ctx.fillStyle = "#180f0c";
+      ctx.beginPath();
+      ctx.moveTo(-half - 18, -150);
+      ctx.lineTo(0, -202);
+      ctx.lineTo(half + 18, -150);
+      ctx.closePath(); ctx.fill();
+      // chimney smoke
+      ctx.fillStyle = "rgba(120,100,95,.18)";
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.arc(half - 46 + Math.sin(t + i) * 8, -212 - i * 15, 9 + i * 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = def.kind === "quarry" ? "#3a3431" : "#31201b";
+      ctx.fillRect(half - 64, -212, 22, 58);
+      // windows, warm if the town still has light
+      const lit = !blackout && !state.wardDone;
+      const winA = lit ? 0.72 : 0.14;
+      for (const wx of [-half + 34, half - 86]) {
+        const glass = ctx.createLinearGradient(wx, -122, wx, -82);
+        glass.addColorStop(0, `rgba(255,214,130,${winA})`);
+        glass.addColorStop(1, `rgba(206,92,36,${winA * 0.8})`);
+        ctx.fillStyle = glass;
+        if (lit) { ctx.shadowColor = "rgba(255,151,55,.7)"; this.glow(ctx, 12); }
+        ctx.fillRect(wx, -122, 52, 40);
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = "rgba(16,9,8,.9)"; ctx.lineWidth = 2;
+        ctx.strokeRect(wx, -122, 52, 40);
+        ctx.beginPath();
+        ctx.moveTo(wx + 26, -122); ctx.lineTo(wx + 26, -82);
+        ctx.moveTo(wx, -102); ctx.lineTo(wx + 52, -102);
+        ctx.stroke();
+      }
+      // door + lock state
+      const doorW = def.doorStyle === "arch" ? 50 : 42;
+      ctx.fillStyle = state.doorOpen ? "#0c0809" : "#3d271a";
+      ctx.beginPath();
+      if (def.doorStyle === "arch") {
+        ctx.moveTo(-doorW / 2, 0);
+        ctx.lineTo(-doorW / 2, -48);
+        ctx.quadraticCurveTo(0, -86, doorW / 2, -48);
+        ctx.lineTo(doorW / 2, 0);
+      } else {
+        ctx.rect(-doorW / 2, -62, doorW, 62);
+      }
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = "#17100c"; ctx.lineWidth = 4; ctx.stroke();
+      if (state.doorOpen) {
+        // light spilling from the threshold and the door leaning inward
+        const spill = ctx.createLinearGradient(0, 0, 0, 34);
+        spill.addColorStop(0, "rgba(255,196,110,.35)");
+        spill.addColorStop(1, "rgba(255,196,110,0)");
+        ctx.fillStyle = spill;
+        ctx.beginPath();
+        ctx.moveTo(-doorW / 2, 0); ctx.lineTo(doorW / 2, 0);
+        ctx.lineTo(doorW, 30); ctx.lineTo(-doorW, 30);
+        ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = "#d9a75a"; ctx.lineWidth = 2;
+        ctx.strokeRect(0, -60, doorW * 0.4, 58);
+      } else {
+        ctx.fillStyle = "#e8b93c";
+        ctx.beginPath(); ctx.arc(doorW / 2 - 9, -28, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "#e8b93c"; ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.arc(doorW / 2 - 9, -33, 3.5, Math.PI, 0); ctx.stroke();
+      }
+      // painted sign
+      ctx.fillStyle = "rgba(14,9,9,.8)";
+      ctx.beginPath(); ctx.roundRect(-half + 18, -172, half * 2 - 36, 20, 4); ctx.fill();
+      ctx.strokeStyle = "rgba(160,120,80,.4)"; ctx.lineWidth = 1;
+      ctx.strokeRect(-half + 18, -172, half * 2 - 36, 20);
+      ctx.fillStyle = "#e6d3b6";
+      ctx.font = "600 11px Georgia, serif";
+      ctx.textAlign = "center";
+      ctx.fillText(def.name.toUpperCase(), 0, -158);
+    }
+
+    // an always-readable label + state line under the sign
+    ctx.font = "600 11px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillStyle = highlight ? "#ffd98a" : "rgba(232,220,200,.85)";
+    ctx.fillText(def.name, 0, -178);
+    if (!state.transparent) {
+      ctx.font = "9px system-ui, sans-serif";
+      ctx.fillStyle = state.doorOpen ? "#a8c98a" : "rgba(214,150,140,.85)";
+      ctx.fillText(state.doorOpen ? "door open" : "locked · iron key", 0, -166);
+    }
+    ctx.restore();
+  }
+
+  /** Small hand-drawn furniture for interiors. */
+  private drawProp(ctx: CanvasRenderingContext2D, x: number, kind: Building["props"][number]["kind"], alpha: number) {
+    ctx.save();
+    ctx.translate(x, -52);
+    ctx.globalAlpha = alpha;
+    switch (kind) {
+      case "table":
+        ctx.fillStyle = "#4a2f1d";
+        ctx.fillRect(-24, -14, 48, 6);
+        ctx.fillRect(-20, -8, 4, 14);
+        ctx.fillRect(16, -8, 4, 14);
+        ctx.fillStyle = "#d8c9b4";
+        ctx.fillRect(-12, -18, 22, 5);
+        ctx.fillStyle = "#8a6a44";
+        ctx.fillRect(-2, -30, 4, 12);
+        break;
+      case "stove":
+        ctx.fillStyle = "#3a3330";
+        ctx.fillRect(-18, -34, 36, 34);
+        ctx.fillStyle = "#211b19";
+        ctx.fillRect(10, -58, 8, 26);
+        ctx.fillStyle = "#d9743c";
+        ctx.beginPath(); ctx.arc(0, -14, 5, 0, Math.PI * 2); ctx.fill();
+        break;
+      case "shelf":
+        ctx.fillStyle = "#3d271a";
+        ctx.fillRect(-22, -46, 44, 4);
+        ctx.fillRect(-22, -28, 44, 4);
+        for (let i = 0; i < 5; i++) {
+          ctx.fillStyle = ["#7a4a21", "#5b6a3a", "#8a3b2a", "#3a5a6a", "#6b5433"][i];
+          ctx.fillRect(-20 + i * 8, -58 + (i % 2) * 18, 6, 12);
+        }
+        break;
+      case "crate":
+        ctx.fillStyle = "#4a3a28";
+        ctx.fillRect(-16, -22, 32, 22);
+        ctx.strokeStyle = "#8a6a44"; ctx.lineWidth = 2;
+        ctx.strokeRect(-16, -22, 32, 22);
+        ctx.beginPath(); ctx.moveTo(-16, -22); ctx.lineTo(16, 0); ctx.moveTo(16, -22); ctx.lineTo(-16, 0); ctx.stroke();
+        break;
+      case "barrel":
+        ctx.fillStyle = "#4a2f1d";
+        ctx.beginPath(); ctx.ellipse(0, -18, 13, 18, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "#8a6a44"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(0, -26, 13, 5, 0, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.ellipse(0, -10, 13, 5, 0, 0, Math.PI * 2); ctx.stroke();
+        break;
+      case "lamp":
+        ctx.strokeStyle = "#2a1a12"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(0, -98); ctx.lineTo(0, -74); ctx.stroke();
+        ctx.fillStyle = "#ffcf7a";
+        ctx.beginPath(); ctx.arc(0, -70, 6, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#3d271a";
+        ctx.fillRect(-5, -64, 10, 4);
+        break;
     }
     ctx.restore();
   }
