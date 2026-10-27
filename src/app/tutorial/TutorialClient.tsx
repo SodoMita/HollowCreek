@@ -26,6 +26,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Renderer } from "@/game/render";
+import { BUILDINGS, DOOR_REACH, buildingHint, clampWorld, doorX, newDoors, interactWithBuilding, walkThroughBuildings } from "@/game/buildings";
 import { WardPanel } from "@/game/ward-ui";
 import {
   WARD_JOBS,
@@ -128,6 +129,11 @@ const CHAPTERS: Chapter[] = [
     guideNote:
       "One or two among you wear human faces. When dread rises, find a lantern, stick together, and finish every ward before dawn.",
   },
+  {
+    id: 7, title: "Chapter VII: The Houses Beyond", summary: "Separate Keys & Side Doors",
+    instruction: "Walk west beyond the harvest shed. Pick up the tollhouse key with E, open its side door, then walk through it. Walk back out; L locks or unlocks with the matching key.",
+    guideNote: "Every house has its own key. The road continues past a closed house, and an open doorway leads into the very same scene.",
+  },
 ];
 
 export default function TutorialClient() {
@@ -152,6 +158,8 @@ export default function TutorialClient() {
 
   // Simulated player state
   const [playerX, setPlayerX] = useState(480);
+  const [doors, setDoors] = useState(newDoors);
+  const [inside, setInside] = useState<string | null>(null);
   const [facing, setFacing] = useState(1);
   const [moving, setMoving] = useState(false);
   const [stamina, setStamina] = useState(1.0);
@@ -216,6 +224,23 @@ export default function TutorialClient() {
     [currentChapter, showToast]
   );
 
+  // Hot values do not restart the timer, camera, audio or settings dialog.
+  const live = useRef({ playerX, cartX, cartHeld, hasSupply, currentChapter, stamina, exhausted, doors, inside });
+  const advanceRef = useRef(advanceToChapter);
+  useEffect(() => {
+    live.current = { playerX, cartX, cartHeld, hasSupply, currentChapter, stamina, exhausted, doors, inside };
+    advanceRef.current = advanceToChapter;
+  }, [playerX, cartX, cartHeld, hasSupply, currentChapter, stamina, exhausted, doors, inside, advanceToChapter]);
+  const handleBuilding = useCallback((action: "interact" | "lock") => {
+    const state = live.current;
+    const next = state.doors.map((d) => ({ ...d }));
+    const result = interactWithBuilding(next, "me", state.playerX, state.inside, action);
+    if (!result.handled) return false;
+    if (result.message) { state.doors = next; setDoors(next); showToast(result.message); }
+    if (result.error) showToast(result.error);
+    return true;
+  }, [showToast]);
+
   // Initialize settings, audio, and ward panel
   useEffect(() => {
     const store = getSettingsStore();
@@ -229,7 +254,7 @@ export default function TutorialClient() {
       applyDocumentPreferences(next);
     });
 
-    const dialog = new SettingsDialog(store);
+    const dialog = new SettingsDialog(store, document.body, { onOpen: () => { keys.current.clear(); lastDir.current = 0; setMoving(false); setCartHeld(false); } });
     settingsDialogRef.current = dialog;
 
     const panel = new WardPanel(document.body, {
@@ -250,12 +275,12 @@ export default function TutorialClient() {
           showToast(`${WARD_JOBS[stationId as WardKind]?.title ?? "Ward"} repaired! Light restored.`);
           panel.update(null, 1, false);
           setActiveWardId(null);
-          if (currentChapter === 3) {
-            advanceToChapter(4);
+          if (live.current.currentChapter === 3) {
+            advanceRef.current(4);
           }
         } else {
           const st = STATIONS.find((s) => s.id === stationId);
-          if (st) panel.update(wardView(stationId, st.name, next), stamina, exhausted);
+          if (st) panel.update(wardView(stationId, st.name, next), live.current.stamina, live.current.exhausted);
         }
       },
       close: () => {
@@ -279,11 +304,12 @@ export default function TutorialClient() {
       wardPanelRef.current = null;
       audioRef.current = null;
     };
-  }, [currentChapter, advanceToChapter, getSettingsStore, showToast, stamina, exhausted]);
+  }, [getSettingsStore, showToast]);
 
   // Handle player actions in tutorial
   const handleInteract = useCallback(() => {
     ensureAudio();
+    if (handleBuilding("interact")) return;
 
     // 1. Deliver kit to a broken ward
     if (hasSupply) {
@@ -364,6 +390,7 @@ export default function TutorialClient() {
     }
   }, [
     ensureAudio,
+    handleBuilding,
     hasSupply,
     tasks,
     playerX,
@@ -427,6 +454,9 @@ export default function TutorialClient() {
       } else if (matchesControl(controls, "ruin", e.code)) {
         handleHollowRuin();
         e.preventDefault();
+      } else if (e.code === "KeyL" && !e.repeat) {
+        handleBuilding("lock");
+        e.preventDefault();
       } else if (matchesControl(controls, "interact", e.code) && !e.repeat) {
         handleInteract();
         e.preventDefault();
@@ -441,89 +471,55 @@ export default function TutorialClient() {
       else if (matchesControl(controls, "push", e.code)) setCartHeld(false);
     };
 
+    const release = () => { keys.current.clear(); setCartHeld(false); };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
+    window.addEventListener("blur", release);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", release);
     };
-  }, [ensureAudio, getSettingsStore, handleDropSupply, handleHollowRuin, handleInteract]);
+  }, [ensureAudio, getSettingsStore, handleDropSupply, handleHollowRuin, handleInteract, handleBuilding]);
 
-  // Simulated physics loop (movement, vigor, cart pushing)
+  // One stable timer repays late ticks instead of restarting on every render.
   useEffect(() => {
+    lastStepTime.current = performance.now();
     const interval = setInterval(() => {
       const now = performance.now();
-      const dt = Math.min(0.05, (now - lastStepTime.current) / 1000);
+      const dt = Math.min(0.12, (now - lastStepTime.current) / 1000);
       lastStepTime.current = now;
-
-      const k = keys.current;
-      const dir = (k.has("right") ? 1 : 0) - (k.has("left") ? 1 : 0);
+      const state = live.current;
+      const dir = (keys.current.has("right") ? 1 : 0) - (keys.current.has("left") ? 1 : 0);
       lastDir.current = dir;
-
+      setMoving(dir !== 0);
       if (dir !== 0) {
-        setMoving(true);
         setFacing(dir);
-
-        // Check if pushing cart
-        const nearCart = Math.abs(playerX - cartX) <= CART_PUSH_RANGE;
-        const pushing = cartHeld && nearCart && !hasSupply;
-
-        if (pushing) {
-          setCartPushers(1);
-          const pushSpeed = CART_SOLO_SPEED;
-          setPlayerX((px) => Math.max(30, Math.min(WORLD_W - 30, px + dir * pushSpeed * dt)));
-          setCartX((cx) => Math.max(90, Math.min(WORLD_W - 90, cx + dir * pushSpeed * dt)));
-          setStamina((s) => {
-            const next = Math.max(0, s - CARRY_VIGOR_DRAIN * 1.2 * dt);
-            if (next <= 0) setExhausted(true);
-            return next;
-          });
-        } else {
-          setCartPushers(0);
-          const moveSpeed = hasSupply ? CARRY_SPEED : SPEED;
-          setPlayerX((px) => Math.max(30, Math.min(WORLD_W - 30, px + dir * moveSpeed * dt)));
-
-          if (hasSupply) {
-            setStamina((s) => {
-              const next = Math.max(0, s - CARRY_VIGOR_DRAIN * dt);
-              if (next <= 0) setExhausted(true);
-              return next;
-            });
-          }
+        const pushing = !state.inside && state.cartHeld && !state.hasSupply && Math.abs(state.playerX - state.cartX) <= CART_PUSH_RANGE;
+        setCartPushers(pushing ? 1 : 0);
+        const speed = pushing ? CART_SOLO_SPEED : state.hasSupply ? CARRY_SPEED : SPEED;
+        const step = walkThroughBuildings(state.playerX, state.playerX + dir * speed * dt, state.inside, state.doors);
+        state.playerX = step.x; state.inside = step.inside;
+        setPlayerX(step.x); setInside(step.inside);
+        if (pushing) { state.cartX = clampWorld(state.cartX + dir * speed * dt, 90); setCartX(state.cartX); }
+        if (pushing || state.hasSupply) {
+          const next = Math.max(0, state.stamina - CARRY_VIGOR_DRAIN * (pushing ? 1.2 : 1) * dt);
+          state.stamina = next; setStamina(next);
+          if (next <= 0) setExhausted(true);
         }
-
-        // Chapter 1 milestone check
-        if (currentChapter === 1 && Math.abs(playerX - 480) > 220) {
-          advanceToChapter(2);
+        if (state.currentChapter === 1 && Math.abs(state.playerX - 480) > 220) {
+          state.currentChapter = 2; advanceRef.current(2);
         }
       } else {
-        setMoving(false);
         setCartPushers(0);
-        // Idle vigor regen
-        setStamina((s) => {
-          const next = Math.min(1.0, s + STAMINA_IDLE_REGEN * dt);
-          if (next >= 0.2) setExhausted(false);
-          return next;
-        });
+        const next = Math.min(1, state.stamina + STAMINA_IDLE_REGEN * dt);
+        state.stamina = next; setStamina(next);
+        if (next >= 0.2 && state.exhausted) setExhausted(false);
       }
-
-      // Proximity dread in Chapter 6
-      if (currentChapter === 6) {
-        const distToSquare = Math.abs(playerX - BELL_X);
-        const dread = distToSquare < 400 ? 0.75 : 0.2;
-        setDanger(dread);
-      }
+      if (state.currentChapter === 6) setDanger(Math.abs(state.playerX - BELL_X) < 400 ? 0.75 : 0.2);
     }, 50);
-
     return () => clearInterval(interval);
-  }, [
-    advanceToChapter,
-    cartHeld,
-    cartX,
-    currentChapter,
-    hasSupply,
-    playerX,
-  ]);
+  }, []);
 
   // Construct current simulated snapshot for canvas renderer
   const buildSnapshot = useCallback((): Snapshot => {
@@ -544,6 +540,7 @@ export default function TutorialClient() {
     else if (nearCart && !hasSupply) hint = "Hold Shift + A/D to push cart";
     else if (hasSupply) hint = "G — drop carried kit";
     else if (Math.abs(BELL_X - playerX) < INTERACT_RANGE) hint = "E — ring the chapel bell";
+    hint = buildingHint(doors, "me", playerX, inside) ?? hint;
 
     return {
       code: "TUTOR",
@@ -557,6 +554,7 @@ export default function TutorialClient() {
         caged: false,
         hasKey,
         hasSupply,
+        doorKeys: doors.filter((d) => d.holder === "me").map((d) => d.id),
         bellUsed: false,
         killCooldownMs: 0,
         canKill: false,
@@ -581,6 +579,7 @@ export default function TutorialClient() {
           caged: false,
           hasKey,
           hasSupply,
+          inside,
           voted: myVote !== null,
           bubble: null,
           isHost: true,
@@ -617,6 +616,7 @@ export default function TutorialClient() {
         },
       ],
       bodies: [],
+      doors,
       keyX,
       supplyDrops,
       cartX,
@@ -662,6 +662,8 @@ export default function TutorialClient() {
   }, [
     tasks,
     activeWardId,
+    doors,
+    inside,
     playerX,
     cartX,
     hasKey,
@@ -680,6 +682,9 @@ export default function TutorialClient() {
     blackoutUntil,
     danger,
   ]);
+
+  const snapshotRef = useRef(buildSnapshot);
+  useEffect(() => { snapshotRef.current = buildSnapshot; }, [buildSnapshot]);
 
   // Main canvas render loop
   useEffect(() => {
@@ -722,7 +727,7 @@ export default function TutorialClient() {
       const dt = Math.min(0.05, (nowMs - last) / 1000);
       last = nowMs;
 
-      const snap = buildSnapshot();
+      const snap = snapshotRef.current();
       for (const p of snap.players) {
         const cur = displayX.current.get(p.id);
         if (cur === undefined || Math.abs(cur - p.x) > 300) displayX.current.set(p.id, p.x);
@@ -739,7 +744,7 @@ export default function TutorialClient() {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
     };
-  }, [buildSnapshot, getSettingsStore]);
+  }, [getSettingsStore]);
 
   // Practice modal helper
   const openPracticeWard = (kind: WardKind) => {
@@ -792,7 +797,7 @@ export default function TutorialClient() {
               onClick={() => {
                 ensureAudio();
                 const m = !muted;
-                setMuted(m);
+                getSettingsStore().update((draft) => { draft.audio.muted = m; });
                 audioRef.current?.setMuted(m);
               }}
               title={muted ? "Unmute" : "Mute"}
@@ -854,6 +859,14 @@ export default function TutorialClient() {
           <div className="flex justify-between">
             <span>Carrying Kit:</span>
             <span className="font-mono text-[#d99a3d]">{hasSupply ? "YES (slow)" : "None"}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Location:</span>
+            <span data-testid="tutorial-location" className="font-mono text-[#c9b8a4]">{inside ? BUILDINGS.find((b) => b.id === inside)?.name : "The road"}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Your position:</span>
+            <span data-testid="tutorial-position" className="font-mono text-[#c9b8a4]">{Math.round(playerX)}</span>
           </div>
           <div className="flex justify-between">
             <span>Cart Position:</span>
@@ -918,6 +931,9 @@ export default function TutorialClient() {
 
         {/* Right: Actions */}
         <div className="flex items-end gap-2 sm:gap-3">
+          {BUILDINGS.some((b) => Math.abs(doorX(b) - playerX) <= DOOR_REACH && doors.some((d) => d.id === b.id && d.holder === "me")) && (
+            <button onClick={() => handleBuilding("lock")} className="h-12 rounded-full border border-[#84624c] bg-[#33231f]/90 px-3 text-xs text-[#f2cf91]">Lock (L)</button>
+          )}
           {hasSupply ? (
             <button
               onClick={handleDropSupply}
@@ -940,6 +956,7 @@ export default function TutorialClient() {
           )}
 
           <div className="flex flex-col items-center gap-1">
+            {buildingHint(doors, "me", playerX, inside) && <span className="max-w-48 rounded bg-[#0d0810]/90 px-2 py-1 text-center text-xs text-[#ffd98a]">{buildingHint(doors, "me", playerX, inside)}</span>}
             <button
               onClick={handleInteract}
               className="h-14 w-14 rounded-full border-2 border-[#d99a3d] bg-[#3a2410]/95 font-display text-xl text-[#ffd98a] shadow-[0_0_20px_rgba(217,154,61,0.3)] active:scale-95"

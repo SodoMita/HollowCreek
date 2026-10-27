@@ -2,7 +2,7 @@
 // /play, pushed to gh-pages, and zipped for Newgrounds. No React, no server
 // rendering: one HTML file + one bundle talking to the authoritative API.
 import { build } from "esbuild";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 
 mkdirSync("public/play", { recursive: true });
 await build({
@@ -16,8 +16,7 @@ await build({
 });
 copyFileSync("static-src/index.html", "public/play/index.html");
 // icons: canonical ladder lives in public/ (see release/README.md)
-copyFileSync("public/favicon.ico", "public/play/favicon.ico");
-copyFileSync("public/icon-192.png", "public/play/icon.png");
-copyFileSync("public/icon-512.png", "public/play/icon-512.png");
-copyFileSync("public/icon-1024.png", "public/play/icon-1024.png");
+for (const [source, target] of [["public/favicon.ico", "public/play/favicon.ico"], ["public/icon-192.png", "public/play/icon.png"], ["public/icon-512.png", "public/play/icon-512.png"], ["public/icon-1024.png", "public/play/icon-1024.png"]]) {
+  if (existsSync(source)) copyFileSync(source, target);
+}
 console.log("static client → public/play/ (index.html + game.js + icons)");
