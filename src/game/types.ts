@@ -1,5 +1,6 @@
 // Shared types & world constants for HOLLOW CREEK — a 1D autumn horror deduction game.
 import type { WardGameView } from "./wards";
+import type { DoorState } from "./buildings";
 
 export const WORLD_W = 4200;
 export const SPEED = 190; // px per second
@@ -90,6 +91,8 @@ export interface PublicPlayer {
   caged: boolean;
   hasKey: boolean;
   hasSupply: boolean;
+  /** House layer, if any; x remains a world coordinate. */
+  inside?: string | null;
   voted: boolean;
   bubble: { text: string; until: number } | null;
   isHost: boolean;
@@ -102,6 +105,7 @@ export interface SelfInfo {
   caged: boolean;
   hasKey: boolean;
   hasSupply: boolean;
+  doorKeys?: string[];
   bellUsed: boolean;
   killCooldownMs: number;
   canKill: boolean;
@@ -168,7 +172,8 @@ export interface Snapshot {
   now: number;
   self: SelfInfo;
   players: PublicPlayer[];
-  bodies: { x: number; color: string; name: string }[];
+  bodies: { x: number; color: string; name: string; id?: string; at?: number; inside?: string | null }[];
+  doors?: DoorState[];
   keyX: number | null;
   /** Dropped kits can be recovered after a death, cage or voluntary drop. */
   supplyDrops: number[];
@@ -217,7 +222,7 @@ export interface InputBody {
   dir?: number;
   interactHeld?: boolean;
   cartHeld?: boolean; // hold Push + a direction while beside the cart
-  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "restart" | "leave" | "drop_supply" | "sabotage" | "ward_move" | "ward_cancel";
+  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "restart" | "leave" | "drop_supply" | "sabotage" | "ward_move" | "ward_cancel" | "door_lock";
   wardId?: string;
   move?: number;
   chat?: string;

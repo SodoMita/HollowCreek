@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
 import { Renderer } from "@/game/render";
+import { BUILDINGS, DOOR_REACH, doorX } from "@/game/buildings";
 import { WardPanel } from "@/game/ward-ui";
 import { AudioDirector } from "@/game/audio";
 import { VoiceChat, type VoiceStatus } from "@/game/voice";
@@ -263,6 +264,7 @@ export default function GameClient({ code }: { code: string }) {
       const bound = (action: BindableAction) => matchesControl(controls, action, e.code);
       if (bound("left")) { keys.current.add("left"); computeDir(); e.preventDefault(); }
       else if (bound("right")) { keys.current.add("right"); computeDir(); e.preventDefault(); }
+      else if (e.code === "KeyL" && !e.repeat) { void send({ action: "door_lock" }); e.preventDefault(); }
       else if (bound("interact") && !e.repeat) { interactDown(); e.preventDefault(); }
       else if (bound("ability") && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
       else if (bound("blackout") && !e.repeat) { void send({ action: "blackout" }); e.preventDefault(); }
@@ -408,6 +410,7 @@ export default function GameClient({ code }: { code: string }) {
                 title="Copy town code"
               >{s.code}</button>
               <span className="ml-2 hidden text-[#9c8b7a] sm:inline">{s.playerCount} souls</span>
+              {me?.inside && <span className="ml-2 text-[#e2be83]">Inside {BUILDINGS.find((b) => b.id === me.inside)?.name}</span>}
               {s.phase === "playing" && s.self.alive && s.self.hasSupply && (
                 <button title="Drop repair kit for another player" aria-label="Drop repair kit"
                   onClick={() => void send({ action: "drop_supply" })}
@@ -431,7 +434,7 @@ export default function GameClient({ code }: { code: string }) {
                 {s.self.caged && s.self.alive ? " · Caged" : ""}
               </span>
               <button
-                onClick={() => { ensureAudio(); const m = !muted; setMuted(m); audioRef.current?.setMuted(m); }}
+                onClick={() => { ensureAudio(); const m = !muted; getSettingsStore().update((draft) => { draft.audio.muted = m; }); audioRef.current?.setMuted(m); }}
                 title={muted ? "Unmute" : "Mute"}
                 className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] sm:py-1.5"
               >{muted ? "🔇" : "🔊"}</button>
@@ -594,6 +597,9 @@ export default function GameClient({ code }: { code: string }) {
                 onClick={openChat}
                 className="h-11 rounded-full border border-[#3a2733] bg-[#140d18]/80 px-3 text-sm text-[#d8c9b4] backdrop-blur hover:bg-[#2a1a26] sm:px-4"
               >💬<span className="hidden sm:inline"> Speak</span></button>
+              {me && s.self.alive && !s.self.caged && BUILDINGS.some((b) => Math.abs(doorX(b) - me.x) <= DOOR_REACH && s.self.doorKeys?.includes(b.id)) && (
+                <button onClick={() => void send({ action: "door_lock" })} className="h-11 rounded-full border border-[#84624c] bg-[#33231f]/90 px-3 text-xs text-[#f2cf91]" title="Lock or unlock with this house key">Lock · L</button>
+              )}
               <div className="flex flex-col items-center gap-1">
                 {s.hint && <span className="hc-interaction-hint max-w-36 rounded bg-[#0d0810]/80 px-2 py-0.5 text-center text-xs text-[#d99a3d] sm:max-w-44">{s.hint}</span>}
                 <button

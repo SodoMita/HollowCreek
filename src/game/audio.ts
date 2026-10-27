@@ -15,6 +15,9 @@ const NOTE = (semis: number) => 55 * Math.pow(2, semis / 12); // A1 reference
 interface CtxNodes {
   ctx: AudioContext;
   master: GainNode;
+  musicBus: GainNode;
+  ambienceBus: GainNode;
+  effectsBus: GainNode;
   wet: GainNode;
   musicBoxBus: GainNode;
   droneFilter: BiquadFilterNode;
@@ -33,15 +36,19 @@ export class AudioDirector {
   private n: CtxNodes | null = null;
   private started = false;
   private mutedFlag = false;
-  private timers: ReturnType<typeof setTimeout>[] = [];
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private nextHeart = 0;
+  private unsubscribe: () => void;
   private nextMotif = 0;
   private nextBell = 0;
   private lastPhase = "";
   private danger = 0;
+  private heartDanger = 0;
   private blackoutUntil = 0;
 
   constructor(private store: SettingsStore = new SettingsStore()) {
     this.mutedFlag = !!store.value?.audio?.muted;
+    this.unsubscribe = store.subscribe(() => this.applyMix());
   }
 
   get muted() {
@@ -49,7 +56,7 @@ export class AudioDirector {
   }
 
   start() {
-    if (this.started) return;
+    if (this.started) { if (this.n?.ctx.state === "suspended") void this.n.ctx.resume(); return; }
     const AC: typeof AudioContext | undefined =
       typeof window !== "undefined"
         ? window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
@@ -59,7 +66,7 @@ export class AudioDirector {
       const ctx = new AC();
       this.started = true;
       const master = ctx.createGain();
-      master.gain.value = this.mutedFlag ? 0 : 0.85;
+      master.gain.value = this.mutedFlag ? 0 : this.store.value.audio.master;
 
       const comp = ctx.createDynamicsCompressor();
       comp.threshold.value = -18;
@@ -74,6 +81,14 @@ export class AudioDirector {
       wet.gain.value = 0.34;
       wet.connect(convolver);
       convolver.connect(master);
+      // Post-fader reverb sends: silencing a bus also silences its wet path.
+      const musicBus = ctx.createGain();
+      const ambienceBus = ctx.createGain();
+      const effectsBus = ctx.createGain();
+      musicBus.gain.value = this.store.value.audio.music;
+      ambienceBus.gain.value = this.store.value.audio.ambience;
+      effectsBus.gain.value = this.store.value.audio.effects;
+      for (const bus of [musicBus, ambienceBus, effectsBus]) { bus.connect(master); bus.connect(wet); }
 
       const noiseBuf = this.noise(ctx, 4);
 
@@ -89,8 +104,7 @@ export class AudioDirector {
       windGain.gain.value = 0.16;
       wind.connect(windFilter);
       windFilter.connect(windGain);
-      windGain.connect(master);
-      windGain.connect(wet);
+      windGain.connect(ambienceBus);
       wind.start();
 
       // ---- drone: bowed strings, detuned ----
@@ -101,8 +115,7 @@ export class AudioDirector {
       const droneGain = ctx.createGain();
       droneGain.gain.value = 0.11;
       droneFilter.connect(droneGain);
-      droneGain.connect(master);
-      droneGain.connect(wet);
+      droneGain.connect(musicBus);
       const droneOsc: OscillatorNode[] = [];
       [0, 0.16, -0.19, 0.31].forEach((detune, i) => {
         const o = ctx.createOscillator();
@@ -121,8 +134,7 @@ export class AudioDirector {
       const choirGain = ctx.createGain();
       choirGain.gain.value = 0;
       choirFilter.connect(choirGain);
-      choirGain.connect(master);
-      choirGain.connect(wet);
+      choirGain.connect(musicBus);
       const choirOsc: OscillatorNode[] = [];
       [-7, 0, 7, 12].forEach((det) => {
         const o = ctx.createOscillator();
@@ -144,28 +156,27 @@ export class AudioDirector {
       const damp = ctx.createBiquadFilter();
       damp.type = "lowpass";
       damp.frequency.value = 2200;
-      musicBoxBus.connect(master);
+      musicBoxBus.connect(musicBus);
       musicBoxBus.connect(delay);
       delay.connect(damp);
       damp.connect(fb);
       fb.connect(delay);
-      delay.connect(wet);
-      delay.connect(master);
+      delay.connect(musicBus);
 
       // ---- heartbeat ----
       const heartGain = ctx.createGain();
       heartGain.gain.value = 0;
-      heartGain.connect(master);
+      heartGain.connect(effectsBus);
       const tensionGain = ctx.createGain();
       tensionGain.gain.value = 0;
-      tensionGain.connect(master);
-      tensionGain.connect(wet);
+      tensionGain.connect(musicBus);
 
       this.n = {
-        ctx, master, wet, musicBoxBus, droneFilter, droneGain, droneOsc,
+        ctx, master, musicBus, ambienceBus, effectsBus, wet, musicBoxBus, droneFilter, droneGain, droneOsc,
         choirGain, choirOsc, windGain, windFilter, heartGain, tensionGain, noiseBuf,
       };
 
+      this.applyMix();
       this.nextMotif = ctx.currentTime + 2.5;
       this.nextBell = ctx.currentTime + 12;
       this.schedule();
@@ -175,18 +186,31 @@ export class AudioDirector {
     }
   }
 
-  setMuted(muted: boolean) {
-    this.mutedFlag = muted;
-    if (this.n) {
-      const t = this.n.ctx.currentTime;
-      this.n.master.gain.cancelScheduledValues(t);
-      this.n.master.gain.setTargetAtTime(muted ? 0 : 0.85, t, 0.12);
+  private applyMix() {
+    const a = this.store.value.audio;
+    this.mutedFlag = a.muted;
+    if (!this.n) return;
+    const t = this.n.ctx.currentTime;
+    for (const [node, value] of [
+      [this.n.master, a.muted ? 0 : a.master],
+      [this.n.musicBus, a.music],
+      [this.n.ambienceBus, a.ambience],
+      [this.n.effectsBus, a.effects],
+    ] as const) {
+      node.gain.cancelScheduledValues(t);
+      node.gain.setTargetAtTime(value, t, 0.08);
     }
   }
 
+  setMuted(muted: boolean) {
+    if (this.store.value.audio.muted !== muted) this.store.update((draft) => { draft.audio.muted = muted; });
+    else this.applyMix();
+  }
+
   destroy() {
-    this.timers.forEach(clearTimeout);
-    this.timers = [];
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.unsubscribe();
     if (this.n) {
       try {
         this.n.droneOsc.forEach((o) => o.stop());
@@ -202,7 +226,9 @@ export class AudioDirector {
   update(snap: Snapshot) {
     if (!this.n) return;
     const t = this.n.ctx.currentTime;
-    this.danger = snap.danger ?? 0;
+    const actualDanger = snap.danger ?? 0;
+    this.heartDanger = actualDanger;
+    this.danger = this.store.value.audio.adaptiveMusic ? actualDanger : 0;
     this.blackoutUntil = snap.blackoutUntil ?? 0;
 
     // chord cycle Dm · Bb · F · Am — 17s each
@@ -218,7 +244,7 @@ export class AudioDirector {
     this.n.droneFilter.frequency.setTargetAtTime(420 + 320 * (1 - this.danger), t, 1.2);
     this.n.choirGain.gain.setTargetAtTime(0.035 * Math.pow(this.danger, 1.5), t, 0.9);
     this.n.tensionGain.gain.setTargetAtTime(0.25 * this.danger, t, 0.7);
-    this.n.heartGain.gain.setTargetAtTime(0.32 * this.danger, t, 0.4);
+    this.n.heartGain.gain.setTargetAtTime(this.store.value.audio.heartbeat ? 0.32 * actualDanger : 0, t, 0.4);
 
     const blackout = Date.now() < this.blackoutUntil;
     this.n.windGain.gain.setTargetAtTime(blackout ? 0.26 : 0.16, t, 0.8);
@@ -278,10 +304,10 @@ export class AudioDirector {
     g.gain.exponentialRampToValueAtTime(0.55, when + 0.03);
     g.gain.exponentialRampToValueAtTime(0.0001, when + 0.9);
     o.connect(g);
-    g.connect(n.master);
-    g.connect(n.wet);
+    g.connect(n.effectsBus);
     o.start(when);
     o.stop(when + 1);
+    o.onended = () => { o.disconnect(); g.disconnect(); };
     this.whoosh();
   }
 
@@ -299,10 +325,10 @@ export class AudioDirector {
     g.gain.exponentialRampToValueAtTime(0.22, when + 0.08);
     g.gain.exponentialRampToValueAtTime(0.0001, when + 1.1);
     o.connect(g);
-    g.connect(n.master);
-    g.connect(n.wet);
+    g.connect(n.effectsBus);
     o.start(when);
     o.stop(when + 1.2);
+    o.onended = () => { o.disconnect(); g.disconnect(); };
     this.pluck(when + 0.18, NOTE(31), 0.14);
   }
 
@@ -320,13 +346,12 @@ export class AudioDirector {
       this.toll(1);
       this.nextBell = t + 42 + Math.random() * 70;
     }
-    // heartbeat, gated by dread
-    if (this.danger > 0.05) {
-      const period = 1.25 - 0.55 * this.danger;
+    // One double beat per period; faster as danger grows, without accumulating timers.
+    if (this.store.value.audio.heartbeat && this.heartDanger > 0.05 && t >= this.nextHeart) {
       this.heart(t);
-      this.timers.push(setTimeout(() => this.heart(n.ctx.currentTime), period * 500));
+      this.nextHeart = t + 1.25 - 0.55 * this.heartDanger;
     }
-    this.timers.push(setTimeout(() => this.schedule(), 1000));
+    this.timer = setTimeout(() => this.schedule(), 200);
   }
 
   private pluckMotif() {
@@ -367,6 +392,7 @@ export class AudioDirector {
     o2.start(when);
     o.stop(when + 2.6);
     o2.stop(when + 2.6);
+    o2.onended = () => { o.disconnect(); o2.disconnect(); g.disconnect(); lp.disconnect(); };
   }
 
   private heart(at: number) {
@@ -385,6 +411,7 @@ export class AudioDirector {
       g.connect(n.heartGain);
       o.start(when);
       o.stop(when + 0.3);
+      o.onended = () => { o.disconnect(); g.disconnect(); };
     };
     beat(at, 1);
     beat(at + 0.26, 0.62);
@@ -411,10 +438,10 @@ export class AudioDirector {
         g.gain.exponentialRampToValueAtTime(p.g * 0.42, when + 0.012);
         g.gain.exponentialRampToValueAtTime(0.0001, when + p.d);
         o.connect(g);
-        g.connect(n.master);
-        g.connect(n.wet);
+        g.connect(n.effectsBus);
         o.start(when);
         o.stop(when + p.d + 0.1);
+        o.onended = () => { o.disconnect(); g.disconnect(); };
       }
     }
   }
@@ -436,10 +463,10 @@ export class AudioDirector {
     g.gain.exponentialRampToValueAtTime(0.0001, when + 1.7);
     src.connect(f);
     f.connect(g);
-    g.connect(n.master);
-    g.connect(n.wet);
+    g.connect(n.effectsBus);
     src.start(when);
     src.stop(when + 1.8);
+    src.onended = () => { src.disconnect(); f.disconnect(); g.disconnect(); };
   }
 
   // --------------------------------------------------------------- buffers

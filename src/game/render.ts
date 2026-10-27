@@ -5,6 +5,7 @@ import {
 import type { Snapshot, Station } from "./types";
 import { createDefaultSettings, type GameSettings } from "./settings";
 import { drawBrokenWard, drawKit, drawSupplyCart } from "./ward-art";
+import { BUILDINGS, WORLD_MIN, WORLD_MAX, doorX, type Building, type DoorState } from "./buildings";
 
 interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: string; s: number }
 
@@ -19,7 +20,7 @@ export class Renderer {
   constructor() {
     for (let i = 0; i < 110; i++) {
       this.leaves.push({
-        x: Math.random() * WORLD_W,
+        x: WORLD_MIN + Math.random() * (WORLD_MAX - WORLD_MIN),
         y: Math.random() * 600,
         vx: -12 - Math.random() * 25,
         vy: 18 + Math.random() * 30,
@@ -55,10 +56,10 @@ export class Renderer {
     if (graphics.reducedMotion) t = 0;
     const me = snap.players.find((p) => p.id === snap.self.id);
     const meX = me ? displayX.get(me.id) ?? me.x : WORLD_W / 2;
-    const targetCam = Math.max(0, Math.min(WORLD_W - w, meX - w / 2));
+    const targetCam = Math.max(WORLD_MIN, Math.min(WORLD_MAX - w, meX - w / 2));
     if (graphics.cameraSmoothing) this.cameraX += (targetCam - this.cameraX) * Math.min(1, dt * 6);
     else this.cameraX = targetCam;
-    if (WORLD_W < w) this.cameraX = (WORLD_W - w) / 2;
+    if (WORLD_MAX - WORLD_MIN < w) this.cameraX = (WORLD_MIN + WORLD_MAX - w) / 2;
     const cam = this.cameraX;
     const ground = h * 0.78;
     const now = snap.now;
@@ -142,7 +143,7 @@ export class Renderer {
     ctx.lineTo(w, ground); ctx.fill();
 
     for (let i = 0; i < 60; i++) {
-      const wx = i * 130 + ((i * 97) % 60);
+      const wx = WORLD_MIN + i * 155 + ((i * 97) % 60);
       const sx = wx - cam * 0.45;
       if (sx < -90 || sx > w + 90) continue;
       const th = 74 + ((i * 53) % 56);
@@ -168,7 +169,7 @@ export class Renderer {
       ctx.stroke();
     }
     for (let i = 0; i < 50; i++) {
-      const sx = i * 190 + ((i * 71) % 90) - cam;
+      const sx = WORLD_MIN + i * 190 + ((i * 71) % 90) - cam;
       if (sx < -60 || sx > w + 60) continue;
       ctx.fillStyle = "rgba(160,90,40,0.28)";
       ctx.beginPath(); ctx.ellipse(sx, ground + 8, 30, 6, 0, 0, Math.PI * 2); ctx.fill();
@@ -180,7 +181,7 @@ export class Renderer {
     if (graphics.quality !== "low") {
       ctx.strokeStyle = "rgba(107,75,50,.55)"; ctx.lineWidth = 4;
       for (let i = 0; i < 24; i++) {
-        const fx = i * 235 - cam;
+        const fx = WORLD_MIN + i * 320 - cam;
         if (fx < -80 || fx > w + 80) continue;
         const fy = ground + 48 + (i % 3) * 3;
         ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx - 2, fy - 31); ctx.moveTo(fx + 74, fy); ctx.lineTo(fx + 72, fy - 28);
@@ -188,7 +189,7 @@ export class Renderer {
       }
       ctx.fillStyle = "rgba(93,103,111,.18)";
       for (let i = 0; i < 30; i++) {
-        const sx = i * 173 + 60 - cam;
+        const sx = WORLD_MIN + i * 260 + 60 - cam;
         if (sx < 0 || sx > w) continue;
         ctx.beginPath(); ctx.ellipse(sx, ground + 27, 4 + i % 5, 2, 0, 0, Math.PI * 2); ctx.fill();
       }
@@ -199,6 +200,15 @@ export class Renderer {
       const a = 0.08 + Math.sin(t * 3) * 0.03;
       ctx.fillStyle = `rgba(255,200,100,${a})`;
       ctx.fillRect(MEETING_FROM - cam, ground - 200, MEETING_TO - MEETING_FROM, 200 + 40);
+    }
+
+    // House backdrops share the street's world coordinates. Occupied houses
+    // become a cutaway only after their occupants have been painted.
+    for (const b of BUILDINGS) {
+      const sx = b.x - cam;
+      if (sx < -b.width || sx > w + b.width) continue;
+      const occupied = snap.players.some((p) => p.inside === b.id && p.alive);
+      this.drawHouse(ctx, b, sx, ground, t, snap.doors?.find((d) => d.id === b.id), occupied, false);
     }
 
     // --- stations / buildings ---
@@ -245,9 +255,40 @@ export class Renderer {
       ctx.restore();
     }
 
+    // Each house has its own identifiable key, separate from the cage key.
+    for (const d of snap.doors ?? []) {
+      if (d.keyX === null) continue;
+      const kx = d.keyX - cam;
+      if (kx < -30 || kx > w + 30) continue;
+      ctx.save(); ctx.strokeStyle = "#dfad55"; ctx.lineWidth = 3;
+      ctx.shadowColor = "#ffd578"; this.glow(ctx, 12);
+      const bob = Math.sin(t * 3) * 3;
+      ctx.beginPath(); ctx.arc(kx, ground - 25 + bob, 5, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(kx, ground - 20 + bob); ctx.lineTo(kx, ground - 7 + bob);
+      ctx.lineTo(kx + 5, ground - 7 + bob); ctx.moveTo(kx, ground - 12 + bob); ctx.lineTo(kx + 5, ground - 12 + bob); ctx.stroke();
+      ctx.restore();
+    }
+
     // --- bodies (crows gather above the dead) ---
     for (const b of snap.bodies) {
       const bx = b.x - cam;
+      const age = b.at ? now - b.at : 9999;
+      if (age >= 0 && age < 950 && !graphics.reducedMotion) {
+        const progress = age / 950;
+        ctx.save();
+        ctx.globalAlpha = (1 - progress) * 0.7;
+        const flash = ctx.createRadialGradient(bx, ground - 45, 3, bx, ground - 45, 70 + progress * 80);
+        flash.addColorStop(0, "rgba(220,40,28,.9)"); flash.addColorStop(1, "rgba(110,0,0,0)");
+        ctx.fillStyle = flash; ctx.fillRect(bx - 160, ground - 200, 320, 220);
+        if (progress < 0.55) {
+          ctx.strokeStyle = "#f1b1a0"; ctx.lineWidth = 4 * (1 - progress);
+          for (let i = 0; i < 3; i++) {
+            ctx.beginPath(); ctx.moveTo(bx - 35 + i * 12, ground - 105);
+            ctx.quadraticCurveTo(bx + 8 + i * 12, ground - 65, bx + 35 + i * 12, ground - 25); ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
       ctx.fillStyle = "rgba(90,10,10,0.7)";
       ctx.beginPath(); ctx.ellipse(bx, ground - 2, 30, 7, 0, 0, Math.PI * 2); ctx.fill();
       ctx.save();
@@ -310,10 +351,17 @@ export class Renderer {
       if (p.bubble && this.settings.interface.speechBubbles) this.drawBubble(ctx, px, ground - 72 + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
     };
 
+    for (const p of sorted) if (p.inside && !p.caged) drawPlayer(p);
+    for (const b of BUILDINGS) {
+      const sx = b.x - cam;
+      const occupied = snap.players.some((p) => p.inside === b.id && p.alive);
+      if (occupied && sx > -b.width && sx < w + b.width)
+        this.drawHouse(ctx, b, sx, ground, t, snap.doors?.find((d) => d.id === b.id), true, true);
+    }
     for (const p of sorted) if (p.caged) drawPlayer(p);
-    // Only prisoners stand behind the fronts; everyone else walks in front.
+    // Only prisoners stand behind the fronts; pedestrians remain on the road.
     for (const c of snap.cages) this.drawCage(ctx, c.x - cam, ground, true);
-    for (const p of sorted) if (!p.caged) drawPlayer(p);
+    for (const p of sorted) if (!p.caged && !p.inside) drawPlayer(p);
 
     // --- falling leaves (quantity follows the detail preset) ---
     if (graphics.particles) {
@@ -387,6 +435,68 @@ export class Renderer {
   }
 
   // -------------------------------------------------------------------------
+
+  /** Profile gable, jamb and threshold. The same foundation meets the road on
+   * both layers, so crossing the doorway never cuts to another scene. */
+  private drawHouse(ctx: CanvasRenderingContext2D, b: Building, x: number, ground: number, t: number, door: DoorState | undefined, occupied: boolean, front: boolean) {
+    const left = x - b.width / 2, right = x + b.width / 2;
+    const top = ground - 165, ridge = ground - 230;
+    const dx = doorX(b) - b.x + x;
+    if (occupied && !front) {
+      ctx.save();
+      const light = ctx.createLinearGradient(left, top, right, ground);
+      light.addColorStop(0, "#4c3027"); light.addColorStop(1, "#291c1d");
+      ctx.fillStyle = light; ctx.fillRect(left + 5, top + 5, b.width - 10, 160);
+      ctx.fillStyle = "#754b32"; ctx.fillRect(left + 5, ground - 14, b.width - 10, 14);
+      ctx.strokeStyle = "rgba(230,169,104,.2)"; ctx.lineWidth = 2;
+      for (let y = top + 25; y < ground - 20; y += 30) { ctx.beginPath(); ctx.moveTo(left + 8, y); ctx.lineTo(right - 8, y); ctx.stroke(); }
+      ctx.fillStyle = "#201516"; ctx.fillRect(x - 32, ground - 48, 64, 30);
+      ctx.fillStyle = "#a67947"; ctx.fillRect(x - 36, ground - 52, 72, 7);
+      ctx.fillStyle = "#e2a454"; ctx.fillRect(x - 6, ground - 63, 12, 11);
+      ctx.restore();
+      return;
+    }
+    if (!occupied && front) return;
+    ctx.save();
+    if (front) ctx.globalAlpha = 0.24;
+    // Stone foundation and horizontal clapboards.
+    ctx.fillStyle = "#292125"; ctx.fillRect(left - 4, ground - 17, b.width + 8, 17);
+    ctx.fillStyle = "#4a3a38";
+    for (let j = 0; j < b.width; j += 31) ctx.fillRect(left + j, ground - 14, 28, 5);
+    ctx.fillStyle = b.id === "orchard" ? "#5a3c35" : b.id === "quarry" ? "#51423b" : "#5b4038";
+    ctx.fillRect(left, top, b.width, 150);
+    ctx.strokeStyle = "rgba(19,11,15,.35)"; ctx.lineWidth = 2;
+    for (let y = top + 12; y < ground - 17; y += 13) { ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke(); }
+    // Long roof with fascia and a brick chimney.
+    ctx.fillStyle = "#211920"; ctx.beginPath(); ctx.moveTo(left - 17, top + 2); ctx.lineTo(x, ridge); ctx.lineTo(right + 17, top + 2); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = "#8b5d4c"; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(left - 17, top + 2); ctx.lineTo(x, ridge); ctx.lineTo(right + 17, top + 2); ctx.stroke();
+    ctx.fillStyle = "#45302c"; ctx.fillRect(x + 52, ridge - 8, 20, 45); ctx.fillStyle = "#241b1d"; ctx.fillRect(x + 49, ridge - 12, 26, 7);
+    ctx.fillStyle = "rgba(172,158,159,.17)";
+    for (let i = 0; i < 3; i++) { const sy = ridge - 20 - ((t * 8 + i * 13) % 48); ctx.beginPath(); ctx.arc(x + 61 + Math.sin(t + i) * 5, sy, 5 + i * 2, 0, Math.PI * 2); ctx.fill(); }
+    // Sash windows and shutters (the opening itself is on the return wall).
+    for (const wx of [x - 77, x + 60]) {
+      ctx.fillStyle = "#271a1c"; ctx.fillRect(wx - 20, ground - 116, 40, 55);
+      ctx.fillStyle = "#c28950"; ctx.fillRect(wx - 14, ground - 110, 28, 43);
+      ctx.fillStyle = "#392b29"; ctx.fillRect(wx - 2, ground - 110, 4, 43); ctx.fillRect(wx - 14, ground - 90, 28, 3);
+      ctx.fillStyle = "#3b2929"; ctx.fillRect(wx - 27, ground - 115, 7, 54); ctx.fillRect(wx + 20, ground - 115, 7, 54);
+    }
+    // Gable-end return wall, in profile. It recedes toward the doorway.
+    const edge = b.side === 1 ? right : left;
+    ctx.fillStyle = "#35272a"; ctx.beginPath(); ctx.moveTo(edge, top); ctx.lineTo(edge - b.side * 29, top + 13); ctx.lineTo(edge - b.side * 29, ground - 16); ctx.lineTo(edge, ground - 16); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = "rgba(190,142,105,.3)"; ctx.lineWidth = 1;
+    for (let y = top + 18; y < ground - 25; y += 13) { ctx.beginPath(); ctx.moveTo(edge, y); ctx.lineTo(edge - b.side * 29, y + 4); ctx.stroke(); }
+    // Narrow angled opening and exposed lintel, rather than a front-facing panel.
+    ctx.fillStyle = "#130e13"; ctx.beginPath(); ctx.moveTo(dx - b.side * 10, ground - 91); ctx.lineTo(dx + b.side * 5, ground - 85); ctx.lineTo(dx + b.side * 5, ground - 17); ctx.lineTo(dx - b.side * 10, ground - 17); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = "#b18260"; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(dx - b.side * 10, ground - 17); ctx.lineTo(dx - b.side * 10, ground - 91); ctx.lineTo(dx + b.side * 5, ground - 85); ctx.lineTo(dx + b.side * 5, ground - 17); ctx.stroke();
+    ctx.strokeStyle = door?.open ? "#a4724b" : "#684733"; ctx.lineWidth = door?.open ? 5 : 7;
+    ctx.beginPath(); ctx.moveTo(dx, ground - 84); ctx.lineTo(dx + b.side * (door?.open ? 30 : 2), ground - 78); ctx.lineTo(dx + b.side * (door?.open ? 30 : 2), ground - 18); ctx.stroke();
+    ctx.fillStyle = "#8d6d54"; ctx.beginPath(); ctx.moveTo(dx - b.side * 13, ground - 17); ctx.lineTo(dx + b.side * 13, ground - 17); ctx.lineTo(dx + b.side * 25, ground - 6); ctx.lineTo(dx - b.side * 5, ground - 6); ctx.closePath(); ctx.fill();
+    ctx.restore();
+    if (!front) {
+      ctx.save(); ctx.font = "600 10px system-ui, sans-serif"; ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(235,203,166,.78)"; ctx.fillText(b.name.toUpperCase(), x, top - 14); ctx.restore();
+    }
+  }
 
   private drawTree(ctx: CanvasRenderingContext2D, x: number, ground: number, height: number, seed: number) {
     const top = ground - height;

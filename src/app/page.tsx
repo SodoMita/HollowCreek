@@ -157,9 +157,9 @@ export default function Home() {
           <div className="hc-rise-3 mt-8 grid max-w-lg grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             {[
               [`${keyLabel(settings.controls.left)} / ${keyLabel(settings.controls.right)}`, "walk the street"],
-              [keyLabel(settings.controls.interact), "take / deliver kit · open repair puzzle"],
+              [keyLabel(settings.controls.interact), "interact · open doors and puzzles"],
               [`${keyLabel(settings.controls.ability)} / ${keyLabel(settings.controls.blackout)}`, "role ability · snuff lights"],
-              [keyLabel(settings.controls.chat), "speak (bubble)"],
+              ["L", "lock a house with its own key"],
             ].map(([k, v]) => (
               <div key={k} className="rounded border border-[#3a2733] bg-[#160e1a]/80 p-3">
                 <div className="font-mono text-[#d99a3d]">{k}</div>

@@ -8,6 +8,7 @@ import { VoiceChat, type VoiceStatus } from "../src/game/voice";
 import { SettingsStore, applyDocumentPreferences, keyLabel, matchesControl, type BindableAction } from "../src/game/settings";
 import { SettingsDialog } from "../src/game/settings-ui";
 import { BELL_X } from "../src/game/types";
+import { BUILDINGS, DOOR_REACH, doorX } from "../src/game/buildings";
 import type { RoomListing, Snapshot } from "../src/game/types";
 
 // Temporary author-built sandboxes run the same unified code (see SYNC.md).
@@ -453,6 +454,7 @@ function renderHud(s: Snapshot) {
   if (s.hint) hint.textContent = s.hint;
   $("ebtn").textContent = keyLabel(settingsStore.value.controls.interact);
   $("ebtn").className = `rbtn ${s.hint ? "hot" : ""}`;
+  $("doorlock").style.display = me && s.self.alive && !s.self.caged && BUILDINGS.some((b) => Math.abs(doorX(b) - me.x) <= DOOR_REACH && s.self.doorKeys?.includes(b.id)) ? "block" : "none";
   const ab = $("ability");
   ab.textContent = s.abilityLabel;
   ab.className = `rbtn kill ${s.abilityReady ? "hot" : ""}`;
@@ -557,6 +559,7 @@ window.addEventListener("keydown", (e) => {
   if (target && (["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName) || target.isContentEditable)) return;
   if (bound("left", e)) { keys.add("left"); computeDir(); e.preventDefault(); }
   else if (bound("right", e)) { keys.add("right"); computeDir(); e.preventDefault(); }
+  else if (e.code === "KeyL" && !e.repeat) { void send({ action: "door_lock" }); e.preventDefault(); }
   else if (bound("interact", e) && !e.repeat) { interactDown(); e.preventDefault(); }
   else if (bound("ability", e) && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
   else if (bound("blackout", e) && !e.repeat) { void send({ action: "blackout" }); e.preventDefault(); }
@@ -608,6 +611,7 @@ $("settings").addEventListener("click", () => settingsDialog.open());
 $("menusettings").addEventListener("click", () => settingsDialog.open());
 $("voicebtn").addEventListener("click", () => { if (voice.current.active) voice.stop(); else void voice.start(); });
 $("micmute").addEventListener("click", () => voice.setMuted(!voice.current.muted));
+$("doorlock").addEventListener("click", () => { void send({ action: "door_lock" }); });
 $("mute").addEventListener("click", () => {
   audio.start();
   audio.setMuted(!audio.muted);
