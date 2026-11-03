@@ -41,7 +41,7 @@ const panel = new WardPanel(parent, {
   opened() { opens++; }, close() { closes++; },
   move(stationId, index) { lastMove = { stationId, index }; },
 });
-const kinds = ["pumpkins", "well", "scarecrow", "lantern", "chapel", "mill", "graves", "radio", "silo"];
+const kinds = ["pumpkins", "well", "scarecrow", "lantern", "chapel", "mill", "graves", "radio", "silo", "hearth", "pantry", "clock", "fusebox"];
 for (const kind of kinds) {
   const game = puzzle.createWardPuzzle(kind, 1138);
   const view = puzzle.wardView(kind, `Repair ${kind}`, game);

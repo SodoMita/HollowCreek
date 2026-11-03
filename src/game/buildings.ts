@@ -65,7 +65,7 @@ export function interactWithBuilding(doors: DoorState[], playerId: string, x: nu
     return { handled: true, message: `${building.name} opens. Walk through the doorway.` };
   }
   door.open = !door.open;
-  return { handled: true, message: `${building.name} door ${door.open ? "opens" : "closes"}.` };
+  return { handled: true, message: door.open ? `${building.name} door opens.` : `${building.name} door closes, but stays unlocked.` };
 }
 
 /** Crossing changes only the layer, never x. A closed door only bounds occupants;
@@ -110,9 +110,10 @@ export function buildingHint(doors: DoorState[], playerId: string, x: number, in
     if (key) return `E — take ${BUILDINGS.find((b) => b.id === key.id)!.keyName}`;
   }
   const b = BUILDINGS.find((item) => (!inside || inside === item.id) && Math.abs(doorX(item) - x) <= DOOR_REACH);
-  if (!b) return inside ? `Inside ${BUILDINGS.find((item) => item.id === inside)?.name ?? "the house"} — walk back to the door` : null;
+  if (!b) return null;
   const d = doors.find((item) => item.id === b.id);
   if (!d) return null;
   if (d.locked && d.holder !== playerId && inside !== b.id) return `${b.name} locked — find its key`;
-  return `E — ${d.open ? "close" : d.locked ? "unlock & open" : "open"} door${d.holder === playerId ? " · L — lock" : ""}`;
+  const action = d.open ? "close (unlocked)" : d.locked ? "unlock & open" : "open (unlocked)";
+  return `E — ${action}${d.holder === playerId ? ` · L — ${d.locked ? "unlock" : "lock"}` : ""}`;
 }

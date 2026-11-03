@@ -20,7 +20,7 @@ const initial = await Promise.all(ids.map((id) => state(code, id)));
 const s0 = initial[0];
 check("game started", s0.phase === "playing");
 check("role and match results remain sealed", s0.results === null && !s0.players.some((p) => "role" in p));
-check("every ward initially broken", s0.tasks.length === 9 && s0.tasks.every((t) => !t.done && !t.delivered && !t.progress));
+check("street wards start broken and house jobs have local supplies", s0.tasks.length === 13 && s0.tasks.every((t) => !t.done && !t.progress && (t.inside ? t.delivered : !t.delivered)));
 check("shared pool identical for every seat", initial.every((s) => s.tasks.map((t) => t.id).join(",") === s0.tasks.map((t) => t.id).join(",")));
 check("stamina and kit start in the right state", initial.every((s) => s.self.stamina === 1 && !s.self.hasSupply));
 
@@ -53,6 +53,8 @@ await sleep(700);
 check("cannot repair without a delivered kit", (await myState()).tasks.find((t) => t.id === task.id).progress === 0);
 await walkTo((await myState()).cartX);
 await input({ action: "interact", interactHeld: false });
+// A randomly spawned iron key can be beside the cart and is picked up first.
+if (!(await myState()).self.hasSupply) await input({ action: "interact", interactHeld: false });
 check("kit picked up at the one supply cart", (await myState()).self.hasSupply);
 await walkTo(task.x);
 check("hauling spends vigor", (await myState()).self.stamina < 1);

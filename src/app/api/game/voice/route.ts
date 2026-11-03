@@ -50,7 +50,7 @@ function prune(v: VoiceRoom, room: NonNullable<Awaited<ReturnType<typeof loadRoo
 function volume(room: NonNullable<Awaited<ReturnType<typeof loadRoom>>>, listenerId: string, speakerId: string) {
   const listener = room.players.get(listenerId);
   const speaker = room.players.get(speakerId);
-  if (!listener || !speaker || listenerId === speakerId || !voiceCanHear(listener.alive, speaker.alive)) return 0;
+  if (!listener || !speaker || listenerId === speakerId || room.timeVisit?.playerId === listenerId || room.timeVisit?.playerId === speakerId || !voiceCanHear(listener.alive, speaker.alive)) return 0;
   return voiceGainFor(Math.abs(listener.x - speaker.x), listener.caged, speaker.caged);
 }
 function validSession(v: VoiceRoom, playerId: string, session: string) {

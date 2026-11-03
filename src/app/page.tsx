@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, BookOpen, DoorOpen, Flame, Moon, Plus, RefreshCw, Skull, Trophy, Users } from "lucide-react";
+import { Bell, BookOpen, DoorOpen, Flame, Moon, Palette, Plus, RefreshCw, Skull, Trophy, Users } from "lucide-react";
 import Link from "next/link";
 import type { RoomListing } from "@/game/types";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, type GameSettings } from "@/game/settings";
@@ -154,12 +154,13 @@ export default function Home() {
             not hanged here — they are <span className="text-[#d99a3d]">caged in iron</span>,
             still able to plead… until a key, a vote, or the Hollow sets them free.
           </p>
+          <p className="hc-rise-3 mt-4 max-w-md text-sm text-[#a9c9c4]">Find the timepiece and press M to visit a recorded moment. Your stay in the past lasts at most one minute.</p>
           <div className="hc-rise-3 mt-8 grid max-w-lg grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             {[
               [`${keyLabel(settings.controls.left)} / ${keyLabel(settings.controls.right)}`, "walk the street"],
-              [keyLabel(settings.controls.interact), "interact · open doors and puzzles"],
+              [keyLabel(settings.controls.interact), "interact · open / close doors"],
               [`${keyLabel(settings.controls.ability)} / ${keyLabel(settings.controls.blackout)}`, "role ability · snuff lights"],
-              ["L", "lock a house with its own key"],
+              ["L", "lock / unlock with its own key"],
             ].map(([k, v]) => (
               <div key={k} className="rounded border border-[#3a2733] bg-[#160e1a]/80 p-3">
                 <div className="font-mono text-[#d99a3d]">{k}</div>
@@ -173,7 +174,7 @@ export default function Home() {
         <div className="hc-rise-2 w-full max-w-sm shrink-0 rounded-lg border border-[#3a2733] bg-[#140d18]/90 p-6 shadow-[0_20px_80px_rgba(0,0,0,0.6)] backdrop-blur">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-display text-3xl text-[#e9dfcf]">Enter the town</h2>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => settingsDialog.current?.open()}
                 className="rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#c9b8a4] transition hover:border-[#c9762f]/40 hover:text-[#ffd98a]"
@@ -190,6 +191,9 @@ export default function Home() {
                 className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition hover:border-[#c9762f]/40 hover:text-[#d99a3d]"
               >
                 <Trophy className="h-3.5 w-3.5" /> Records
+              </Link>
+              <Link href="/art" className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition hover:border-[#c9762f]/40 hover:text-[#ffd98a]">
+                <Palette className="h-3.5 w-3.5" /> Art
               </Link>
             </div>
           </div>

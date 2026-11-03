@@ -32,7 +32,7 @@ try {
   for (let i = 1; i < ids.length; i++) ok((await request("/api/game/join", { code, playerId: ids[i], name: `Door${i}` })).data.ok, "player joined");
   ok((await send(ids[3], { action: "start" })).data.ok, "night started");
   const initial = await Promise.all(ids.map((id) => state(id)));
-  const ordered = ids.map((id, i) => ({ id, x: pos(initial[i], id).x })).sort((a, b) => a.x - b.x);
+  const ordered = ids.map((id, i) => ({ id, x: pos(initial[i], id).x, role: initial[i].self.role })).filter((item) => item.role === "crew").sort((a, b) => a.x - b.x);
   const [holder, guest] = ordered.map((item) => item.id);
   // Tollhouse: key at -190, side threshold at -338. Both walk there normally.
   await Promise.all([walk(holder, -190), walk(guest, -300)]);
@@ -42,10 +42,30 @@ try {
   await walk(holder, -290);
   ok((await send(holder, { action: "interact" })).data.ok, "matching key opens the door");
   ok((await state(holder)).doors.find((d) => d.id === "tollhouse").open, "door is open for other players");
-  const enter = await walk(holder, -385);
+  ok((await send(holder, { action: "interact" })).data.ok, "door can be closed without the lock action");
+  let door = (await state(holder)).doors.find((d) => d.id === "tollhouse");
+  ok(!door.open && !door.locked, "closed door remains unlocked");
+  const roadAtJob = await walk(guest, -490);
+  ok(roadAtJob.inside === null, "a closed house does not block the road");
+  await send(guest, { action: "interact" });
+  ok((await state(guest)).minigame === null, "house work cannot be opened from the street at the same x");
+  await walk(guest, -300);
+  ok((await send(guest, { action: "interact" })).data.ok, "a keyless guest can reopen the unlocked door");
+  const enter = await walk(holder, -490);
   ok(enter.inside === "tollhouse", "holder walks into the house without teleporting");
   const guestIn = await walk(guest, -365);
   ok(guestIn.inside === "tollhouse", "another player walks through the same open door");
+  ok((await send(holder, { action: "interact" })).data.ok, "indoor hearth workbench opens");
+  let board = (await state(holder)).minigame;
+  ok(board?.stationId === "tollhouse-hearth" && board.kind === "hearth", "house has its own locally supplied puzzle");
+  for (let i = 0; i < 3; i++) {
+    while (board.values[i] !== board.targets[i]) {
+      ok((await send(holder, { action: "ward_move", wardId: board.stationId, move: i })).data.ok, "hearth vent move accepted");
+      board = (await state(holder)).minigame;
+    }
+  }
+  ok((await send(holder, { action: "ward_move", wardId: "tollhouse-hearth", move: 3 })).data.ok, "hearth can be lit");
+  ok((await state(guest)).tasks.find((t) => t.id === "tollhouse-hearth").done, "house repair progress is shared");
   const leave = await walk(holder, -300);
   ok(leave.inside === null, "holder walks back outside through the threshold");
   ok((await send(holder, { action: "door_lock" })).data.ok, "owner can lock the door from outside");

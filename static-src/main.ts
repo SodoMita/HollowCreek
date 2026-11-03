@@ -3,6 +3,7 @@
 // reuses the canvas Renderer and generative AudioDirector unchanged.
 import { Renderer } from "../src/game/render";
 import { WardPanel } from "../src/game/ward-ui";
+import { TimePanel } from "../src/game/time-ui";
 import { AudioDirector } from "../src/game/audio";
 import { VoiceChat, type VoiceStatus } from "../src/game/voice";
 import { SettingsStore, applyDocumentPreferences, keyLabel, matchesControl, type BindableAction } from "../src/game/settings";
@@ -118,6 +119,7 @@ const wardPanel = new WardPanel(document.body, {
   close: () => { void send({ action: "ward_cancel" }); },
   opened: releaseInputs,
 });
+const timePanel = new TimePanel(document.body, { travel: (targetAt) => { void send({ action: "time_travel", targetAt }); }, opened: releaseInputs });
 let interactToggled = false;
 let tasksOpen = window.innerWidth > 640;
 const settingsDialog = new SettingsDialog(settingsStore, document.body, { onOpen: releaseInputs });
@@ -324,6 +326,7 @@ async function poll() {
     pollFailures = 0;
     roomError = "";
     snap = s;
+    if (timePanel.isOpen && (!s.self.hasTimepiece || s.phase !== "playing")) timePanel.close();
     wardPanel.update(s.minigame, s.self.stamina, s.self.exhausted);
     audio.update(s);
     if (lastPhase === "lobby" && s.phase === "playing") reveal(s.self.role === "hollow");
@@ -404,7 +407,7 @@ function renderHud(s: Snapshot) {
   const tasks = $("tasks");
   if (s.phase !== "lobby" && s.self.alive && s.tasks.length) {
     tasks.style.display = "block";
-    tasks.innerHTML = `<div class="hd" id="tasktoggle">${s.self.role === "hollow" ? "Town wards (pretend)" : "Town wards · shared"} ${tasksOpen ? "▾" : "▸"}</div>` +
+    tasks.innerHTML = `<div class="hd" id="tasktoggle">${s.self.role === "hollow" && s.time?.mode !== "past" ? "Town wards (pretend)" : "Town wards · shared"} ${tasksOpen ? "▾" : "▸"}</div>` +
       (tasksOpen ? s.tasks.map((t) => `<div class="t ${t.done ? "done" : ""}">${t.done ? "✓" : t.delivered ? "▣" : "◇"} ${esc(t.name)}${!t.done ? ` <span style="color:${t.delivered ? "var(--moss)" : "var(--amber)"}">${t.delivered ? t.progress > 0 ? `${Math.round(t.progress * 100)}%` : "puzzle ready" : t.sabotaged ? "ruined" : "needs kit"}</span>` : ""}</div>`).join("") : "");
   } else tasks.style.display = "none";
 
@@ -435,7 +438,8 @@ function renderHud(s: Snapshot) {
 
   // status strip
   const status = $("status");
-  if (!s.self.alive && s.phase !== "ended") { status.style.display = "block"; status.textContent = "You are dead. Drift as a ghost — only the dead can see and hear you."; status.style.color = "#99aaaa"; }
+  if (s.time?.mode === "past") { status.style.display = "block"; status.textContent = `In the past · ${Math.max(0, Math.ceil(((s.time.endsAt ?? s.now) - s.now) / 1000))}s remaining · M to return`; status.style.color = "#b8e3de"; }
+  else if (!s.self.alive && s.phase !== "ended") { status.style.display = "block"; status.textContent = "You are dead. Drift as a ghost — only the dead can see and hear you."; status.style.color = "#99aaaa"; }
   else if (s.self.caged && s.self.alive) { status.style.display = "block"; status.textContent = "The iron is cold. You can still speak and vote — plead for the key."; status.style.color = "var(--amber)"; }
   else status.style.display = "none";
 
@@ -449,12 +453,16 @@ function renderHud(s: Snapshot) {
   $("vigorlbl").style.color = s.self.exhausted ? "#e06a5a" : "var(--dim)";
 
   // controls
+  $("timebtn").style.display = s.self.hasTimepiece || s.time?.mode === "past" ? "inline-block" : "none";
+  $("timebtn").textContent = s.time?.mode === "past" ? "Return · M" : "Timepiece · M";
   const hint = $("hint");
   hint.style.display = s.hint ? "block" : "none";
   if (s.hint) hint.textContent = s.hint;
   $("ebtn").textContent = keyLabel(settingsStore.value.controls.interact);
   $("ebtn").className = `rbtn ${s.hint ? "hot" : ""}`;
-  $("doorlock").style.display = me && s.self.alive && !s.self.caged && BUILDINGS.some((b) => Math.abs(doorX(b) - me.x) <= DOOR_REACH && s.self.doorKeys?.includes(b.id)) ? "block" : "none";
+  const nearbyKeyedDoor = me ? BUILDINGS.find((b) => Math.abs(doorX(b) - me.x) <= DOOR_REACH && s.self.doorKeys?.includes(b.id)) : undefined;
+  $("doorlock").style.display = nearbyKeyedDoor && s.self.alive && !s.self.caged ? "block" : "none";
+  $("doorlock").textContent = `${s.doors?.find((d) => d.id === nearbyKeyedDoor?.id)?.locked ? "Unlock" : "Lock"} · L`;
   const ab = $("ability");
   ab.textContent = s.abilityLabel;
   ab.className = `rbtn kill ${s.abilityReady ? "hot" : ""}`;
@@ -514,6 +522,10 @@ function releaseInputs() {
   interactToggled = false;
   if (roomCode) void send({ dir: 0, interactHeld: false, cartHeld: false });
 }
+function activateTimepiece() {
+  if (snap?.time?.mode === "past") { void send({ action: "time_return" }); return; }
+  if (snap?.self.hasTimepiece && snap.time) timePanel.open(snap.time);
+}
 function stopInteract() {
   interactToggled = false;
   if (roomCode) void send({ interactHeld: false });
@@ -549,7 +561,7 @@ function bound(action: BindableAction, e: KeyboardEvent) {
 }
 window.addEventListener("keydown", (e) => {
   audio.start();
-  if (settingsDialog.isOpen || !roomCode) return;
+  if (settingsDialog.isOpen || timePanel.isOpen || !roomCode) return;
   if (wardPanel.isOpen) {
     if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
     return; // Puzzle buttons own Tab, Enter and Space.
@@ -559,6 +571,7 @@ window.addEventListener("keydown", (e) => {
   if (target && (["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName) || target.isContentEditable)) return;
   if (bound("left", e)) { keys.add("left"); computeDir(); e.preventDefault(); }
   else if (bound("right", e)) { keys.add("right"); computeDir(); e.preventDefault(); }
+  else if (e.code === "KeyM" && !e.repeat) { activateTimepiece(); e.preventDefault(); }
   else if (e.code === "KeyL" && !e.repeat) { void send({ action: "door_lock" }); e.preventDefault(); }
   else if (bound("interact", e) && !e.repeat) { interactDown(); e.preventDefault(); }
   else if (bound("ability", e) && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
@@ -570,7 +583,7 @@ window.addEventListener("keydown", (e) => {
   else if (bound("talk", e) && !e.repeat) { if (voice.current.active) voice.stop(); else void voice.start(); e.preventDefault(); }
 });
 window.addEventListener("keyup", (e) => {
-  if (settingsDialog.isOpen || wardPanel.isOpen || !roomCode) return;
+  if (settingsDialog.isOpen || timePanel.isOpen || wardPanel.isOpen || !roomCode) return;
   if (bound("left", e)) { keys.delete("left"); computeDir(); }
   else if (bound("right", e)) { keys.delete("right"); computeDir(); }
   else if (bound("interact", e)) interactUp();
@@ -612,6 +625,7 @@ $("menusettings").addEventListener("click", () => settingsDialog.open());
 $("voicebtn").addEventListener("click", () => { if (voice.current.active) voice.stop(); else void voice.start(); });
 $("micmute").addEventListener("click", () => voice.setMuted(!voice.current.muted));
 $("doorlock").addEventListener("click", () => { void send({ action: "door_lock" }); });
+$("timebtn").addEventListener("click", activateTimepiece);
 $("mute").addEventListener("click", () => {
   audio.start();
   audio.setMuted(!audio.muted);

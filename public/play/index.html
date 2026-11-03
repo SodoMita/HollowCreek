@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>Hollow Creek</title>
 <meta name="theme-color" content="#0b0710" />
+<meta name="hc-art-base" content="./art/" />
 <link rel="icon" href="favicon.ico" sizes="48x48 32x32 16x16" />
 <link rel="icon" type="image/png" sizes="192x192" href="icon.png" />
 <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png" />
@@ -150,7 +151,7 @@
         <h1>Hollow<br/>Creek</h1>
         <p>The harvest was good. Then the church bell rang on its own, and not everyone who came home was <em>people</em> anymore.</p>
         <p>Walk the one long street. The wards have been smashed: bring kits from the one movable cart, then press E at a ward to play its repair puzzle. Push together to roll the cart faster. When the bell tolls, walk to the square and vote — the condemned are caged in iron, still able to plead.</p>
-        <p class="muted">A / D walk · E interact / open door · L lock with its key · hold Shift + walk to push · G drop kit · R ruin (Hollow) · Q ability · F snuff · Enter speak · T proximity voice. Rebind controls, adjust the mixer, and tune graphics/accessibility in Settings.</p>
+        <p class="muted">A / D walk · E interact / open or close door · L lock or unlock · M use the timepiece · hold Shift + walk to push · G drop kit · R ruin (Hollow) · Q ability · F snuff · Enter speak · T proximity voice. Rebind controls, adjust the mixer, and tune graphics/accessibility in Settings.</p>
       </div>
       <div class="card">
         <h2>Enter the town</h2>
@@ -181,6 +182,7 @@
       <div class="chip"><button id="copycode" style="font-family:monospace;letter-spacing:.3em;color:var(--ink)"></button> <span id="soulcount" style="color:var(--dim)"></span></div>
       <div class="right">
         <span id="role" class="crew"></span>
+        <button class="chip" id="timebtn" style="display:none" title="Use the timepiece or return from the past">Timepiece · M</button>
         <button class="chip" id="supplydrop" title="Drop repair kit (G)" aria-label="Drop repair kit">Drop kit</button>
         <button class="chip" id="mute" aria-label="Mute score and effects">🔊</button>
         <button class="chip" id="voicebtn" aria-label="Join proximity voice" title="Join proximity voice">🎙</button>

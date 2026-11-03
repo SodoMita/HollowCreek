@@ -17,6 +17,7 @@ export interface GameSettings {
   graphics: {
     quality: GraphicsQuality;
     resolution: number;
+    worldZoom: number;
     particles: boolean;
     fog: boolean;
     glow: boolean;
@@ -54,6 +55,7 @@ const DEFAULTS: GameSettings = {
   graphics: {
     quality: "high",
     resolution: 1,
+    worldZoom: 1.2,
     particles: true,
     fog: true,
     glow: true,
@@ -119,6 +121,7 @@ export function normalizeSettings(input: unknown): GameSettings {
   d.graphics = {
     quality: g.quality === "low" || g.quality === "medium" || g.quality === "high" ? g.quality : d.graphics.quality,
     resolution: num(g.resolution, d.graphics.resolution, 0.5, 1),
+    worldZoom: num(g.worldZoom, d.graphics.worldZoom, 1, 1.5),
     particles: bool(g.particles, d.graphics.particles),
     fog: bool(g.fog, d.graphics.fog),
     glow: bool(g.glow, d.graphics.glow),

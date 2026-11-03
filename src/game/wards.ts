@@ -11,7 +11,8 @@ import {
 
 export type WardKind =
   | "pumpkins" | "well" | "scarecrow" | "lantern" | "chapel"
-  | "mill" | "graves" | "radio" | "silo";
+  | "mill" | "graves" | "radio" | "silo"
+  | "hearth" | "pantry" | "clock" | "fusebox";
 
 export interface WardPuzzle {
   kind: WardKind;
@@ -50,6 +51,10 @@ export const WARD_JOBS: Record<WardKind, { title: string; instruction: string }>
   graves: { title: "Marker Ledger", instruction: "Match four fallen name-stones to their plots using the surviving ledger clues. One stone belongs in each plot." },
   radio: { title: "Signal Lock", instruction: "Tune frequency and antenna against the signal meter. When the voice clears the static, lock the receiver." },
   silo: { title: "Crossbar Lock", instruction: "Seat the four door bars in load-bearing order, then throw the main bolt. A wrong bar knocks the last brace loose." },
+  hearth: { title: "The Cold Hearth", instruction: "Set the three iron air vents to the chalk marks, then strike the hearth to relight it." },
+  pantry: { title: "The Preserves Shelf", instruction: "Swap neighboring jars until the preserves are arranged from earliest to latest harvest." },
+  clock: { title: "The Stopped Clock", instruction: "Set the hour and quarter-hour hands to the time on the keeper's note, then wind the clock." },
+  fusebox: { title: "The Cottage Circuit", instruction: "Each fuse switch changes itself and its neighbors. Restore all four circuits together." },
 };
 
 const ALL_KINDS = Object.keys(WARD_JOBS) as WardKind[];
@@ -78,6 +83,12 @@ function turnGear(values: number[], i: number): number[] {
   next[i] = mod4(next[i] + 1);
   if (i > 0) next[i - 1] = mod4(next[i - 1] - 1);
   if (i < 3) next[i + 1] = mod4(next[i + 1] - 1);
+  return next;
+}
+
+function toggleFuse(values: number[], i: number): number[] {
+  const next = [...values];
+  for (const j of [i - 1, i, i + 1]) if (j >= 0 && j < next.length) next[j] = 1 - next[j];
   return next;
 }
 
@@ -129,7 +140,24 @@ export function createWardPuzzle(stationKind: string, seed: number): WardPuzzle 
     const values = [Math.floor(rand() * 2), 3 + Math.floor(rand() * 2)];
     return { ...base, values, targets, extra: [] };
   }
-  // Each bar depends on the one carrying the load before it.
+  if (kind === "hearth") {
+    return { ...base, values: [0, 0, 0], targets: Array.from({ length: 3 }, () => 1 + Math.floor(rand() * 3)), extra: [] };
+  }
+  if (kind === "pantry") {
+    let jars = shuffle(4, rand);
+    if (jars.every((v, i) => v === i)) jars = [1, 0, 3, 2];
+    return { ...base, values: jars, targets: [0, 1, 2, 3], extra: [] };
+  }
+  if (kind === "clock") {
+    return { ...base, values: [0, 0], targets: [1 + Math.floor(rand() * 11), 1 + Math.floor(rand() * 3)], extra: [] };
+  }
+  if (kind === "fusebox") {
+    let fuses = [1, 1, 1, 1];
+    for (let i = 0; i < 5; i++) fuses = toggleFuse(fuses, Math.floor(rand() * 4));
+    if (fuses.every(Boolean)) fuses = toggleFuse(fuses, 0);
+    return { ...base, values: fuses, targets: [1, 1, 1, 1], extra: [] };
+  }
+  // Each silo bar depends on the one carrying the load before it.
   return { ...base, values: [0, 0, 0, 0], targets: shuffle(4, rand), extra: [] };
 }
 
@@ -137,6 +165,7 @@ export function validWardMove(game: WardPuzzle, index: number): boolean {
   const max: Record<WardKind, number> = {
     pumpkins: 16, well: 3, scarecrow: 5, lantern: 6, chapel: 9,
     mill: 4, graves: 16, radio: 5, silo: 5,
+    hearth: 4, pantry: 3, clock: 5, fusebox: 4,
   };
   return Number.isInteger(index) && index >= 0 && index < max[game.kind];
 }
@@ -208,6 +237,26 @@ export function applyWardMove(game: WardPuzzle, index: number): WardPuzzle {
       else next.mistakes++;
       break;
     }
+    case "hearth": {
+      if (index < 3) next.values[index] = (next.values[index] + 1) % 4;
+      else if (next.values.every((v, i) => v === game.targets[i])) next.step = 1;
+      else next.mistakes++;
+      break;
+    }
+    case "pantry": {
+      [next.values[index], next.values[index + 1]] = [next.values[index + 1], next.values[index]];
+      break;
+    }
+    case "clock": {
+      if (index < 4) {
+        const axis = index < 2 ? 0 : 1;
+        const modulo = axis === 0 ? 12 : 4;
+        next.values[axis] = (next.values[axis] + (index % 2 === 0 ? -1 : 1) + modulo) % modulo;
+      } else if (next.values.every((v, i) => v === game.targets[i])) next.step = 1;
+      else next.mistakes++;
+      break;
+    }
+    case "fusebox": next.values = toggleFuse(game.values, index); break;
     case "silo": {
       if (index === 4) {
         if (game.step === 4) next.step = 5;
@@ -234,7 +283,9 @@ export function wardSolved(game: WardPuzzle): boolean {
   if (game.kind === "scarecrow") return game.values[0] === 4;
   if (game.kind === "lantern") return game.values.every((ring) => ring === 0);
   if (game.kind === "chapel") return game.values.every((lit) => lit === 1);
-  if (game.kind === "radio") return game.step === 1;
+  if (game.kind === "radio" || game.kind === "hearth" || game.kind === "clock") return game.step === 1;
+  if (game.kind === "fusebox") return game.values.every((v) => v === 1);
+  if (game.kind === "pantry") return game.values.every((v, i) => v === i);
   if (game.kind === "mill" || game.kind === "graves") return game.values.every((v, i) => v === game.targets[i]);
   return game.step === 5; // silo: four bars then the main bolt
 }
@@ -252,6 +303,9 @@ export function wardProgress(game: WardPuzzle): number {
     case "mill": case "graves": return game.values.filter((v, i) => v === game.targets[i]).length / 4;
     case "radio": return Math.max(0, 0.9 - (Math.abs(game.values[0] - game.targets[0]) * 0.12 + Math.abs(game.values[1] - game.targets[1]) * 0.1));
     case "silo": return game.step / 5;
+    case "hearth": case "clock": return game.values.filter((v, i) => v === game.targets[i]).length / (game.values.length + 1);
+    case "pantry": return game.values.filter((v, i) => v === i).length / 4;
+    case "fusebox": return game.values.filter(Boolean).length / 4;
   }
 }
 

@@ -5,7 +5,9 @@ import {
 import type { Snapshot, Station } from "./types";
 import { createDefaultSettings, type GameSettings } from "./settings";
 import { drawBrokenWard, drawKit, drawSupplyCart } from "./ward-art";
-import { BUILDINGS, WORLD_MIN, WORLD_MAX, doorX, type Building, type DoorState } from "./buildings";
+import { BUILDINGS, WORLD_MIN, WORLD_MAX } from "./buildings";
+import { drawHouseExterior, drawHouseInterior } from "./house-art";
+import { drawSvg, drawTraveler } from "./svg-assets";
 
 interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: string; s: number }
 
@@ -16,6 +18,7 @@ export class Renderer {
   private settings: GameSettings = createDefaultSettings();
   cameraX = 0;
   private visionR = 420;
+  private doorOpenAmount = new Map<string, number>();
 
   constructor() {
     for (let i = 0; i < 110; i++) {
@@ -53,6 +56,9 @@ export class Renderer {
     dt: number
   ) {
     const graphics = this.settings.graphics;
+    // Zoom the world, not the DOM HUD. Gameplay and server vision stay in world units.
+    const zoom = graphics.worldZoom;
+    ctx.save(); ctx.scale(zoom, zoom); w /= zoom; h /= zoom;
     if (graphics.reducedMotion) t = 0;
     const me = snap.players.find((p) => p.id === snap.self.id);
     const meX = me ? displayX.get(me.id) ?? me.x : WORLD_W / 2;
@@ -208,11 +214,12 @@ export class Renderer {
       const sx = b.x - cam;
       if (sx < -b.width || sx > w + b.width) continue;
       const occupied = snap.players.some((p) => p.inside === b.id && p.alive);
-      this.drawHouse(ctx, b, sx, ground, t, snap.doors?.find((d) => d.id === b.id), occupied, false);
+      drawHouseInterior(ctx, b, sx, ground, t, snap.tasks.find((task) => task.inside === b.id), occupied);
     }
 
     // --- stations / buildings ---
     for (const st of STATIONS) {
+      if (st.inside) continue; // house work is painted as part of its interior
       const sx = st.x - cam;
       if (sx > -280 && sx < w + 280) this.drawStation(ctx, st, sx, ground, t, now, snap);
     }
@@ -248,11 +255,26 @@ export class Renderer {
       this.glow(ctx, 16);
       ctx.strokeStyle = "#e8b93c";
       ctx.lineWidth = 3.5;
-      ctx.beginPath(); ctx.arc(kx, ground - 26 + bob, 6, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(kx, ground - 20 + bob); ctx.lineTo(kx, ground - 6 + bob);
-      ctx.moveTo(kx, ground - 10 + bob); ctx.lineTo(kx + 6, ground - 10 + bob);
-      ctx.moveTo(kx, ground - 6 + bob); ctx.lineTo(kx + 5, ground - 6 + bob); ctx.stroke();
+      if (!drawSvg(ctx, "props/key.svg", kx - 9, ground - 32 + bob, 18, 32)) {
+        ctx.beginPath(); ctx.arc(kx, ground - 26 + bob, 6, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(kx, ground - 20 + bob); ctx.lineTo(kx, ground - 6 + bob);
+        ctx.moveTo(kx, ground - 10 + bob); ctx.lineTo(kx + 6, ground - 10 + bob);
+        ctx.moveTo(kx, ground - 6 + bob); ctx.lineTo(kx + 5, ground - 6 + bob); ctx.stroke();
+      }
       ctx.restore();
+    }
+
+    // The timepiece is a single collectible for this night.
+    if (typeof snap.timepieceX === "number") {
+      const tx = snap.timepieceX - cam, bob = Math.sin(t * 2.4) * 3;
+      if (tx > -50 && tx < w + 50) {
+        ctx.save(); ctx.shadowColor = "#9cdad3"; this.glow(ctx, 20);
+        if (!drawSvg(ctx, "props/timepiece.svg", tx - 18, ground - 48 + bob, 36, 48)) {
+          ctx.fillStyle = "#a8d2cf"; ctx.beginPath(); ctx.arc(tx, ground - 24 + bob, 12, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = "#ebc988"; ctx.lineWidth = 3; ctx.stroke();
+        }
+        ctx.restore();
+      }
     }
 
     // Each house has its own identifiable key, separate from the cage key.
@@ -263,14 +285,16 @@ export class Renderer {
       ctx.save(); ctx.strokeStyle = "#dfad55"; ctx.lineWidth = 3;
       ctx.shadowColor = "#ffd578"; this.glow(ctx, 12);
       const bob = Math.sin(t * 3) * 3;
-      ctx.beginPath(); ctx.arc(kx, ground - 25 + bob, 5, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(kx, ground - 20 + bob); ctx.lineTo(kx, ground - 7 + bob);
-      ctx.lineTo(kx + 5, ground - 7 + bob); ctx.moveTo(kx, ground - 12 + bob); ctx.lineTo(kx + 5, ground - 12 + bob); ctx.stroke();
+      if (!drawSvg(ctx, "props/key.svg", kx - 9, ground - 32 + bob, 18, 32)) {
+        ctx.beginPath(); ctx.arc(kx, ground - 25 + bob, 5, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(kx, ground - 20 + bob); ctx.lineTo(kx, ground - 7 + bob);
+        ctx.lineTo(kx + 5, ground - 7 + bob); ctx.moveTo(kx, ground - 12 + bob); ctx.lineTo(kx + 5, ground - 12 + bob); ctx.stroke();
+      }
       ctx.restore();
     }
 
     // --- bodies (crows gather above the dead) ---
-    for (const b of snap.bodies) {
+    const drawBody = (b: Snapshot["bodies"][number]) => {
       const bx = b.x - cam;
       const age = b.at ? now - b.at : 9999;
       if (age >= 0 && age < 950 && !graphics.reducedMotion) {
@@ -309,7 +333,8 @@ export class Renderer {
         ctx.quadraticCurveTo(cx2, cy2 + 3, cx2 + 7, cy2 - flap);
         ctx.stroke();
       }
-    }
+    };
+    for (const b of snap.bodies) if (b.inside) drawBody(b);
 
     // --- players ---
     const sorted = [...snap.players].sort((a, b) => (a.id === snap.self.id ? 1 : 0) - (b.id === snap.self.id ? 1 : 0));
@@ -322,6 +347,7 @@ export class Renderer {
       const floatY = ghost ? -14 + Math.sin(t * 2 + p.x) * 5 : 0;
       ctx.save();
       if (ghost) ctx.globalAlpha = 0.45;
+      else if (p.echo) ctx.globalAlpha = 0.52;
       if (!ghost) {
         ctx.fillStyle = "rgba(0,0,0,.35)";
         ctx.beginPath(); ctx.ellipse(px, ground + 2, 17, 4, 0, 0, Math.PI * 2); ctx.fill();
@@ -331,33 +357,53 @@ export class Renderer {
       // A kit stays visible on its carrier until someone delivers it.
       if (p.hasSupply) drawKit(ctx, px - 23, ground - 16 + floatY);
       // key icon
-      if (p.hasKey) {
+      if (p.hasKey || (p.doorKeys?.length ?? 0) > 0) {
         ctx.fillStyle = "#e8b93c";
         ctx.font = "12px serif";
         ctx.textAlign = "center";
         ctx.fillText("🗝", px + 16, ground - 52 + floatY);
       }
+      if (p.hasTimepiece) {
+        ctx.save(); ctx.shadowColor = "#9cdad3"; this.glow(ctx, 8);
+        if (!drawSvg(ctx, "props/timepiece.svg", px + 12, ground - 62 + floatY, 15, 20)) {
+          ctx.fillStyle = "#a8d2cf"; ctx.beginPath(); ctx.arc(px + 19, ground - 52 + floatY, 5, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.restore();
+      }
       // name and speech are optional HUD layers; the figures remain identifiable by color.
       if (this.settings.interface.playerNames) {
         ctx.font = "600 12px system-ui, sans-serif";
         ctx.textAlign = "center";
-        const label = p.name + (snap.phase === "meeting" && p.voted ? " ✓" : "");
+        const label = p.name + (p.echo ? " · echo" : snap.phase === "meeting" && p.voted ? " ✓" : "");
         const width = ctx.measureText(label).width;
         ctx.fillStyle = "rgba(5,3,8,.55)";
         ctx.beginPath(); ctx.roundRect(px - width / 2 - 5, ground - 75 + floatY, width + 10, 17, 5); ctx.fill();
-        ctx.fillStyle = p.id === snap.self.id ? "#ffd98a" : isMate ? "#ff7a6a" : "rgba(245,235,220,.96)";
+        ctx.fillStyle = p.id === snap.self.id ? "#ffd98a" : p.echo ? "#b9d9d5" : isMate ? "#ff7a6a" : "rgba(245,235,220,.96)";
         ctx.fillText(label, px, ground - 62 + floatY);
       }
-      if (p.bubble && this.settings.interface.speechBubbles) this.drawBubble(ctx, px, ground - 72 + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
+      if (p.action && p.action.until > now) {
+        ctx.save(); ctx.font = "600 10px system-ui, sans-serif"; ctx.textAlign = "center";
+        const label = p.action.text, width = ctx.measureText(label).width;
+        ctx.fillStyle = "rgba(20,27,29,.9)"; ctx.beginPath(); ctx.roundRect(px - width / 2 - 6, ground - 98 + floatY, width + 12, 16, 5); ctx.fill();
+        ctx.fillStyle = p.echo ? "#bde6dc" : "#f2d1a2"; ctx.fillText(label, px, ground - 87 + floatY); ctx.restore();
+      }
+      if (p.bubble && this.settings.interface.speechBubbles) this.drawBubble(ctx, px, ground - (p.action ? 100 : 72) + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
     };
 
     for (const p of sorted) if (p.inside && !p.caged) drawPlayer(p);
     for (const b of BUILDINGS) {
       const sx = b.x - cam;
       const occupied = snap.players.some((p) => p.inside === b.id && p.alive);
-      if (occupied && sx > -b.width && sx < w + b.width)
-        this.drawHouse(ctx, b, sx, ground, t, snap.doors?.find((d) => d.id === b.id), true, true);
+      if (sx > -b.width && sx < w + b.width) {
+        const door = snap.doors?.find((d) => d.id === b.id);
+        const target = door?.open ? 1 : 0;
+        const previous = this.doorOpenAmount.get(b.id) ?? target;
+        const amount = graphics.reducedMotion ? target : previous + (target - previous) * Math.min(1, dt * 10);
+        this.doorOpenAmount.set(b.id, amount);
+        drawHouseExterior(ctx, b, sx, ground, t, door, occupied, amount);
+      }
     }
+    for (const b of snap.bodies) if (!b.inside) drawBody(b);
     for (const p of sorted) if (p.caged) drawPlayer(p);
     // Only prisoners stand behind the fronts; pedestrians remain on the road.
     for (const c of snap.cages) this.drawCage(ctx, c.x - cam, ground, true);
@@ -416,6 +462,11 @@ export class Renderer {
       this.visionR = 420;
     }
 
+    // A restrained blue wash makes the recorded past distinct from the present.
+    if (snap.time?.mode === "past") {
+      ctx.fillStyle = "rgba(72,133,151,.10)"; ctx.fillRect(0, 0, w, h);
+    }
+
     // --- vignette ---
     if (graphics.vignette) {
       const vg = ctx.createRadialGradient(w / 2, h / 2, h * 0.35, w / 2, h / 2, h * 0.95);
@@ -432,73 +483,16 @@ export class Renderer {
       ctx.fillStyle = `rgba(0,0,0,${a * (1 - since / 900)})`;
       ctx.fillRect(0, 0, w, h);
     }
+    ctx.restore();
   }
 
   // -------------------------------------------------------------------------
 
-  /** Profile gable, jamb and threshold. The same foundation meets the road on
-   * both layers, so crossing the doorway never cuts to another scene. */
-  private drawHouse(ctx: CanvasRenderingContext2D, b: Building, x: number, ground: number, t: number, door: DoorState | undefined, occupied: boolean, front: boolean) {
-    const left = x - b.width / 2, right = x + b.width / 2;
-    const top = ground - 165, ridge = ground - 230;
-    const dx = doorX(b) - b.x + x;
-    if (occupied && !front) {
-      ctx.save();
-      const light = ctx.createLinearGradient(left, top, right, ground);
-      light.addColorStop(0, "#4c3027"); light.addColorStop(1, "#291c1d");
-      ctx.fillStyle = light; ctx.fillRect(left + 5, top + 5, b.width - 10, 160);
-      ctx.fillStyle = "#754b32"; ctx.fillRect(left + 5, ground - 14, b.width - 10, 14);
-      ctx.strokeStyle = "rgba(230,169,104,.2)"; ctx.lineWidth = 2;
-      for (let y = top + 25; y < ground - 20; y += 30) { ctx.beginPath(); ctx.moveTo(left + 8, y); ctx.lineTo(right - 8, y); ctx.stroke(); }
-      ctx.fillStyle = "#201516"; ctx.fillRect(x - 32, ground - 48, 64, 30);
-      ctx.fillStyle = "#a67947"; ctx.fillRect(x - 36, ground - 52, 72, 7);
-      ctx.fillStyle = "#e2a454"; ctx.fillRect(x - 6, ground - 63, 12, 11);
-      ctx.restore();
-      return;
-    }
-    if (!occupied && front) return;
-    ctx.save();
-    if (front) ctx.globalAlpha = 0.24;
-    // Stone foundation and horizontal clapboards.
-    ctx.fillStyle = "#292125"; ctx.fillRect(left - 4, ground - 17, b.width + 8, 17);
-    ctx.fillStyle = "#4a3a38";
-    for (let j = 0; j < b.width; j += 31) ctx.fillRect(left + j, ground - 14, 28, 5);
-    ctx.fillStyle = b.id === "orchard" ? "#5a3c35" : b.id === "quarry" ? "#51423b" : "#5b4038";
-    ctx.fillRect(left, top, b.width, 150);
-    ctx.strokeStyle = "rgba(19,11,15,.35)"; ctx.lineWidth = 2;
-    for (let y = top + 12; y < ground - 17; y += 13) { ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke(); }
-    // Long roof with fascia and a brick chimney.
-    ctx.fillStyle = "#211920"; ctx.beginPath(); ctx.moveTo(left - 17, top + 2); ctx.lineTo(x, ridge); ctx.lineTo(right + 17, top + 2); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = "#8b5d4c"; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(left - 17, top + 2); ctx.lineTo(x, ridge); ctx.lineTo(right + 17, top + 2); ctx.stroke();
-    ctx.fillStyle = "#45302c"; ctx.fillRect(x + 52, ridge - 8, 20, 45); ctx.fillStyle = "#241b1d"; ctx.fillRect(x + 49, ridge - 12, 26, 7);
-    ctx.fillStyle = "rgba(172,158,159,.17)";
-    for (let i = 0; i < 3; i++) { const sy = ridge - 20 - ((t * 8 + i * 13) % 48); ctx.beginPath(); ctx.arc(x + 61 + Math.sin(t + i) * 5, sy, 5 + i * 2, 0, Math.PI * 2); ctx.fill(); }
-    // Sash windows and shutters (the opening itself is on the return wall).
-    for (const wx of [x - 77, x + 60]) {
-      ctx.fillStyle = "#271a1c"; ctx.fillRect(wx - 20, ground - 116, 40, 55);
-      ctx.fillStyle = "#c28950"; ctx.fillRect(wx - 14, ground - 110, 28, 43);
-      ctx.fillStyle = "#392b29"; ctx.fillRect(wx - 2, ground - 110, 4, 43); ctx.fillRect(wx - 14, ground - 90, 28, 3);
-      ctx.fillStyle = "#3b2929"; ctx.fillRect(wx - 27, ground - 115, 7, 54); ctx.fillRect(wx + 20, ground - 115, 7, 54);
-    }
-    // Gable-end return wall, in profile. It recedes toward the doorway.
-    const edge = b.side === 1 ? right : left;
-    ctx.fillStyle = "#35272a"; ctx.beginPath(); ctx.moveTo(edge, top); ctx.lineTo(edge - b.side * 29, top + 13); ctx.lineTo(edge - b.side * 29, ground - 16); ctx.lineTo(edge, ground - 16); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = "rgba(190,142,105,.3)"; ctx.lineWidth = 1;
-    for (let y = top + 18; y < ground - 25; y += 13) { ctx.beginPath(); ctx.moveTo(edge, y); ctx.lineTo(edge - b.side * 29, y + 4); ctx.stroke(); }
-    // Narrow angled opening and exposed lintel, rather than a front-facing panel.
-    ctx.fillStyle = "#130e13"; ctx.beginPath(); ctx.moveTo(dx - b.side * 10, ground - 91); ctx.lineTo(dx + b.side * 5, ground - 85); ctx.lineTo(dx + b.side * 5, ground - 17); ctx.lineTo(dx - b.side * 10, ground - 17); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = "#b18260"; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(dx - b.side * 10, ground - 17); ctx.lineTo(dx - b.side * 10, ground - 91); ctx.lineTo(dx + b.side * 5, ground - 85); ctx.lineTo(dx + b.side * 5, ground - 17); ctx.stroke();
-    ctx.strokeStyle = door?.open ? "#a4724b" : "#684733"; ctx.lineWidth = door?.open ? 5 : 7;
-    ctx.beginPath(); ctx.moveTo(dx, ground - 84); ctx.lineTo(dx + b.side * (door?.open ? 30 : 2), ground - 78); ctx.lineTo(dx + b.side * (door?.open ? 30 : 2), ground - 18); ctx.stroke();
-    ctx.fillStyle = "#8d6d54"; ctx.beginPath(); ctx.moveTo(dx - b.side * 13, ground - 17); ctx.lineTo(dx + b.side * 13, ground - 17); ctx.lineTo(dx + b.side * 25, ground - 6); ctx.lineTo(dx - b.side * 5, ground - 6); ctx.closePath(); ctx.fill();
-    ctx.restore();
-    if (!front) {
-      ctx.save(); ctx.font = "600 10px system-ui, sans-serif"; ctx.textAlign = "center";
-      ctx.fillStyle = "rgba(235,203,166,.78)"; ctx.fillText(b.name.toUpperCase(), x, top - 14); ctx.restore();
-    }
-  }
-
   private drawTree(ctx: CanvasRenderingContext2D, x: number, ground: number, height: number, seed: number) {
+    ctx.save(); ctx.translate(x, ground); ctx.scale(seed % 2 ? -1 : 1, 1);
+    const drawn = drawSvg(ctx, "scenery/autumn-tree.svg", -height * 0.375, -height, height * 0.75, height);
+    ctx.restore();
+    if (drawn) return;
     const top = ground - height;
     ctx.save();
     ctx.strokeStyle = seed % 2 ? "#241718" : "#2c1918";
@@ -546,6 +540,8 @@ export class Renderer {
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(facing * scale, scale);
+    const pose = moving ? (gait > 0.25 ? 1 : gait < -0.25 ? -1 : 0) : 0;
+    if (drawTraveler(ctx, color, redEyes, ghost, pose)) { ctx.restore(); return; }
     ctx.lineCap = "round";
 
     if (!ghost) {

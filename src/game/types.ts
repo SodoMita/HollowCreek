@@ -1,5 +1,5 @@
 // Shared types & world constants for HOLLOW CREEK — a 1D autumn horror deduction game.
-import type { WardGameView } from "./wards";
+import type { WardGameView, WardKind } from "./wards";
 import type { DoorState } from "./buildings";
 
 export const WORLD_W = 4200;
@@ -41,21 +41,19 @@ export const CARRY_SPEED = 122;
 export const CARRY_VIGOR_DRAIN = 0.045;
 export const SABOTAGE_COOLDOWN_MS = 26000;
 export const SABOTAGE_VIGOR_COST = 0.22;
+export const TIMEPIECE_X = 1260;
+export const TIME_VISIT_MS = 60_000;
+export const HISTORY_SAMPLE_MS = 500;
 
 export interface Station {
   id: string;
   name: string;
   x: number;
-  kind:
-    | "pumpkins"
-    | "well"
-    | "scarecrow"
-    | "lantern"
-    | "chapel"
-    | "mill"
-    | "graves"
-    | "radio"
-    | "silo";
+  kind: WardKind;
+  /** Indoor work requires being in this specific house, not just at its x. */
+  inside?: string;
+  /** Small indoor jobs have their own supplies and need no cart delivery. */
+  initialSupplied?: boolean;
 }
 
 export const STATIONS: Station[] = [
@@ -68,6 +66,10 @@ export const STATIONS: Station[] = [
   { id: "graves", name: "Rebuild the grave markers", x: 3200, kind: "graves" },
   { id: "radio", name: "Repair the radio tower", x: 3650, kind: "radio" },
   { id: "silo", name: "Patch the grain silo", x: 4000, kind: "silo" },
+  { id: "tollhouse-hearth", name: "Tollhouse · relight the hearth", x: -490, kind: "hearth", inside: "tollhouse", initialSupplied: true },
+  { id: "orchard-pantry", name: "Orchard House · arrange preserves", x: -1120, kind: "pantry", inside: "orchard", initialSupplied: true },
+  { id: "office-clock", name: "Foreman's Office · set the clock", x: 4725, kind: "clock", inside: "foreman", initialSupplied: true },
+  { id: "cottage-fuses", name: "Quarry Cottage · repair the fuses", x: 5375, kind: "fusebox", inside: "quarry", initialSupplied: true },
 ];
 
 export const CAGE_XS = [1940, 2030, 2120, 2280, 2370, 2460];
@@ -93,6 +95,10 @@ export interface PublicPlayer {
   hasSupply: boolean;
   /** House layer, if any; x remains a world coordinate. */
   inside?: string | null;
+  echo?: boolean;
+  hasTimepiece?: boolean;
+  doorKeys?: string[];
+  action?: { text: string; until: number } | null;
   voted: boolean;
   bubble: { text: string; until: number } | null;
   isHost: boolean;
@@ -106,6 +112,7 @@ export interface SelfInfo {
   hasKey: boolean;
   hasSupply: boolean;
   doorKeys?: string[];
+  hasTimepiece?: boolean;
   bellUsed: boolean;
   killCooldownMs: number;
   canKill: boolean;
@@ -123,8 +130,9 @@ export interface TaskView {
   id: string;
   name: string;
   x: number;
+  inside?: string;
   done: boolean;
-  delivered: boolean; // a kit has arrived from the cart
+  delivered: boolean; // a kit has arrived or supplies are already on site
   sabotaged: boolean; // the Hollow has ruined this ward once this night
   progress: number; // 0..1, repair work after delivery
 }
@@ -165,6 +173,14 @@ export interface MatchResults {
   players: MatchResult[];
 }
 
+export interface TimeView {
+  mode: "present" | "past";
+  earliest: number;
+  latest: number;
+  cursor?: number;
+  endsAt?: number;
+}
+
 export interface Snapshot {
   code: string;
   phase: Phase;
@@ -175,6 +191,8 @@ export interface Snapshot {
   bodies: { x: number; color: string; name: string; id?: string; at?: number; inside?: string | null }[];
   doors?: DoorState[];
   keyX: number | null;
+  timepieceX?: number | null;
+  time?: TimeView;
   /** Dropped kits can be recovered after a death, cage or voluntary drop. */
   supplyDrops: number[];
   cartX: number;
@@ -222,8 +240,9 @@ export interface InputBody {
   dir?: number;
   interactHeld?: boolean;
   cartHeld?: boolean; // hold Push + a direction while beside the cart
-  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "restart" | "leave" | "drop_supply" | "sabotage" | "ward_move" | "ward_cancel" | "door_lock";
+  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "restart" | "leave" | "drop_supply" | "sabotage" | "ward_move" | "ward_cancel" | "door_lock" | "time_travel" | "time_return";
   wardId?: string;
+  targetAt?: number;
   move?: number;
   chat?: string;
   vote?: string; // playerId | "skip" | "free:<id>"

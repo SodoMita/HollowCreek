@@ -7,6 +7,7 @@ import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Za
 import { Renderer } from "@/game/render";
 import { BUILDINGS, DOOR_REACH, doorX } from "@/game/buildings";
 import { WardPanel } from "@/game/ward-ui";
+import { TimePanel } from "@/game/time-ui";
 import { AudioDirector } from "@/game/audio";
 import { VoiceChat, type VoiceStatus } from "@/game/voice";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
@@ -54,6 +55,7 @@ export default function GameClient({ code }: { code: string }) {
   const audioRef = useRef<AudioDirector | null>(null);
   const voiceRef = useRef<VoiceChat | null>(null);
   const wardPanelRef = useRef<WardPanel | null>(null);
+  const timePanelRef = useRef<TimePanel | null>(null);
   const settingsStoreRef = useRef<SettingsStore | null>(null);
   const settingsDialogRef = useRef<SettingsDialog | null>(null);
   const interactToggled = useRef(false);
@@ -94,6 +96,12 @@ export default function GameClient({ code }: { code: string }) {
     lastDir.current = 0;
     interactToggled.current = false;
     void send({ dir: 0, interactHeld: false, cartHeld: false });
+  }, [send]);
+
+  const activateTimepiece = useCallback(() => {
+    const current = snapRef.current;
+    if (current?.time?.mode === "past") { void send({ action: "time_return" }); return; }
+    if (current?.self.hasTimepiece && current.time) timePanelRef.current?.open(current.time);
   }, [send]);
 
   /** Free the seat before navigating, so the lobby and host update at once. */
@@ -175,6 +183,12 @@ export default function GameClient({ code }: { code: string }) {
     return () => { panel.destroy(); wardPanelRef.current = null; };
   }, [releaseInputs, send]);
 
+  useEffect(() => {
+    const panel = new TimePanel(document.body, { travel: (targetAt) => { void send({ action: "time_travel", targetAt }); }, opened: releaseInputs });
+    timePanelRef.current = panel;
+    return () => { panel.destroy(); timePanelRef.current = null; };
+  }, [releaseInputs, send]);
+
   // Voice is off by default. Only the Voice button calls getUserMedia().
   useEffect(() => {
     const voice = new VoiceChat({ baseUrl: () => "", roomCode: () => code,
@@ -208,6 +222,7 @@ export default function GameClient({ code }: { code: string }) {
           const s: Snapshot = await r.json();
           if (!alive) return;
           snapRef.current = s;
+          if (timePanelRef.current?.isOpen && (!s.self.hasTimepiece || s.phase !== "playing")) timePanelRef.current.close();
           wardPanelRef.current?.update(s.minigame, s.self.stamina, s.self.exhausted);
           setSnap(s);
           audioRef.current?.update(s);
@@ -249,7 +264,7 @@ export default function GameClient({ code }: { code: string }) {
     const unlockAudio = () => ensureAudio();
     const down = (e: KeyboardEvent) => {
       unlockAudio();
-      if (settingsDialogRef.current?.isOpen) return;
+      if (settingsDialogRef.current?.isOpen || timePanelRef.current?.isOpen) return;
       if (wardPanelRef.current?.isOpen) {
         if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
         return; // Tab, Enter and Space belong to the focused puzzle buttons.
@@ -264,6 +279,7 @@ export default function GameClient({ code }: { code: string }) {
       const bound = (action: BindableAction) => matchesControl(controls, action, e.code);
       if (bound("left")) { keys.current.add("left"); computeDir(); e.preventDefault(); }
       else if (bound("right")) { keys.current.add("right"); computeDir(); e.preventDefault(); }
+      else if (e.code === "KeyM" && !e.repeat) { activateTimepiece(); e.preventDefault(); }
       else if (e.code === "KeyL" && !e.repeat) { void send({ action: "door_lock" }); e.preventDefault(); }
       else if (bound("interact") && !e.repeat) { interactDown(); e.preventDefault(); }
       else if (bound("ability") && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
@@ -279,7 +295,7 @@ export default function GameClient({ code }: { code: string }) {
       }
     };
     const up = (e: KeyboardEvent) => {
-      if (settingsDialogRef.current?.isOpen || wardPanelRef.current?.isOpen) return;
+      if (settingsDialogRef.current?.isOpen || timePanelRef.current?.isOpen || wardPanelRef.current?.isOpen) return;
       const controls = getSettingsStore().value.controls;
       if (matchesControl(controls, "left", e.code)) { keys.current.delete("left"); computeDir(); }
       else if (matchesControl(controls, "right", e.code)) { keys.current.delete("right"); computeDir(); }
@@ -294,7 +310,7 @@ export default function GameClient({ code }: { code: string }) {
       window.removeEventListener("keydown", down); window.removeEventListener("keyup", up);
       window.removeEventListener("pointerdown", unlockAudio); window.removeEventListener("blur", releaseInputs);
     };
-  }, [computeDir, send, ensureAudio, getSettingsStore, interactDown, interactUp, openChat, releaseInputs]);
+  }, [computeDir, send, ensureAudio, getSettingsStore, interactDown, interactUp, openChat, releaseInputs, activateTimepiece]);
 
   // ---- render loop ----
   useEffect(() => {
@@ -381,6 +397,8 @@ export default function GameClient({ code }: { code: string }) {
 
   const me = snap?.players.find((p) => p.id === snap.self.id);
   const s = snap;
+  const nearbyKeyedDoor = me && s ? BUILDINGS.find((b) => Math.abs(doorX(b) - me.x) <= DOOR_REACH && s.self.doorKeys?.includes(b.id)) : undefined;
+  const nearbyDoorLocked = s?.doors?.find((d) => d.id === nearbyKeyedDoor?.id)?.locked;
   const secsLeft = s?.meeting ? Math.max(0, Math.ceil((s.meeting.endsAt - s.now) / 1000)) : 0;
   const voteOptions = s ? [
     ...s.players.filter((p) => p.alive && !p.caged && p.id !== s.self.id).map((p) => ({ key: p.id, label: `Cage ${p.name}`, color: p.color })),
@@ -411,6 +429,7 @@ export default function GameClient({ code }: { code: string }) {
               >{s.code}</button>
               <span className="ml-2 hidden text-[#9c8b7a] sm:inline">{s.playerCount} souls</span>
               {me?.inside && <span className="ml-2 text-[#e2be83]">Inside {BUILDINGS.find((b) => b.id === me.inside)?.name}</span>}
+              {(s.self.hasTimepiece || s.time?.mode === "past") && <button onClick={activateTimepiece} className="ml-2 rounded border border-[#7ba9a6] bg-[#243b3c]/90 px-2 py-1 text-xs text-[#cbeae1]">{s.time?.mode === "past" ? "Return · M" : "Timepiece · M"}</button>}
               {s.phase === "playing" && s.self.alive && s.self.hasSupply && (
                 <button title="Drop repair kit for another player" aria-label="Drop repair kit"
                   onClick={() => void send({ action: "drop_supply" })}
@@ -465,11 +484,13 @@ export default function GameClient({ code }: { code: string }) {
             </p>
           )}
 
+          {s.time?.mode === "past" && <div data-testid="past-countdown" className="hc-hud-item absolute left-1/2 top-14 z-10 -translate-x-1/2 rounded border border-[#83b9b4]/70 bg-[#172c32]/95 px-4 py-2 text-center text-xs text-[#d2eee5] shadow-lg"><span className="font-semibold uppercase tracking-widest">In the past</span> · {Math.max(0, Math.ceil(((s.time.endsAt ?? s.now) - s.now) / 1000))}s remaining <button onClick={activateTimepiece} className="ml-2 underline">Return now</button></div>}
+
           {/* ---- task list ---- */}
           {s.phase !== "lobby" && s.self.alive && s.tasks.length > 0 && (
             <div className="hc-hud-item hc-hud-fade hc-task-list absolute left-2 top-12 w-56 max-w-[70vw] rounded border border-[#3a2733]/60 bg-[#140d18]/70 p-2.5 text-xs backdrop-blur sm:left-3 sm:top-20 sm:w-60 sm:p-3">
               <button onClick={() => setTasksOpen(!tasksOpen)} className="mb-1.5 flex w-full items-center justify-between uppercase tracking-widest text-[#9c8b7a]">
-                <span>{s.self.role === "hollow" ? "Town wards (pretend)" : "Town wards · shared"}</span>
+                <span>{s.self.role === "hollow" && s.time?.mode !== "past" ? "Town wards (pretend)" : "Town wards · shared"}</span>
                 <span className="sm:hidden">{tasksOpen ? "▾" : "▸"}</span>
               </button>
               <div className={`${tasksOpen ? "block" : "hidden"} max-h-[26dvh] overflow-y-auto sm:block`}>
@@ -597,8 +618,8 @@ export default function GameClient({ code }: { code: string }) {
                 onClick={openChat}
                 className="h-11 rounded-full border border-[#3a2733] bg-[#140d18]/80 px-3 text-sm text-[#d8c9b4] backdrop-blur hover:bg-[#2a1a26] sm:px-4"
               >💬<span className="hidden sm:inline"> Speak</span></button>
-              {me && s.self.alive && !s.self.caged && BUILDINGS.some((b) => Math.abs(doorX(b) - me.x) <= DOOR_REACH && s.self.doorKeys?.includes(b.id)) && (
-                <button onClick={() => void send({ action: "door_lock" })} className="h-11 rounded-full border border-[#84624c] bg-[#33231f]/90 px-3 text-xs text-[#f2cf91]" title="Lock or unlock with this house key">Lock · L</button>
+              {nearbyKeyedDoor && s.self.alive && !s.self.caged && (
+                <button onClick={() => void send({ action: "door_lock" })} className="h-11 rounded-full border border-[#84624c] bg-[#33231f]/90 px-3 text-xs text-[#f2cf91]" title="Lock or unlock with this house key">{nearbyDoorLocked ? "Unlock" : "Lock"} · L</button>
               )}
               <div className="flex flex-col items-center gap-1">
                 {s.hint && <span className="hc-interaction-hint max-w-36 rounded bg-[#0d0810]/80 px-2 py-0.5 text-center text-xs text-[#d99a3d] sm:max-w-44">{s.hint}</span>}
