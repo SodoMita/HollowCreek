@@ -18,6 +18,8 @@ export interface VoiceStatus {
   mode: "p2p" | "relay" | "hybrid" | "idle";
   speaking: boolean;
   error: string | null;
+  /** true while the poll loop is backing off after failures (server unreachable) */
+  reconnecting: boolean;
 }
 
 type PeerInfo = { id: string; name: string; gain: number; pan: number };
@@ -53,6 +55,7 @@ const INITIAL: VoiceStatus = {
   mode: "idle",
   speaking: false,
   error: null,
+  reconnecting: false,
 };
 
 export function downsample(input: Float32Array, inputRate: number, targetRate = 12000): Int16Array {
@@ -230,7 +233,7 @@ export class VoiceChat {
         return;
       }
 
-      this.emit({ active: true, starting: false, muted: false, error: null });
+      this.emit({ active: true, starting: false, muted: false, error: null, reconnecting: false });
       // Poll every 300ms so server-routed audio packets play with natural low latency
       this.pollDelay = 300;
       this.pollFailures = 0;
@@ -454,6 +457,7 @@ export class VoiceChat {
           const joined = await this.post("join");
           this.session = joined.session;
           this.pollFailures = 0;
+          this.emit({ reconnecting: false });
           try {
             sessionStorage.setItem(this.storageKey(), this.session);
           } catch {
@@ -527,6 +531,7 @@ export class VoiceChat {
 
       this.pollFailures = 0;
       this.emit({
+        reconnecting: false,
         nearby: state.peers.length,
         connected: state.peers.length,
         p2pCount,
@@ -537,6 +542,7 @@ export class VoiceChat {
     } catch (error) {
       if (generation === this.generation) {
         this.pollFailures += 1;
+        this.emit({ reconnecting: true });
         const msg = error instanceof Error && error.name === "AbortError"
           ? "Voice is reconnecting."
           : error instanceof Error ? error.message : "Voice is reconnecting.";

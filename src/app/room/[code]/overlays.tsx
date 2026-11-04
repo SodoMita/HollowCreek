@@ -75,8 +75,8 @@ export function LobbyOverlay(props: {
           </button>}
         </div>
         {voiceStatus.active && <p className="mt-2 text-xs text-[#9c8b7a]">{voiceStatus.connected} connected ({voiceStatus.p2pCount} P2P, {voiceStatus.relayCount} Server Relay) · {voiceStatus.nearby} in earshot. Farther voices fade; the dead hear only the dead.{voiceStatus.speaking ? " · ● Speaking" : ""}</p>}
-        {voiceStatus.error && <p role="alert" className="mt-2 text-xs text-[#e29a84]">
-          {voiceStatus.error}
+        {(voiceStatus.error || voiceStatus.reconnecting) && <p role="alert" className="mt-2 text-xs text-[#e29a84]">
+          {voiceStatus.reconnecting && !voiceStatus.error ? "Voice reconnecting…" : voiceStatus.error}
           {voiceStatus.error.includes("Enable sound") && <button onClick={onResumePlayback} className="ml-2 underline">Enable sound</button>}
         </p>}
         <p className="mt-3 text-xs text-[#9a877f]">4–10 players · 1–2 of you will be Hollow</p>
