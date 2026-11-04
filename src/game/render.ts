@@ -2,10 +2,10 @@
 import {
   BELL_X, CAGE_XS, MEETING_FROM, MEETING_TO, STATIONS, WORLD_W,
 } from "./types";
-import type { Snapshot, Station } from "./types";
+import type { PublicPlayer, Snapshot, Station, TaskView } from "./types";
 import { createDefaultSettings, type GameSettings } from "./settings";
 import { drawBrokenWard, drawKit, drawSupplyCart } from "./ward-art";
-import { BUILDINGS, doorX, TREE_MAX, TREE_MIN, treeX, WORLD_MIN, WORLD_MAX } from "./buildings";
+import { BUILDINGS, doorX, TREE_MAX, TREE_MIN, treeX, WORLD_MIN, WORLD_MAX, type DoorState } from "./buildings";
 import { TOWN_HOUSES } from "./town";
 import { drawHouseExterior, drawHouseInterior } from "./house-art";
 import { drawSvg, drawTraveler } from "./svg-assets";
@@ -29,6 +29,21 @@ function lerpHex(a: string, b: string, t: number): string {
 
 export class Renderer {
   private leaves: Leaf[] = [];
+  // per-snapshot lookup caches — snap objects are rebuilt per poll, so these
+  // turn 60fps finds/sorts into one pass per 100ms snapshot
+  private cacheFor: unknown = null;
+  private meCache: PublicPlayer | undefined;
+  private sortedCache: PublicPlayer[] = [];
+  private doorsCache = new Map<string, DoorState>();
+  private tasksCache = new Map<string, TaskView>();
+  private cacheSnap(snap: Snapshot) {
+    if (this.cacheFor === snap) return;
+    this.cacheFor = snap;
+    this.meCache = snap.players.find((p) => p.id === snap.self.id);
+    this.sortedCache = [...snap.players].sort((a, b) => (a.id === snap.self.id ? 1 : 0) - (b.id === snap.self.id ? 1 : 0));
+    this.doorsCache = new Map((snap.doors ?? []).map((d) => [d.id, d]));
+    this.tasksCache = new Map(snap.tasks.map((t) => [t.id, t]));
+  }
   private grads = new Map<string, CanvasGradient>();
   private bubbleWrap = new Map<string, { lines: string[]; bw: number }>();
 
@@ -92,7 +107,8 @@ export class Renderer {
     const zoom = focused ? Math.max(graphics.worldZoom, 2.6) : graphics.worldZoom;
     ctx.save(); ctx.scale(zoom, zoom); w /= zoom; h /= zoom;
     if (graphics.reducedMotion) t = 0;
-    const me = snap.players.find((p) => p.id === snap.self.id);
+    this.cacheSnap(snap);
+    const me = this.meCache;
     const meX = me ? displayX.get(me.id) ?? me.x : WORLD_W / 2;
     const lookX = focused ? this.focusX! : meX;
     const targetCam = Math.max(WORLD_MIN, Math.min(WORLD_MAX - w, lookX - w / 2));
@@ -308,7 +324,7 @@ export class Renderer {
       const sx = b.x - cam;
       if (sx < -b.width || sx > w + b.width) continue;
       const occupied = snap.players.some((p) => p.inside === b.id && p.alive);
-      drawHouseInterior(ctx, b, sx, ground, t, snap.tasks.find((task) => task.inside === b.id), occupied);
+      drawHouseInterior(ctx, b, sx, ground, t, [...this.tasksCache.values()].find((task) => task.inside === b.id), occupied);
       // Pages pinned on this house's interior wall (only visible to souls inside).
       for (const note of snap.notes ?? []) {
         if (note.house !== b.id) continue;
@@ -449,7 +465,7 @@ export class Renderer {
     for (const b of snap.bodies) if (b.inside) drawBody(b);
 
     // --- players ---
-    const sorted = [...snap.players].sort((a, b) => (a.id === snap.self.id ? 1 : 0) - (b.id === snap.self.id ? 1 : 0));
+    const sorted = this.sortedCache;
     const drawPlayer = (p: Snapshot["players"][number]) => {
       const px = (displayX.get(p.id) ?? p.x) - cam;
       if (px < -100 || px > w + 100) return;
@@ -507,7 +523,7 @@ export class Renderer {
       const sx = b.x - cam;
       const occupied = snap.players.some((p) => p.inside === b.id && p.alive);
       if (sx > -b.width && sx < w + b.width) {
-        const door = snap.doors?.find((d) => d.id === b.id);
+        const door = this.doorsCache.get(b.id);
         const target = door?.open ? 1 : 0;
         const previous = this.doorOpenAmount.get(b.id) ?? target;
         const amount = graphics.reducedMotion ? target : previous + (target - previous) * Math.min(1, dt * 10);
@@ -526,7 +542,8 @@ export class Renderer {
     // --- falling leaves (quantity follows the detail preset) ---
     if (graphics.particles) {
       const count = this.qualityCount(100, 55, 22);
-      for (const l of this.leaves.slice(0, count)) {
+      for (let li = 0; li < count && li < this.leaves.length; li++) {
+        const l = this.leaves[li];
         if (!graphics.reducedMotion) { l.x += l.vx * dt; l.y += l.vy * dt; l.r += dt * 2; }
         if (l.y > ground + 10) { l.y = -20; l.x = cam + Math.random() * w; }
         if (l.x < cam - 60) l.x = cam + w + 40;
@@ -851,7 +868,7 @@ export class Renderer {
     const blackout = now < snap.blackoutUntil;
     // lanterns and lit windows burn brighter as the night deepens
     const night = snap.time?.mode === "past" ? 0.05 : Math.min(1, Math.max(0, snap.nightT ?? 0.2));
-    const task = snap.tasks.find((tk) => tk.id === st.id);
+    const task = this.tasksCache.get(st.id);
     const broken = snap.phase === "lobby" || (!!task && !task.done);
     const supplied = !!task?.delivered;
     const flick = this.settings.graphics.flicker && !this.settings.graphics.reducedMotion && now - snap.flickerAt < 900 ? Math.random() * 0.6 : 0;
