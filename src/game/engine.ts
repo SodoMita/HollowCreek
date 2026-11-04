@@ -10,7 +10,7 @@ import {
   KILL_RANGE, MEETING_FROM, MEETING_MS, MEETING_TO, PLAYER_COLORS,
   SABOTAGE_COOLDOWN_MS, SABOTAGE_VIGOR_COST, SPEED, STAMINA_BELL_COST,
   STAMINA_BLACKOUT_COST, STAMINA_IDLE_REGEN, STAMINA_KILL_COST,
-  STAMINA_UNLOCK_COST, STATIONS, SUPPLY_CART_START, TICK_MS,
+  STAMINA_UNLOCK_COST, STATIONS, SUPPLY_CART_START, TICK_MS, NIGHT_LENGTH_MS,
   VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW, WORLD_W, TIMEPIECE_X, TIME_VISIT_MS, HISTORY_SAMPLE_MS, ix,
   NOTE_REACH, NOTE_TEXT_MAX,
 } from "./types";
@@ -2028,11 +2028,17 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     if (blackout) danger = Math.max(danger, 0.35);
   }
 
+  const nightT = room.phase === "lobby" ? 0.15
+    : room.phase === "ended" ? 1
+    : room.replaying || !room.startedAt ? 0.5
+    : Math.min(1, Math.max(0, (now - room.startedAt) / NIGHT_LENGTH_MS));
+
   return {
     code: room.code,
     phase: room.phase,
     round: room.round,
     now,
+    nightT,
     self: {
       id: me.id,
       role: me.role,

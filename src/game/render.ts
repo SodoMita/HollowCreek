@@ -14,6 +14,19 @@ interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: str
 
 const LEAF_COLORS = ["#b4552a", "#c9762f", "#8f3b1f", "#d99a3d", "#7a4a21"];
 
+// Dusk and deep-night sky palettes (top -> horizon); lerped by nightT.
+const SKY_DUSK = ["#090b1b", "#211329", "#512534", "#9a4c2c", "#c0743c"];
+const SKY_NIGHT = ["#030309", "#0b0817", "#141021", "#241423", "#3a2030"];
+const GROUND_DUSK = ["#2b1a12", "#1d120c", "#0d0806"];
+const GROUND_NIGHT = ["#17100b", "#100a07", "#070403"];
+
+function lerpHex(a: string, b: string, t: number): string {
+  const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
+  const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+  const m = pa.map((v, i) => Math.round(v + (pb[i] - v) * t));
+  return `#${m.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+}
+
 export class Renderer {
   private leaves: Leaf[] = [];
   private grads = new Map<string, CanvasGradient>();
@@ -90,14 +103,18 @@ export class Renderer {
     const ground = h * 0.78;
     const now = snap.now;
 
-    // --- layered dusk sky ---
-    const sky = this.grad(`sky:${ground}`, () => {
+    // --- day-night sky: dusk palette lerps into deep night as the round goes on ---
+    // (time travel to the past pins the sky to early dusk and warms the scene)
+    const past = snap.time?.mode === "past";
+    const night = past ? 0.05 : Math.min(1, Math.max(0, snap.nightT ?? 0.2));
+    const nb = Math.round(night * 10) / 10; // bucket: keeps the gradient cache small
+    const sky = this.grad(`sky:${ground}:${nb}`, () => {
       const g = ctx.createLinearGradient(0, 0, 0, ground);
-      g.addColorStop(0, "#090b1b");
-      g.addColorStop(0.38, "#211329");
-      g.addColorStop(0.72, "#512534");
-      g.addColorStop(0.9, "#9a4c2c");
-      g.addColorStop(1, "#c0743c");
+      g.addColorStop(0, lerpHex(SKY_DUSK[0], SKY_NIGHT[0], night));
+      g.addColorStop(0.38, lerpHex(SKY_DUSK[1], SKY_NIGHT[1], night));
+      g.addColorStop(0.72, lerpHex(SKY_DUSK[2], SKY_NIGHT[2], night));
+      g.addColorStop(0.9, lerpHex(SKY_DUSK[3], SKY_NIGHT[3], night));
+      g.addColorStop(1, lerpHex(SKY_DUSK[4], SKY_NIGHT[4], night));
       return g;
     });
     ctx.fillStyle = sky;
@@ -110,7 +127,7 @@ export class Renderer {
       const sx = ((i * 197.3 + 41) % (w + 160)) - 80 - (cam * 0.008) % 40;
       const sy = 18 + ((i * 83.7) % Math.max(60, ground * 0.52));
       const radius = 0.45 + (i % 7 === 0 ? 0.85 : 0.25);
-      ctx.globalAlpha = 0.25 + (i % 5) * 0.1;
+      ctx.globalAlpha = (0.25 + (i % 5) * 0.1) * (0.3 + 0.7 * night);
       ctx.fillStyle = i % 9 === 0 ? "#ffd9a0" : "#d9d8ed";
       ctx.beginPath(); ctx.arc(sx, sy, radius, 0, Math.PI * 2); ctx.fill();
     }
@@ -122,7 +139,7 @@ export class Renderer {
     ctx.save();
     if (graphics.glow) {
       const halo = ctx.createRadialGradient(mx, my, 32, mx, my, 145);
-      halo.addColorStop(0, "rgba(244,222,181,.25)");
+      halo.addColorStop(0, `rgba(244,222,181,${0.18 + 0.12 * night})`);
       halo.addColorStop(0.45, "rgba(222,191,170,.08)");
       halo.addColorStop(1, "rgba(222,191,170,0)");
       ctx.fillStyle = halo; ctx.fillRect(mx - 150, my - 150, 300, 300);
@@ -225,11 +242,11 @@ export class Renderer {
     }
 
     // --- ground ---
-    const gg = this.grad(`ground:${ground}:${h}`, () => {
+    const gg = this.grad(`ground:${ground}:${h}:${nb}`, () => {
       const g = ctx.createLinearGradient(0, ground, 0, h);
-      g.addColorStop(0, "#2b1a12");
-      g.addColorStop(0.12, "#1d120c");
-      g.addColorStop(1, "#0d0806");
+      g.addColorStop(0, lerpHex(GROUND_DUSK[0], GROUND_NIGHT[0], night));
+      g.addColorStop(0.12, lerpHex(GROUND_DUSK[1], GROUND_NIGHT[1], night));
+      g.addColorStop(1, lerpHex(GROUND_DUSK[2], GROUND_NIGHT[2], night));
       return g;
     });
     ctx.fillStyle = gg;
@@ -569,10 +586,10 @@ export class Renderer {
 
     // --- vignette ---
     if (graphics.vignette) {
-      const vg = this.grad(`vg:${w}:${h}`, () => {
+      const vg = this.grad(`vg:${w}:${h}:${nb}`, () => {
         const g = ctx.createRadialGradient(w / 2, h / 2, h * 0.35, w / 2, h / 2, h * 0.95);
         g.addColorStop(0, "rgba(0,0,0,0)");
-        g.addColorStop(1, "rgba(5,2,8,0.72)");
+        g.addColorStop(1, `rgba(4,2,7,${0.6 + 0.25 * night})`); // deep night closes in harder
         return g;
       });
       ctx.fillStyle = vg;

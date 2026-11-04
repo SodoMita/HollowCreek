@@ -793,6 +793,7 @@ export default function TutorialClient() {
       abilityReady: Math.abs(playerX - BELL_X) < INTERACT_RANGE + 20,
       hostId: "me",
       playerCount: 3,
+      nightT: 0.3,
       minigame: mini,
     };
     const first = tutorialHistory.current[0], last = tutorialHistory.current.at(-1);

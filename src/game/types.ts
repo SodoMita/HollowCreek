@@ -29,6 +29,8 @@ export interface Note {
   at: number;
 }
 export const MEETING_MS = 45000;
+/** A full night lasts about this long; drives the day-night sky cycle (0=dusk, 1=deep night). */
+export const NIGHT_LENGTH_MS = 40 * 60_000;
 export const CELL_HALF = 30;
 export const CAGE_UNLOCK_RANGE = 125;
 export const MEETING_FROM = 1880;
@@ -246,6 +248,8 @@ export interface Snapshot {
   abilityReady: boolean;
   hostId: string;
   playerCount: number;
+  /** 0..1 — dusk to deep night over the round; drives the sky/stars/lanterns. */
+  nightT: number;
 }
 
 export interface RoomListing {
