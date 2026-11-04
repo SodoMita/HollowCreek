@@ -510,18 +510,6 @@ export default function GameClient({ code }: { code: string }) {
 
   // ------------------------------------------------------------------ UI ---
 
-  if (joinError) {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[#0b0710] px-6 text-center">
-        <p className="font-display text-4xl text-[#e06a5a]">The road is closed</p>
-        <p className="text-[#9c8b7a]">{joinError}</p>
-        <button onClick={() => router.push("/")} className="rounded bg-[#8f3b1f] px-6 py-2.5 font-display text-xl text-[#f3e6d0] hover:bg-[#a84a26]">
-          Turn back
-        </button>
-      </main>
-    );
-  }
-
   const me = useMemo(() => snap?.players.find((p) => p.id === snap.self.id), [snap]);
   const nearestNote = useMemo(() => snap && me ? (snap.notes ?? [])
     .filter((n) => Math.abs(n.x - me.x) <= 150)
@@ -541,6 +529,19 @@ export default function GameClient({ code }: { code: string }) {
     ...s.players.filter((p) => p.caged).map((p) => ({ key: `free:${p.id}`, label: `Free ${p.name}`, color: "#7fb069" })),
     { key: "skip", label: "Abstain", color: "#7f8c8d" },
   ] : [], [s]);
+
+  if (joinError) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[#0b0710] px-6 text-center">
+        <p className="font-display text-4xl text-[#e06a5a]">The road is closed</p>
+        <p className="text-[#9c8b7a]">{joinError}</p>
+        <button onClick={() => router.push("/")} className="rounded bg-[#8f3b1f] px-6 py-2.5 font-display text-xl text-[#f3e6d0] hover:bg-[#a84a26]">
+          Turn back
+        </button>
+      </main>
+    );
+  }
+
 
   return (
     <main id="main" ref={mainRef} className="fixed inset-0 h-[100dvh] w-full select-none overflow-hidden bg-[#0b0710]" style={{ touchAction: "none" }}>
