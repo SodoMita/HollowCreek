@@ -21,6 +21,7 @@ import { canonicalInput } from "./input";
 import { captureHistory, frameAt, restoreFrame } from "./history";
 import { feed, journal, kitId, record, roomNow, seeded } from "./chronicle";
 import { heldPiece, loosePieces, nearTimepiece, nearestTimepiece, usedPieces } from "./timepieces";
+import { inMeetingArea, nearestBody, nearestOccupiedCage } from "./proximity";
 import { snapshotEtag } from "./fingerprint";
 import { applyWardMove, createWardPuzzle, validWardMove, wardProgress, wardSolved, wardView, type WardPuzzle } from "./wards";
 import type { FeedItem, InputBody, MatchStats, Note, Phase, Role, RoomListing, Snapshot } from "./types";
@@ -754,24 +755,6 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
 
 const dist = (a: number, b: number) => Math.abs(a - b);
 /** Unused, unheld timepieces still lying on the road. */
-const inMeetingArea = (p: P) => p.caged || (p.x >= MEETING_FROM && p.x <= MEETING_TO);
-
-/** A key always targets the closest occupied lock within arm's reach. */
-function nearestOccupiedCage(room: Room, x: number): number {
-  let best = -1;
-  let bestDistance = CAGE_UNLOCK_RANGE;
-  room.cages.forEach((c, i) => {
-    const d = Math.abs(c.x - x);
-    if (c.occupant && d <= bestDistance) { best = i; bestDistance = d; }
-  });
-  return best;
-}
-
-function nearestBody(room: Room, p: P) {
-  let best: Room["bodies"][number] | null = null;
-  for (const b of room.bodies) if (b.inside === p.inside && dist(b.x, p.x) < INTERACT_RANGE + 20 && (!best || dist(b.x, p.x) < dist(best.x, p.x))) best = b;
-  return best;
-}
 
 function killTarget(room: Room, p: P): P | null {
   let best: P | null = null;
