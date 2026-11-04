@@ -1,4 +1,5 @@
 // A single accessible time-selection dialog shared by both game clients.
+import { trapTab } from "./focus-trap";
 import type { TimeView } from "./types";
 
 const STYLE_ID = "hc-timepiece-style";
@@ -22,7 +23,11 @@ function duration(ms: number) {
 export class TimePanel {
   private root: HTMLDivElement;
   private range: TimeView | null = null;
-  private onKey = (event: KeyboardEvent) => { if (this.isOpen && event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.close(); } };
+  private onKey = (event: KeyboardEvent) => {
+    if (!this.isOpen) return;
+    trapTab(this.root, event);
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.close(); }
+  };
   constructor(parent: HTMLElement, private callbacks: { travel: (targetAt: number) => void; opened: () => void; practice?: boolean }) {
     styles();
     this.root = document.createElement("div");

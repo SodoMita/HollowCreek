@@ -1,5 +1,6 @@
 // Shared repair workbench used by React and the static client. Both render the
 // exact authoritative board; the browser sends only a numbered physical action.
+import { trapTab } from "./focus-trap";
 import { WARD_JOBS, type WardGameView } from "./wards";
 
 const STYLE_ID = "hc-ward-panel-style";
@@ -217,11 +218,13 @@ export class WardPanel {
     this.root.setAttribute("aria-label", "Repair ward minigame");
     this.root.hidden = true;
     this.root.addEventListener("click", this.onClick);
+    window.addEventListener("keydown", this.onKey, true);
     parent.appendChild(this.root);
   }
   get isOpen() { return !this.root.hidden; }
   /** element that had focus before the puzzle opened — restored on close */
   private previouslyFocused: HTMLElement | null = null;
+  private onKey = (event: KeyboardEvent) => { if (this.isOpen) trapTab(this.root, event); };
 
   update(view: WardGameView | null, stamina: number, exhausted: boolean) {
     if (!view) {
@@ -258,7 +261,7 @@ export class WardPanel {
     if (vigor) vigor.textContent = exhausted ? "Rest here; vigor returns while you stand still." : `Vigor ${Math.round(stamina * 100)}% · each move takes a little effort`;
   }
 
-  destroy() { this.root.removeEventListener("click", this.onClick); this.root.remove(); }
+  destroy() { this.root.removeEventListener("click", this.onClick); window.removeEventListener("keydown", this.onKey, true); this.root.remove(); }
   private onClick = (event: MouseEvent) => {
     const target = event.target as HTMLElement;
     if (target.closest("[data-ward-close]")) { this.callbacks.close(); return; }

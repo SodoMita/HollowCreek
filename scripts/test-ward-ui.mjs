@@ -29,6 +29,7 @@ const makeElement = (tag) => {
   if (tag === "div") root = el;
   return el;
 };
+globalThis.window = { addEventListener() {}, removeEventListener() {} };
 globalThis.document = {
   head: { appendChild() {} },
   getElementById() { return null; },

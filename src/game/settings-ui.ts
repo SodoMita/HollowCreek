@@ -1,4 +1,5 @@
 // Dependency-free settings dialog shared by the React and standalone clients.
+import { trapTab } from "./focus-trap";
 import {
   applyDocumentPreferences,
   keyLabel,
@@ -252,6 +253,8 @@ export class SettingsDialog {
 
   private handleKey = (event: KeyboardEvent) => {
     if (!this.openState) return;
+    trapTab(this.root, event);
+    if (event.defaultPrevented) return;
     if (this.waiting) {
       event.preventDefault(); event.stopImmediatePropagation();
       const action = this.waiting;
