@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
@@ -522,10 +522,10 @@ export default function GameClient({ code }: { code: string }) {
     );
   }
 
-  const me = snap?.players.find((p) => p.id === snap.self.id);
-  const nearestNote = snap && me ? (snap.notes ?? [])
+  const me = useMemo(() => snap?.players.find((p) => p.id === snap.self.id), [snap]);
+  const nearestNote = useMemo(() => snap && me ? (snap.notes ?? [])
     .filter((n) => Math.abs(n.x - me.x) <= 150)
-    .sort((a, b) => Math.abs(a.x - me.x) - Math.abs(b.x - me.x))[0] : undefined;
+    .sort((a, b) => Math.abs(a.x - me.x) - Math.abs(b.x - me.x))[0] : undefined, [snap, me]);
   const pinNote = async () => {
     const text = pinText.trim();
     if (!text) return;
@@ -533,14 +533,14 @@ export default function GameClient({ code }: { code: string }) {
     setPinText(""); setPinOpen(false);
   };
   const s = snap;
-  const nearbyKeyedDoor = me && s ? BUILDINGS.find((b) => Math.abs(doorX(b) - me.x) <= DOOR_REACH && s.self.doorKeys?.includes(b.id)) : undefined;
-  const nearbyDoorLocked = s?.doors?.find((d) => d.id === nearbyKeyedDoor?.id)?.locked;
+  const nearbyKeyedDoor = useMemo(() => me && s ? BUILDINGS.find((b) => Math.abs(doorX(b) - me.x) <= DOOR_REACH && s.self.doorKeys?.includes(b.id)) : undefined, [me, s]);
+  const nearbyDoorLocked = useMemo(() => s?.doors?.find((d) => d.id === nearbyKeyedDoor?.id)?.locked, [s, nearbyKeyedDoor]);
   const secsLeft = s?.meeting ? Math.max(0, Math.ceil((s.meeting.endsAt - s.now) / 1000)) : 0;
-  const voteOptions = s ? [
+  const voteOptions = useMemo(() => s ? [
     ...s.players.filter((p) => p.alive && !p.caged && p.id !== s.self.id).map((p) => ({ key: p.id, label: `Cage ${p.name}`, color: p.color })),
     ...s.players.filter((p) => p.caged).map((p) => ({ key: `free:${p.id}`, label: `Free ${p.name}`, color: "#7fb069" })),
     { key: "skip", label: "Abstain", color: "#7f8c8d" },
-  ] : [];
+  ] : [], [s]);
 
   return (
     <main id="main" ref={mainRef} className="fixed inset-0 h-[100dvh] w-full select-none overflow-hidden bg-[#0b0710]" style={{ touchAction: "none" }}>
