@@ -293,8 +293,22 @@ async function flushRooms() {
   }
 }
 
+// Chronicle rows older than 30 days are pruned once an hour — the table grows
+// with every observed action otherwise.
+let lastChroniclePrune = 0;
+async function pruneChronicle() {
+  const now = Date.now();
+  if (now - lastChroniclePrune < 3_600_000) return;
+  lastChroniclePrune = now;
+  try {
+    await db.delete(gameEvents).where(lt(gameEvents.createdAt, new Date(now - 30 * 86_400_000)));
+  } catch (e) {
+    console.error("chronicle prune failed", e);
+  }
+}
+
 if (!gPersist.__hollowPersistTimer) {
-  gPersist.__hollowPersistTimer = setInterval(() => void flushRooms(), 900);
+  gPersist.__hollowPersistTimer = setInterval(() => { void flushRooms(); void pruneChronicle(); }, 900);
 }
 
 /** Bring a town back from Postgres: same code, same seats, same names. */
