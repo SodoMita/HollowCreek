@@ -37,3 +37,15 @@ Tests: `scripts/test-notes.mjs` (snap to wall vs tree, validation, vision-filter
 snapshots, pin-in-the-past → present, replay determinism), plus live checks in
 `scripts/smoke-time.mjs` (API) and `scripts/smoke-time-room-ui.mjs` (pin panel +
 zoom-in reader in both clients).
+
+## Engine module map (after the 2026-11-04 split; `engine.ts` is the type hub + re-export barrel)
+
+- `engine.ts` — `Room`/`P`/… interfaces, re-exports, `bindEngineHooks` wiring
+- `registry.ts` — live rooms map, one-flight loads, `makeCode`, `getRoom`, `listRoomsSync`
+- `persistence.ts` — DB flush/hydrate (`flushRooms`, `loadRoom`), chronicle retention prune
+- `chronicle.ts` — journal/seeded/feed/record, dirty set, SSE listeners (`onRoomEvent`/`emitRoom`/`markDirty`)
+- `input.ts` — `canonicalInput` whitelist; `actions.ts` — lifecycle + `handleInput`
+- `rules.ts` — drops/cages/repairs/meetings/kills/win; `tick.ts` — authoritative loop
+- `time-travel.ts` — replay/past layer; `snapshot.ts` — per-viewer view + ETag
+- `history.ts`, `timepieces.ts`, `proximity.ts` — pure helpers; `hooks.ts` — snapshot/tickRoom bridge
+- Client: `GameClient.tsx` + `hud/bars/overlays/chat.tsx` + `useGameStream/useGameInput/useGameRender/useGameOverlays` hooks
