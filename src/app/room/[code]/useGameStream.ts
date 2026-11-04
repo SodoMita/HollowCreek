@@ -156,5 +156,5 @@ export function useGameStream(d: GameStreamDeps) {
       if (!d.leavingRef.current) void send({ dir: 0, interactHeld: false, cartHeld: false });
       bye();
     };
-  }, [code, send, getPid, setJoinError, setSnap, setRoleBanner]);
+  }, [code, send, getPid, setJoinError, setSnap, setRoleBanner, d.audioRef, d.lastPhase, d.leavingRef, d.mainRef, d.noteOpenRef, d.pendingInputRef, d.settingsDialogRef, d.snapRef, d.timePanelRef, d.wardPanelRef]);
 }
