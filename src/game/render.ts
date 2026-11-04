@@ -849,14 +849,16 @@ export class Renderer {
     t: number, now: number, snap: Snapshot
   ) {
     const blackout = now < snap.blackoutUntil;
+    // lanterns and lit windows burn brighter as the night deepens
+    const night = snap.time?.mode === "past" ? 0.05 : Math.min(1, Math.max(0, snap.nightT ?? 0.2));
     const task = snap.tasks.find((tk) => tk.id === st.id);
     const broken = snap.phase === "lobby" || (!!task && !task.done);
     const supplied = !!task?.delivered;
     const flick = this.settings.graphics.flicker && !this.settings.graphics.reducedMotion && now - snap.flickerAt < 900 ? Math.random() * 0.6 : 0;
     const win = (wx: number, wy: number, ww: number, wh: number) => {
-      const a = blackout || broken ? 0.02 : Math.max(0.05, 0.75 - flick);
+      const a = blackout || broken ? 0.02 : Math.max(0.05, (0.75 - flick) * (0.45 + 0.55 * night));
       ctx.save();
-      ctx.shadowColor = "rgba(255,151,55,.75)"; this.glow(ctx, broken || blackout ? 0 : 13);
+      ctx.shadowColor = "rgba(255,151,55,.75)"; this.glow(ctx, broken || blackout ? 0 : Math.round(5 + 10 * night));
       const glass = ctx.createLinearGradient(wx, wy, wx, wy + wh);
       glass.addColorStop(0, `rgba(255,210,120,${a})`);
       glass.addColorStop(1, `rgba(210,91,35,${a * 0.82})`);
@@ -917,7 +919,7 @@ export class Renderer {
       case "lantern": {
         if (!blackout && !broken && this.settings.graphics.glow) {
           const light = ctx.createRadialGradient(0, -92, 4, 0, -72, 112);
-          light.addColorStop(0, "rgba(255,187,83,.22)"); light.addColorStop(1, "rgba(255,145,45,0)");
+          light.addColorStop(0, `rgba(255,187,83,${0.10 + 0.18 * night})`); light.addColorStop(1, "rgba(255,145,45,0)");
           ctx.fillStyle = light; ctx.fillRect(-115, -205, 230, 220);
         }
         ctx.fillStyle = "#191420";
@@ -928,9 +930,9 @@ export class Renderer {
           ctx.fillRect(-3, -110, 6, 110);
           ctx.fillRect(-14, -112, 28, 5);
         }
-        const glow = blackout || broken ? 0.03 : 0.6 + Math.sin(t * 5) * 0.1 - flick;
+        const glow = blackout || broken ? 0.03 : (0.3 + 0.45 * night) + Math.sin(t * 5) * 0.1 - flick;
         ctx.fillStyle = `rgba(255,190,90,${Math.max(0.03, glow)})`;
-        ctx.shadowColor = "rgba(255,180,80,0.9)"; this.glow(ctx, blackout || broken ? 0 : 24);
+        ctx.shadowColor = "rgba(255,180,80,0.9)"; this.glow(ctx, blackout || broken ? 0 : Math.round(10 + 16 * night));
         ctx.fillRect(-8, -106, 16, 18);
         ctx.shadowBlur = 0;
         ctx.fillStyle = "#191420"; ctx.fillRect(-10, -108, 20, 3);
