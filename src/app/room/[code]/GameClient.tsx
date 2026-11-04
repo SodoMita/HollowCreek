@@ -8,6 +8,7 @@ import { Renderer } from "@/game/render";
 import { useGameStream } from "./useGameStream";
 import { useGameInput } from "./useGameInput";
 import { useGameRender } from "./useGameRender";
+import { useGameOverlays } from "./useGameOverlays";
 import { BUILDINGS, DOOR_REACH, doorX } from "@/game/buildings";
 import { WardPanel } from "@/game/ward-ui";
 import { TimePanel } from "@/game/time-ui";
@@ -77,9 +78,6 @@ export default function GameClient({ code }: { code: string }) {
   const leavingRef = useRef(false);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const pendingInputRef = useRef<Record<string, unknown> | null>(null); // last intent the server never got
-  useEffect(() => {
-    chatOpenRef.current = chatOpen;
-  }, [chatOpen]);
 
   const send = useCallback(async (payload: Record<string, unknown>) => {
     const controller = new AbortController();
@@ -165,27 +163,6 @@ export default function GameClient({ code }: { code: string }) {
     if (window.matchMedia("(pointer: fine)").matches) setTimeout(() => chatInputRef.current?.focus(), 30);
   }, [stopInteract]);
 
-  useEffect(() => {
-    const store = getSettingsStore();
-    setSettings(store.value);
-    setMuted(store.value.audio.muted);
-    applyDocumentPreferences(store.value);
-    const unsubscribe = store.subscribe((next) => {
-      setSettings(next);
-      setMuted(next.audio.muted);
-      applyDocumentPreferences(next);
-      voiceRef.current?.applyMix();
-    });
-    const dialog = new SettingsDialog(store, document.body, { onOpen: releaseInputs });
-    settingsDialogRef.current = dialog;
-    return () => {
-      unsubscribe();
-      dialog.destroy();
-      settingsDialogRef.current = null;
-      audioRef.current?.destroy();
-      audioRef.current = null;
-    };
-  }, [getSettingsStore, releaseInputs]);
 
   const ensureAudio = useCallback(async () => {
     if (!audioRef.current) {
@@ -197,21 +174,7 @@ export default function GameClient({ code }: { code: string }) {
   }, [getSettingsStore]);
 
   // Shared repair panel: built once, never re-mounted on each 100ms state poll.
-  useEffect(() => {
-    const panel = new WardPanel(document.body, {
-      move: (wardId, move) => { void send({ action: "ward_move", wardId, move }); },
-      close: () => { void send({ action: "ward_cancel" }); },
-      opened: () => releaseInputs(),
-    });
-    wardPanelRef.current = panel;
-    return () => { panel.destroy(); wardPanelRef.current = null; };
-  }, [releaseInputs, send]);
 
-  useEffect(() => {
-    const panel = new TimePanel(document.body, { travel: (targetAt) => { void send({ action: "time_travel", targetAt }); }, opened: releaseInputs });
-    timePanelRef.current = panel;
-    return () => { panel.destroy(); timePanelRef.current = null; };
-  }, [releaseInputs, send]);
 
   // Voice is off by default and its module loads only on first use — the page
   // stays light until the player actually joins voice. Only then getUserMedia().
@@ -224,16 +187,12 @@ export default function GameClient({ code }: { code: string }) {
     });
     return voiceInitRef.current;
   }, [code, getSettingsStore]);
-  useEffect(() => {
-    const goodbye = () => { void voiceRef.current?.stop(); };
-    window.addEventListener("pagehide", goodbye);
-    return () => {
-      window.removeEventListener("pagehide", goodbye);
-      voiceInitRef.current?.then((v) => { v.destroy(); }).catch(() => {});
-      voiceRef.current = null;
-    };
-  }, []);
 
+
+  useGameOverlays({
+    send, getSettingsStore, releaseInputs, ensureAudio, getVoice, setSettings, setMuted,
+    chatOpen, chatOpenRef, settingsDialogRef, wardPanelRef, timePanelRef, voiceRef, voiceInitRef, audioRef,
+  });
 
   useGameStream({
     code, send, getPid, setJoinError, setSnap, setRoleBanner,
