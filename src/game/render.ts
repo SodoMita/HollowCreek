@@ -12,6 +12,10 @@ import { drawSvg, drawTraveler } from "./svg-assets";
 
 interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: string; s: number }
 
+// Tiny deterministic PRNG for effect recycling — avoids Math.random() in the frame loop.
+let leafSeed = 1;
+const nextRand = () => ((leafSeed = (Math.imul(leafSeed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
+
 const LEAF_COLORS = ["#b4552a", "#c9762f", "#8f3b1f", "#d99a3d", "#7a4a21"];
 
 // Dusk and deep-night sky palettes (top -> horizon); lerped by nightT.
@@ -545,7 +549,7 @@ export class Renderer {
       for (let li = 0; li < count && li < this.leaves.length; li++) {
         const l = this.leaves[li];
         if (!graphics.reducedMotion) { l.x += l.vx * dt; l.y += l.vy * dt; l.r += dt * 2; }
-        if (l.y > ground + 10) { l.y = -20; l.x = cam + Math.random() * w; }
+        if (l.y > ground + 10) { l.y = -20; l.x = cam + nextRand() * w; } // deterministic recycle, no per-frame Math.random()
         if (l.x < cam - 60) l.x = cam + w + 40;
         const sx = l.x - cam;
         if (sx < -20 || sx > w + 20) continue;
