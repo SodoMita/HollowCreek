@@ -17,6 +17,7 @@ import {
 import { BUILDINGS, buildingHint, clampWorld, doorX, dropBuildingKeys, newDoors, interactWithBuilding, snapAnchor, walkThroughBuildings, type DoorState } from "./buildings";
 import { bumpStats } from "./stats";
 import { shuffle } from "./rng";
+import { canonicalInput } from "./input";
 import { snapshotEtag } from "./fingerprint";
 import { applyWardMove, createWardPuzzle, validWardMove, wardProgress, wardSolved, wardView, type WardPuzzle } from "./wards";
 import type { FeedItem, InputBody, MatchStats, Note, Phase, Role, RoomListing, Snapshot } from "./types";
@@ -164,20 +165,6 @@ g.__hollowRoomLoads = roomLoads;
 
 const roomNow = (room: Room) => room.replaying ? (room.replayNow ?? 0) : Math.max(Date.now(), room.journal.at(-1)?.at ?? 0);
 const observedTypes = ["pickup_key", "supply_taken", "supply_recovered", "supply_delivered", "task_complete", "ward_ruined", "kill", "door_action", "unlock_cage", "chat", "timepiece_taken", "pin_note"];
-function canonicalInput(body: InputBody): InputBody {
-  const result: InputBody = { playerId: body.playerId };
-  if (typeof body.dir === "number" && Number.isFinite(body.dir)) result.dir = body.dir;
-  if (typeof body.interactHeld === "boolean") result.interactHeld = body.interactHeld;
-  if (typeof body.cartHeld === "boolean") result.cartHeld = body.cartHeld;
-  if (typeof body.action === "string" && ["interact", "ability", "blackout", "vote", "start", "restart", "leave", "drop_supply", "sabotage", "ward_move", "ward_cancel", "door_lock", "time_travel", "time_return", "pin_note"].includes(body.action)) result.action = body.action;
-  if (typeof body.wardId === "string") result.wardId = body.wardId.slice(0, 128);
-  if (typeof body.move === "number" && Number.isFinite(body.move)) result.move = body.move;
-  if (typeof body.chat === "string") result.chat = body.chat.trim().slice(0, 120);
-  if (typeof body.vote === "string") result.vote = body.vote; // preserve exact legacy player IDs during replay
-  if (typeof body.targetAt === "number" && Number.isFinite(body.targetAt)) result.targetAt = body.targetAt;
-  if (typeof body.noteText === "string") result.noteText = body.noteText.slice(0, NOTE_TEXT_MAX + 60); // server rejects overlong text
-  return result;
-}
 function journal(room: Room, kind: JournalEntry["kind"], at: number, playerId?: string, body?: InputBody): JournalEntry {
   // Wall clocks can move backwards; journal order must not.
   at = Math.max(at, room.journal.at(-1)?.at ?? at);
