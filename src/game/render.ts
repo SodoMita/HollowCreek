@@ -52,12 +52,28 @@ export class Renderer {
   private bubbleWrap = new Map<string, { lines: string[]; bw: number }>();
 
   /** Canvas gradients are immutable once built; cache them by the dims that define them. */
+  /** LRU read: a hit is re-inserted so hot entries survive eviction. */
+  private lruGet<V>(map: Map<string, V>, key: string): V | undefined {
+    const v = map.get(key);
+    if (v !== undefined) { map.delete(key); map.set(key, v); }
+    return v;
+  }
+  /** LRU write: evicts only the oldest entry when at capacity. */
+  private lruSet<V>(map: Map<string, V>, key: string, value: V, cap: number) {
+    map.delete(key);
+    while (map.size >= cap) {
+      const oldest = map.keys().next();
+      if (oldest.done) break;
+      map.delete(oldest.value);
+    }
+    map.set(key, value);
+  }
+
   private grad(key: string, make: () => CanvasGradient): CanvasGradient {
-    let g = this.grads.get(key);
+    let g = this.lruGet(this.grads, key);
     if (!g) {
-      if (this.grads.size > 256) this.grads.clear();
       g = make();
-      this.grads.set(key, g);
+      this.lruSet(this.grads, key, g, 256);
     }
     return g;
   }
@@ -764,9 +780,8 @@ export class Renderer {
     ctx.globalAlpha = Math.max(0.15, alpha);
     ctx.font = "12px system-ui, sans-serif";
     if (!text) return; // empty bubble: Math.max(...[]) would be -Infinity
-    let wrapped = this.bubbleWrap.get(text);
+    let wrapped = this.lruGet(this.bubbleWrap, text);
     if (!wrapped) {
-      if (this.bubbleWrap.size > 512) this.bubbleWrap.clear();
       const words = text.split(" ");
       const lines: string[] = [];
       let line = "";
@@ -782,7 +797,7 @@ export class Renderer {
       if (truncated && lines.length > 0) lines[lines.length - 1] = lines[lines.length - 1].slice(0, -1) + "…";
       const bw = (lines.length ? Math.max(...lines.map((l) => ctx.measureText(l).width)) : 0) + 16;
       wrapped = { lines, bw };
-      this.bubbleWrap.set(text, wrapped);
+      this.lruSet(this.bubbleWrap, text, wrapped, 512);
     }
     const { lines, bw } = wrapped;
     const bh = lines.length * 15 + 10;
