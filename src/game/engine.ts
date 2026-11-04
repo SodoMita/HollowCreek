@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { gameEvents, roomRows, roomPlayers } from "@/db/schema";
-import { desc, eq, lt } from "drizzle-orm";
+import { and, desc, eq, lt, notInArray, sql } from "drizzle-orm";
 import { randomInt, randomUUID } from "node:crypto";
 import {
   BELL_X, BLACKOUT_CD_MS, BLACKOUT_MS, BUBBLE_MS, CAGE_XS, CELL_HALF,
@@ -84,6 +84,8 @@ interface P {
   interactHeld: boolean;
   activeWard: string | null;
   lastSeen: number;
+  /** last time a presence entry was journaled — heartbeats are throttled to 1/30s */
+  lastPresenceAt?: number;
   joinedAt: number;
   vote: string | null;
   isHost: boolean;
@@ -176,6 +178,14 @@ function journal(room: Room, kind: JournalEntry["kind"], at: number, playerId?: 
   at = Math.max(at, room.journal.at(-1)?.at ?? at);
   const entry: JournalEntry = { seq: ++room.journalSeq, at, kind, seed: randomInt(1, 0x7fffffff), playerId, body: body ? canonicalInput(body) : undefined };
   room.journal.push(entry); room.activeSeed = entry.seed; room.activeEventId = String(entry.seq);
+  // Ticks (10–20/s) and presence heartbeats flood the chronicle; evict only those.
+  if (room.journal.length > 1500) {
+    let i = 0;
+    while (room.journal.length > 1500 && i < room.journal.length) {
+      if (room.journal[i].kind === "tick" || room.journal[i].kind === "presence") room.journal.splice(i, 1);
+      else i++;
+    }
+  }
   return entry;
 }
 function seeded(room: Room, salt: string): number {
@@ -243,17 +253,19 @@ async function flushRooms() {
           set: { phase: room.phase, round: room.round, updatedAt: new Date() },
         });
       const roster = [...room.players.values()];
-      await db.delete(roomPlayers).where(eq(roomPlayers.code, code));
       if (roster.length) {
-        await db.insert(roomPlayers).values(
-          roster.map((p) => ({
-            id: p.id,
-            code,
-            name: p.name,
-            color: p.color,
-            joinedAt: new Date(p.joinedAt),
-          }))
-        );
+        await db
+          .insert(roomPlayers)
+          .values(roster.map((p) => ({ id: p.id, code, name: p.name, color: p.color, joinedAt: new Date(p.joinedAt) })))
+          .onConflictDoUpdate({
+            target: roomPlayers.id,
+            set: { name: sql`excluded.name`, color: sql`excluded.color`, joinedAt: sql`excluded.joined_at` },
+          });
+        await db
+          .delete(roomPlayers)
+          .where(and(eq(roomPlayers.code, code), notInArray(roomPlayers.id, roster.map((p) => p.id))));
+      } else {
+        await db.delete(roomPlayers).where(eq(roomPlayers.code, code));
       }
     } catch (e) {
       console.error("room persist failed", code, e);
@@ -389,7 +401,7 @@ function makeCode(): string {
   const chars = "ABCDEFGHJKMNPQRSTUVWXYZ";
   let code = "";
   do {
-    code = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+    code = Array.from({ length: 4 }, () => chars[randomInt(0, chars.length)]).join("");
   } while (rooms.has(code));
   return code;
 }
@@ -439,7 +451,10 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
   const existing = room.players.get(playerId);
   if (existing) {
     existing.lastSeen = now;
-    if (!room.replaying && room.phase !== "lobby" && room.phase !== "ended") journal(room, "presence", now, existing.id);
+    if (!room.replaying && room.phase !== "lobby" && room.phase !== "ended" && now - (existing.lastPresenceAt ?? 0) > 30_000) {
+      existing.lastPresenceAt = now;
+      journal(room, "presence", now, existing.id);
+    }
     if (existing.parked) {
       existing.parked = false;
       feed(room, `${existing.name} is back on the street.`);
@@ -572,7 +587,7 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
   const hollowCount = ps.length >= 6 ? 2 : 1;
   shuffled.forEach((p, i) => {
     p.role = i < hollowCount ? "hollow" : "crew";
-    p.x = ix(300 + Math.random() * (WORLD_W - 600));
+    p.x = ix(300 + (seeded(room, `spawn:${p.id}`) % 100000) / 100000 * (WORLD_W - 600));
     p.killAt = Date.now() + 10000;
   });
   // Shared pool: the town's wards belong to everyone. A death never orphans
@@ -593,12 +608,13 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
   room.endedAt = 0;
   room.round += 1;
   // The cage key hides somewhere on the outskirts, clear of the timepiece's pickup range.
-  room.keyX = ix(Math.random() < 0.5 ? 150 + Math.random() * 1400 : 2700 + Math.random() * 1350);
+  const keyRoll = seeded(room, "cage-key") % 100000 / 100000;
+  room.keyX = ix(keyRoll < 0.5 ? 150 + keyRoll * 2 * 1400 : 2700 + (keyRoll - 0.5) * 2 * 1350);
   if (Math.abs(room.keyX - TIMEPIECE_X) < INTERACT_RANGE + 60) {
     room.keyX = TIMEPIECE_X + (room.keyX < TIMEPIECE_X ? -1 : 1) * (INTERACT_RANGE + 65); // int
   }
   room.phase = "playing";
-  room.nextFlicker = Date.now() + 15000 + Math.random() * 15000;
+  room.nextFlicker = Date.now() + 15000 + (seeded(room, "flicker") % 15000);
   feed(room, "Night falls. Bring kits from the cart to the broken wards. Deliver a kit to open its repair puzzle; each solved board mends a ward.");
   feed(room, "Something wearing a human shape walks among you.");
   record(room, null, "game_start", { players: ps.map((p) => ({ id: p.id, name: p.name, role: p.role })) });
@@ -1858,11 +1874,24 @@ function tickRoom(room: Room, now: number) {
     captureHistory(room, now);
 }
 
-function tick() {
+function tickRooms() {
   for (const room of rooms.values()) {
     const now = roomNow(room);
     if (room.phase === "playing" || room.phase === "meeting") journal(room, "tick", now);
     tickRoom(room, now);
+  }
+}
+
+let tickAcc = 0;
+let lastTickWall = Date.now();
+function tick() {
+  const wall = Date.now();
+  tickAcc += wall - lastTickWall;
+  lastTickWall = wall;
+  if (tickAcc > TICK_MS * 10) tickAcc = TICK_MS * 10; // a sleeping tab must not burst 10 ticks at once
+  while (tickAcc >= TICK_MS) {
+    tickAcc -= TICK_MS;
+    tickRooms();
   }
 }
 
@@ -1889,7 +1918,10 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
   }
   const now = roomNow(room);
   me.lastSeen = now; // the 100ms state poll IS the presence heartbeat
-  if (!room.replaying && !room.temporalShadow && room.phase !== "lobby" && room.phase !== "ended") journal(room, "presence", now, me.id);
+  if (!room.replaying && !room.temporalShadow && room.phase !== "lobby" && room.phase !== "ended" && now - (me.lastPresenceAt ?? 0) > 30_000) {
+    me.lastPresenceAt = now;
+    journal(room, "presence", now, me.id);
+  }
   if (!room.temporalShadow && room.timeVisit?.playerId === me.id) {
     if (now >= room.timeVisit.endsAt) endTimeVisit(room, me, "time expired");
     else return pastSnapshot(room, me, room.timeVisit, now);
