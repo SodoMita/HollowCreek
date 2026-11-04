@@ -114,7 +114,8 @@ export default function Home() {
       {/* sky */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-[#120b1e] via-[#33172b] to-[#6e3320]" />
       {/* moon */}
-      <div className="pointer-events-none absolute right-[12%] top-[10%] h-28 w-28 rounded-full bg-[#e8ddc0] shadow-[0_0_90px_40px_rgba(240,225,190,0.25)]" />
+      {/* smaller and tucked into the corner on phones so it never sits on the title */}
+      <div className="pointer-events-none absolute right-[4%] top-[3%] h-12 w-12 rounded-full bg-[#e8ddc0] shadow-[0_0_50px_20px_rgba(240,225,190,0.25)] sm:right-[12%] sm:top-[10%] sm:h-28 sm:w-28 sm:shadow-[0_0_90px_40px_rgba(240,225,190,0.25)]" />
       {/* falling leaves */}
       {settings.graphics.particles && Array.from({ length: 14 }).map((_, i) => (
         <span
@@ -147,7 +148,7 @@ export default function Home() {
       <div className="relative z-10 mx-auto flex min-h-screen max-w-6xl flex-col gap-10 px-6 py-12 lg:flex-row lg:items-center lg:gap-16">
         {/* left: title & lore */}
         <div className="flex-1">
-          <p className="hc-rise font-body text-sm uppercase tracking-[0.4em] text-[#c9762f]">October, 1893 · population: uncertain</p>
+          <p className="hc-rise max-w-[68%] font-body text-sm uppercase tracking-[0.4em] text-[#c9762f]">October, 1893 · population: uncertain</p>
           <h1 className="hc-title-flicker hc-rise-1 mt-3 font-display text-7xl leading-none text-[#e9dfcf] drop-shadow-[0_4px_24px_rgba(200,90,40,0.35)] sm:text-8xl">
             Hollow<br />Creek
           </h1>
