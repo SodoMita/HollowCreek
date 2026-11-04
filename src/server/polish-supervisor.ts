@@ -1,12 +1,28 @@
 import "server-only";
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const root = globalThis as typeof globalThis & { __hollowPolishPid?: number };
 
+// Must match scripts/polish-loop.mjs: scratch state lives in one base dir,
+// repo-local .cache preferred over the (often tiny, tmpfs) OS tmpdir.
+function polishBase(cwd: string) {
+  const candidates = process.env.HOLLOW_POLISH_TMP
+    ? [process.env.HOLLOW_POLISH_TMP]
+    : [join(cwd, ".cache", "polish"), join(tmpdir(), "hollow-polish")];
+  for (const dir of candidates) {
+    try {
+      mkdirSync(dir, { recursive: true });
+      return dir;
+    } catch { /* try next candidate */ }
+  }
+  return tmpdir();
+}
+
 /** Opt-in maintenance worker, detached from the preview request lifecycle.
- * It can only edit a separate /tmp clone and never auto-deploys changes. */
+ * It can only edit a separate scratch clone and never auto-deploys changes. */
 export function ensurePolishWorker() {
   if (process.env.HOLLOW_POLISH_WORKER === "0") return;
   const cwd = process.cwd();
@@ -31,7 +47,7 @@ export function ensurePolishWorker() {
     catch { root.__hollowPolishPid = undefined; }
   }
   try {
-    const child = spawn("flock", ["-n", "/tmp/hollow-polish.lock", process.execPath, script], {
+    const child = spawn("flock", ["-n", join(polishBase(cwd), "polish.lock"), process.execPath, script], {
       cwd, detached: true, stdio: "ignore",
       env: { ...process.env, HOLLOW_POLISH_ROOT: cwd },
     });
