@@ -68,7 +68,7 @@ export function feed(room: Room, text: string) {
 // waits on the database.
 // ---------------------------------------------------------------------------
 
-const gPersist = globalThis as typeof globalThis & {
+export const gPersist = globalThis as typeof globalThis & {
   __hollowDirtyRooms?: Set<string>;
   __hollowPersistTimer?: ReturnType<typeof setInterval>;
 };
