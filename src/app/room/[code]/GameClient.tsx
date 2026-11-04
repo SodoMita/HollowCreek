@@ -52,6 +52,7 @@ export default function GameClient({ code }: { code: string }) {
     mode: "idle",
     speaking: false,
     error: null,
+    reconnecting: false,
   });
   const [tasksOpen, setTasksOpen] = useState(false);
   const [pinOpen, setPinOpen] = useState(false);

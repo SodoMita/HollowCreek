@@ -33,7 +33,7 @@ export function MidHud(props: {
 {s.phase !== "lobby" && (voiceStatus.error || voiceStatus.reconnecting) && (
   <p role="alert" className="absolute right-2 top-12 z-20 max-w-[min(70vw,250px)] rounded border border-[#6e3433] bg-[#1c1216]/95 px-3 py-2 text-xs text-[#e29a84]">
     {voiceStatus.reconnecting && !voiceStatus.error ? "Voice reconnecting…" : voiceStatus.error}
-    {voiceStatus.error.includes("Enable sound") && <button onClick={onResumePlayback} className="ml-2 underline">Enable sound</button>}
+    {voiceStatus.error?.includes("Enable sound") && <button onClick={onResumePlayback} className="ml-2 underline">Enable sound</button>}
   </p>
 )}
 
