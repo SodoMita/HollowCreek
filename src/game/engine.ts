@@ -20,6 +20,8 @@ import { shuffle } from "./rng";
 import { canonicalInput } from "./input";
 import { captureHistory, frameAt, restoreFrame } from "./history";
 import { dirtyRooms, emitRoom, feed, gPersist, journal, kitId, markDirty, record, roomNow, seeded } from "./chronicle";
+import { getRoom, listRoomsSync, makeCode, roomLoads, rooms } from "./registry";
+export { getRoom, listRoomsSync } from "./registry";
 export { onRoomEvent } from "./chronicle";
 import { heldPiece, loosePieces, nearTimepiece, nearestTimepiece, usedPieces } from "./timepieces";
 import { inMeetingArea, killTarget, nearestBody, nearestOccupiedCage, stationNear } from "./proximity";
@@ -156,13 +158,6 @@ const g = globalThis as typeof globalThis & {
   __hollowRoomLoads?: Map<string, Promise<Room | undefined>>;
   __hollowLoop?: ReturnType<typeof setInterval>;
 };
-const rooms: Map<string, Room> = g.__hollowRooms ?? new Map();
-g.__hollowRooms = rooms;
-// Concurrent join/state requests after a restart must share one hydration.
-// Otherwise each request can build a room and overwrite the previous one,
-// leaving a player whose join already succeeded as "Unknown soul".
-const roomLoads: Map<string, Promise<Room | undefined>> = g.__hollowRoomLoads ?? new Map();
-g.__hollowRoomLoads = roomLoads;
 
 // ---------------------------------------------------------------------------
 // Chronicle — every player action is persisted
@@ -339,14 +334,6 @@ async function hydrateRoom(code: string): Promise<Room | undefined> {
 // Room lifecycle
 // ---------------------------------------------------------------------------
 
-function makeCode(): string {
-  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ";
-  let code = "";
-  do {
-    code = Array.from({ length: 4 }, () => chars[randomInt(0, chars.length)]).join("");
-  } while (rooms.has(code));
-  return code;
-}
 
 export function createRoom(playerId: string, name: string) {
   const room: Room = {
@@ -565,9 +552,6 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
   return { ok: true };
 }
 
-export function getRoom(code: string): Room | undefined {
-  return rooms.get(code.toUpperCase());
-}
 
 /**
  * Room browser, backed by Postgres: towns survive a restart, so the menu can
@@ -631,25 +615,6 @@ export async function listRooms(): Promise<RoomListing[]> {
 }
 
 /** Live room browser — open towns on the map. */
-export function listRoomsSync(): RoomListing[] {
-  return [...rooms.values()]
-    .filter((r) => r.players.size > 0)
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, 24)
-    .map((r) => {
-      const ps = [...r.players.values()];
-      return {
-        code: r.code,
-        phase: r.phase,
-        playerCount: ps.length,
-        hostName: ps.find((p) => p.isHost)?.name ?? "—",
-        names: ps.map((p) => p.name),
-        createdAt: r.createdAt,
-        round: r.round,
-      };
-    });
-}
-
 /** The same souls gather in the same town for another night. */
 export function restartGame(room: Room, playerId: string): { ok: boolean; error?: string } {
   markDirty(room);
