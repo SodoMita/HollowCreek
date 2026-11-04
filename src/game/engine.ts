@@ -17,6 +17,7 @@ import {
 import { BUILDINGS, buildingHint, clampWorld, doorX, dropBuildingKeys, newDoors, interactWithBuilding, snapAnchor, walkThroughBuildings, type DoorState } from "./buildings";
 import { bumpStats } from "./stats";
 import { shuffle } from "./rng";
+import { snapshotEtag } from "./fingerprint";
 import { applyWardMove, createWardPuzzle, validWardMove, wardProgress, wardSolved, wardView, type WardPuzzle } from "./wards";
 import type { FeedItem, InputBody, MatchStats, Note, Phase, Role, RoomListing, Snapshot } from "./types";
 
@@ -129,6 +130,10 @@ interface Room {
   historyEvents: HistoryEvent[];
   journal: JournalEntry[];
   journalSeq: number;
+  /** bumped on every mutation (markDirty + each tick); etag cache keys off it */
+  rev: number;
+  /** per-player etag cache: valid while entry.rev === room.rev */
+  etags: Map<string, { rev: number; etag: string }>;
   activeSeed: number;
   activeEventId: string;
   replaying?: boolean;
@@ -235,6 +240,7 @@ gPersist.__hollowDirtyRooms = dirtyRooms;
 
 function markDirty(room: Room) {
   if (room.replaying) return;
+  room.rev++;
   dirtyRooms.add(room.code);
 }
 
@@ -314,7 +320,7 @@ async function hydrateRoom(code: string): Promise<Room | undefined> {
     phase: "lobby",
     round,
     timepieces: [], timepiecePending: false, revisions: [],
-    history: [], historyEvents: [], journal: [], journalSeq: 0, activeSeed: 1, activeEventId: "", lastHistoryAt: 0, timeVisit: null,
+    history: [], historyEvents: [], journal: [], journalSeq: 0, activeSeed: 1, activeEventId: "", lastHistoryAt: 0, timeVisit: null, rev: 0, etags: new Map(),
     players: new Map(),
     bodies: [],
     doors: newDoors(),
@@ -411,7 +417,7 @@ export function createRoom(playerId: string, name: string) {
     code: makeCode(),
     phase: "lobby",
     timepieces: [], timepiecePending: false, revisions: [],
-    history: [], historyEvents: [], journal: [], journalSeq: 0, activeSeed: 1, activeEventId: "", lastHistoryAt: 0, timeVisit: null,
+    history: [], historyEvents: [], journal: [], journalSeq: 0, activeSeed: 1, activeEventId: "", lastHistoryAt: 0, timeVisit: null, rev: 0, etags: new Map(),
     players: new Map(),
     bodies: [],
     doors: newDoors(),
@@ -1879,6 +1885,7 @@ function tickRooms() {
     const now = roomNow(room);
     if (room.phase === "playing" || room.phase === "meeting") journal(room, "tick", now);
     tickRoom(room, now);
+    room.rev++;
   }
 }
 
@@ -1908,6 +1915,16 @@ if (!g.__hollowLoop) {
 // ---------------------------------------------------------------------------
 // Snapshot (per-viewer, roles hidden)
 // ---------------------------------------------------------------------------
+
+/** ETag for a viewer's snapshot, cached per room revision so 10 pollers share one hash per tick. */
+export function roomEtag(room: Room, playerId: string, snap: Snapshot): string {
+  const cached = room.etags.get(playerId);
+  if (cached && cached.rev === room.rev) return cached.etag;
+  const etag = snapshotEtag(snap);
+  if (room.etags.size > 32) room.etags.clear();
+  room.etags.set(playerId, { rev: room.rev, etag });
+  return etag;
+}
 
 export function snapshot(room: Room, playerId: string): Snapshot | null {
   const me = room.players.get(playerId);
