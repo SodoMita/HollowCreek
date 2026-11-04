@@ -5,7 +5,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2 } from "lucide-react";
+import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
 import type { Snapshot } from "@/game/types";
 import type { VoiceStatus } from "@/game/voice";
 import { keyLabel, type GameSettings } from "@/game/settings";
@@ -302,6 +302,112 @@ export function TopBar(props: {
       className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a] sm:py-1.5"
     >⚙</button>
     <button onClick={onLeave} disabled={leaving} aria-label="Back to towns" className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#e06a5a] disabled:opacity-50 sm:px-3 sm:py-1.5"><span className="sm:hidden">←</span><span className="hidden sm:inline">Back</span></button>
+  </div>
+</div>
+  );
+}
+
+export function BottomControls(props: {
+  s: Snapshot;
+  controls: GameSettings["controls"];
+  nearbyKeyedDoor: boolean;
+  nearbyDoorLocked: boolean | undefined;
+  onMove: (dir: "left" | "right", on: boolean) => void;
+  onPush: (on: boolean) => void;
+  onDropKit: () => void;
+  onChat: () => void;
+  onDoorLock: () => void;
+  onInteractDown: () => void;
+  onInteractUp: () => void;
+  onBlackout: () => void;
+  onAbility: () => void;
+}) {
+  const { s, controls, nearbyKeyedDoor, nearbyDoorLocked,
+    onMove, onPush, onDropKit, onChat, onDoorLock, onInteractDown, onInteractUp, onBlackout, onAbility } = props;
+  return (
+<div className="hc-hud-item hc-hud-fade hc-touch-controls absolute bottom-0 left-0 right-0 flex items-end justify-between gap-2 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))]">
+  <div className="flex flex-col gap-1.5">
+    {s.self.alive && s.phase !== "lobby" && (
+      <div className="flex items-center gap-1.5" title="Vigor — work and deeds drain it; stand still to recover. Low vigor slows chores, zero halts them.">
+        <Zap className={`h-3.5 w-3.5 ${s.self.stamina <= 0 ? "text-[#e06a5a]" : s.self.stamina < 0.3 ? "text-[#d99a3d]" : "text-[#a8c98a]"}`} />
+        <div className="h-2 w-24 overflow-hidden rounded-full border border-[#3a2733] bg-[#140d18]/80 sm:w-28">
+          <div
+            className={`h-full transition-[width] duration-300 ${s.self.stamina <= 0 ? "bg-[#e06a5a]" : s.self.stamina < 0.3 ? "bg-[#d99a3d]" : "bg-[#6b8e23]"}`}
+            style={{ width: `${Math.round(s.self.stamina * 100)}%` }}
+          />
+        </div>
+        <span className={`text-[10px] ${s.self.exhausted ? "text-[#e06a5a]" : "text-[#9c8b7a]"}`}>{s.self.exhausted ? "spent — rest!" : "vigor"}</span>
+      </div>
+    )}
+    {s.self.alive && !s.self.caged && s.phase === "playing" && (s.self.hasSupply ? (
+      <button onClick={onDropKit}
+        className="self-start rounded border border-[#84624c] bg-[#33231f]/90 px-2 py-1 text-[11px] text-[#f2cf91]">
+        Drop kit · {keyLabel(controls.drop)}
+      </button>
+    ) : (
+      <button onPointerDown={(e) => { e.preventDefault(); onPush(true); }}
+        onPointerUp={() => onPush(false)}
+        onPointerLeave={() => onPush(false)}
+        onPointerCancel={() => onPush(false)}
+        onContextMenu={(e) => e.preventDefault()}
+        className="self-start rounded border border-[#84624c] bg-[#33231f]/90 px-2 py-1 text-[11px] text-[#f2cf91]">
+        Hold Push + ◀▶ {s.cartPushers > 0 ? `· ${s.cartPushers} pushing` : ""}
+      </button>
+    ))}
+    <div className="flex gap-2 sm:gap-3">
+    {([["left", "◀"], ["right", "▶"]] as const).map(([d, glyph]) => (
+      <button
+        key={d}
+        className="h-[52px] w-[52px] rounded-full border border-[#3a2733] bg-[#140d18]/80 text-xl text-[#d8c9b4] backdrop-blur active:bg-[#3a2733] sm:h-16 sm:w-16 sm:text-2xl short:h-12 short:w-12"
+        onPointerDown={(e) => { e.preventDefault(); onMove(d, true); }}
+        onPointerUp={() => onMove(d, false)}
+        onPointerLeave={() => onMove(d, false)}
+        onPointerCancel={() => onMove(d, false)}
+        onContextMenu={(e) => e.preventDefault()}
+      >{glyph}</button>
+    ))}
+    </div>
+  </div>
+  <div className="flex items-end gap-2 sm:gap-3">
+    <button
+      onClick={onChat}
+      className="h-11 rounded-full border border-[#3a2733] bg-[#140d18]/80 px-3 text-sm text-[#d8c9b4] backdrop-blur hover:bg-[#2a1a26] sm:px-4"
+    >💬<span className="hidden sm:inline"> Speak</span></button>
+    {nearbyKeyedDoor && s.self.alive && !s.self.caged && (
+      <button onClick={onDoorLock} className="h-11 rounded-full border border-[#84624c] bg-[#33231f]/90 px-3 text-xs text-[#f2cf91]" title="Lock or unlock with this house key">{nearbyDoorLocked ? "Unlock" : "Lock"} · L</button>
+    )}
+    <div className="flex flex-col items-center gap-1">
+      {s.hint && <span className="hc-interaction-hint max-w-36 rounded bg-[#0d0810]/80 px-2 py-0.5 text-center text-xs text-[#d99a3d] sm:max-w-44">{s.hint}</span>}
+      <button
+        onPointerDown={(e) => { e.preventDefault(); onInteractDown(); }}
+        onPointerUp={onInteractUp}
+        onPointerLeave={onInteractUp}
+        onPointerCancel={onInteractUp}
+        className={`h-[52px] w-[52px] rounded-full border-2 font-display text-sm sm:h-16 sm:w-16 sm:text-base short:h-12 short:w-12 text-lg backdrop-blur ${s.hint ? "border-[#d99a3d] bg-[#3a2410]/90 text-[#ffd98a]" : "border-[#3a2733] bg-[#140d18]/80 text-[#9c8b7a]"}`}
+      >{keyLabel(controls.interact)}</button>
+    </div>
+    {s.self.role === "hollow" && s.self.alive && s.phase === "playing" && (
+      <div className="flex flex-col items-center gap-1">
+        {s.self.blackoutCooldownMs > 0 && (
+          <span className="rounded bg-[#0d0810]/80 px-2 py-0.5 text-xs tabular-nums text-[#9aa]">{Math.ceil(s.self.blackoutCooldownMs / 1000)}s</span>
+        )}
+        <button
+          onClick={onBlackout}
+          title="Snuff every lantern (F)"
+          className={`h-[52px] w-[52px] rounded-full border-2 font-display text-sm sm:h-16 sm:w-16 sm:text-base short:h-12 short:w-12 text-base leading-tight backdrop-blur ${s.self.canBlackout ? "border-[#7a6ab0] bg-[#1a1430]/90 text-[#b0a0e0] shadow-[0_0_18px_rgba(120,100,200,0.35)]" : "border-[#3a2733] bg-[#140d18]/80 text-[#9a877f]"}`}
+        >Snuff<br /><span className="text-[10px]">{keyLabel(controls.blackout)}</span></button>
+      </div>
+    )}
+    <div className="flex flex-col items-center gap-1">
+      {s.self.role === "hollow" && s.self.killCooldownMs > 0 && s.self.alive && (
+        <span className="rounded bg-[#0d0810]/80 px-2 py-0.5 text-xs tabular-nums text-[#ff6a5a]">{Math.ceil(s.self.killCooldownMs / 1000)}s</span>
+      )}
+      <button
+        onClick={onAbility}
+        disabled={!s.self.alive}
+        className={`h-[52px] w-[52px] rounded-full border-2 font-display text-sm sm:h-16 sm:w-16 sm:text-base short:h-12 short:w-12 text-base leading-tight backdrop-blur ${s.abilityReady ? (s.self.role === "hollow" ? "border-[#ff4a3a] bg-[#4a1210]/90 text-[#ff8a7a] shadow-[0_0_20px_rgba(255,60,40,0.4)]" : "border-[#d99a3d] bg-[#3a2410]/90 text-[#ffd98a]") : "border-[#3a2733] bg-[#140d18]/80 text-[#9a877f]"}`}
+      >{s.abilityLabel}</button>
+    </div>
   </div>
 </div>
   );
