@@ -49,3 +49,10 @@ zoom-in reader in both clients).
 - `time-travel.ts` — replay/past layer; `snapshot.ts` — per-viewer view + ETag
 - `history.ts`, `timepieces.ts`, `proximity.ts` — pure helpers; `hooks.ts` — snapshot/tickRoom bridge
 - Client: `GameClient.tsx` + `hud/bars/overlays/chat.tsx` + `useGameStream/useGameInput/useGameRender/useGameOverlays` hooks
+
+## Build report (2026-11-04, `next build` with dummy DATABASE_URL — build passes without a live DB)
+
+- All 8 pages + 13 API routes compile and prerender; exit 0.
+- Client JS grand total ≈ 987 kB across all chunks; `/room/[code]` page = 5 unique chunks,
+  210.7 kB total (77.8 + 53.4 + 47.0 + 29.2 + 3.3) — mostly React/Next framework.
+- `voice.ts`/`audio.ts` are already dynamic-imported behind the Voice button (not in the room page's static chunks).
