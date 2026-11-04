@@ -11,6 +11,8 @@ These are the actual SVG files used by the game, not reference images. Open `/ar
 - `furniture/*.svg` — individual hearth, fire, shelves, jars, clock, fuse board, table, desk, bed, crate, entrance barrel, rug, and framed picture.
 - `characters/traveler.svg` — the player silhouette. Keep the `/* RUNTIME PALETTE */` marker: the game injects cloak and eye colors and a small walk pose there. The default colors remain visible in a normal SVG editor.
 - `scenery/autumn-tree.svg`, `props/key.svg`, `props/timepiece.svg`, `props/supply-cart.svg`, and `props/supply-kit.svg` — reusable world objects.
+- `props/fence.svg`, `props/lantern-post.svg`, `props/woodpile.svg`, `props/windmill.svg` — Malye Korely street dressing placed at fixed world x positions in `src/game/render.ts`.
+- The four `house/facade-*.svg` files are redrawn as Pomor log houses in the manner of the Malye Korely open-air museum (village on the Korelka creek near Arkhangelsk; cf. Arkhangelsk's one-street museum street Chumbarova-Luchinskogo): log courses with corner log-ends, shingle gable roofs with ridge, stone-boulder foundations, brick chimneys; `house/windows.svg` carries carved platbands, shutters and warm dusk-lit panes. Keep the 332 × 158 facade viewBox and the window cutouts at x=61/x=197.
 - `rooms.json` — furniture placement. Each room item has an asset path, `x` relative to the house center, `y` relative to the ground (negative is upward), `width`, `height`, and optional `when: "done"` or `"unfinished"` for task state. Change these numbers to move or resize objects; reload to see changes.
 
 ## Alignment and editing

@@ -1,1 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="300" height="158" viewBox="0 0 300 158"><title>Transparent paired sash windows</title><defs><g id="sash"><rect x="-2" y="-2" width="31" height="36" fill="none" stroke="#c09878" stroke-width="2"/><rect width="27" height="32" fill="#d6e9dc" fill-opacity=".08"/><path d="M13.5 0v32M0 16h27" stroke="#8b6858" stroke-width="2"/><path d="M3 10L9 3M17 29l7-8" stroke="#f5e6d1" stroke-opacity=".4"/><path d="M-7-2h5v36h-5M29-2h5v36h-5" fill="#3b2929" stroke="#8e6850" stroke-width=".7"/><path d="M-4 34h35" stroke="#c09878" stroke-width="2"/></g></defs><g id="left-window" transform="translate(61 79)"><use href="#sash"/></g><g id="right-window" transform="translate(197 79)"><use href="#sash"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="158" viewBox="0 0 300 158"><title>Carved sash windows with shutters, lit at dusk (Malye Korely platband style)</title>
+<defs>
+<linearGradient id="glass" x2="0" y2="1"><stop stop-color="#ffca7a"/><stop offset=".55" stop-color="#e89a4e"/><stop offset="1" stop-color="#7a4a30"/></linearGradient>
+<g id="sash">
+  <rect x="-7" y="-6" width="41" height="44" rx="2" fill="none" stroke="#d8b088" stroke-width="3"/>
+  <rect x="-7" y="-6" width="41" height="44" rx="2" fill="#8a5f42" fill-opacity=".18"/>
+  <circle cx="-7" cy="-6" r="3.4" fill="#e8c9a4"/><circle cx="34" cy="-6" r="3.4" fill="#e8c9a4"/><circle cx="-7" cy="38" r="3.4" fill="#e8c9a4"/><circle cx="34" cy="38" r="3.4" fill="#e8c9a4"/>
+  <path d="M-7 -6h41M-7 38h41M-7 -6v44M34 -6v44" stroke="#a97a54" stroke-width="1" stroke-opacity=".8"/>
+  <rect width="27" height="32" fill="url(#glass)" fill-opacity=".92"/>
+  <path d="M13.5 0v32M0 16h27" stroke="#5d3b28" stroke-width="2.2"/>
+  <path d="M3 12L11 3M16 29l8-9" stroke="#fff3dd" stroke-opacity=".55" stroke-width="1.6"/>
+  <path d="M0 0h27v32H0Z" fill="none" stroke="#3a241a" stroke-width="1.4"/>
+  <path d="M-5 36h37" stroke="#d8b088" stroke-width="3"/>
+  <g id="shutters" fill="#4c3a2e" stroke="#241812" stroke-width="1">
+    <path d="M-17 -3h9v38h-9Z"/><path d="M35 -3h9v38h-9Z"/>
+    <path d="M-15.5 2h6M-15.5 8h6M-15.5 14h6M-15.5 20h6M-15.5 26h6M-15.5 32h6M36.5 2h6M36.5 8h6M36.5 14h6M36.5 20h6M36.5 26h6M36.5 32h6" stroke="#7a5c44" stroke-width="1" fill="none"/>
+  </g>
+</g>
+</defs>
+<g transform="translate(61 79)"><use href="#sash"/></g>
+<g transform="translate(197 79)"><use href="#sash"/></g>
+</svg>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="30" height="96" viewBox="0 0 30 96"><title>Door lantern post with warm glow</title>
+<defs><radialGradient id="glow" cx=".5" cy=".45" r=".55"><stop stop-color="#ffca7a" stop-opacity=".85"/><stop offset="1" stop-color="#ffca7a" stop-opacity="0"/></radialGradient></defs>
+<circle cx="15" cy="22" r="20" fill="url(#glow)"/>
+<path d="M13 92h4l1-70h-6Z" fill="#4a382c" stroke="#241a14"/>
+<path d="M4 20h22l-3-6h-16Z" fill="#2c2226" stroke="#191317"/>
+<rect x="8" y="20" width="14" height="16" rx="2" fill="#ffca7a" fill-opacity=".9" stroke="#191317"/>
+<path d="M8 28h14M15 20v16" stroke="#7a4a30" stroke-width="1.4"/>
+<path d="M6 36h18l-2 4H8Z" fill="#2c2226"/>
+<path d="M10 44h10v4H10Z" fill="#241a14"/>
+<path d="M13 92h4" stroke="#8a6f58" stroke-opacity=".6"/>
+</svg>

@@ -5,7 +5,7 @@ import {
 import type { Snapshot, Station } from "./types";
 import { createDefaultSettings, type GameSettings } from "./settings";
 import { drawBrokenWard, drawKit, drawSupplyCart } from "./ward-art";
-import { BUILDINGS, WORLD_MIN, WORLD_MAX } from "./buildings";
+import { BUILDINGS, doorX, WORLD_MIN, WORLD_MAX } from "./buildings";
 import { drawHouseExterior, drawHouseInterior } from "./house-art";
 import { drawSvg, drawTraveler } from "./svg-assets";
 
@@ -160,6 +160,27 @@ export class Renderer {
       if (sx < -90 || sx > w + 90) continue;
       const th = 74 + ((i * 53) % 56);
       this.drawTree(ctx, sx, ground, th, i);
+    }
+
+    // --- Malye Korely street dressing: fences, door lanterns, woodpiles, windmill ---
+    // Purely decorative world-anchored props; they never change gameplay coordinates.
+    const FENCE_XS = [-1460, -1250, -700, -120, 420, 760, 1560, 1860, 2560, 2960, 3320, 3780, 4180, 4420, 5100, 5260];
+    for (const fx of FENCE_XS) {
+      const sx = fx - cam;
+      if (sx < -160 || sx > w + 160) continue;
+      drawSvg(ctx, "props/fence.svg", sx, ground - 46, 140, 46);
+    }
+    for (const b of BUILDINGS) {
+      const lx = doorX(b) + b.side * 46 - cam; // lantern post beside each doorway
+      if (lx > -40 && lx < w + 40) drawSvg(ctx, "props/lantern-post.svg", lx, ground - 96, 30, 96);
+    }
+    for (const wx of [-560, 5300]) {
+      const sx = wx - cam;
+      if (sx > -80 && sx < w + 80) drawSvg(ctx, "props/woodpile.svg", sx - 32, ground - 44, 64, 44);
+    }
+    {
+      const sx = 4350 - cam; // Pomor windmill past the silo, before the foreman's office
+      if (sx > -150 && sx < w + 150) drawSvg(ctx, "props/windmill.svg", sx - 65, ground - 160, 130, 160);
     }
 
     // --- ground ---
