@@ -74,7 +74,7 @@ export default async function StatsPage() {
         </div>
 
         {rows.length === 0 ? (
-          <p className="mt-10 text-lg italic text-[#6b5a55]">
+          <p className="mt-10 text-lg italic text-[#9a877f]">
             The ledger is empty. No soul has yet finished a night in Hollow Creek.
           </p>
         ) : (
@@ -98,10 +98,10 @@ export default async function StatsPage() {
                         {i === 0 ? <Trophy className="h-4 w-4 text-[#d99a3d]" />
                           : i === 1 ? <Trophy className="h-4 w-4 text-[#9aa0a8]" />
                           : i === 2 ? <Trophy className="h-4 w-4 text-[#a06a3c]" />
-                          : <span className="w-4 text-center font-mono text-xs text-[#5a4a50]">{i + 1}</span>}
+                          : <span className="w-4 text-center font-mono text-xs text-[#8a7a82]">{i + 1}</span>}
                         <b className="text-[#e9dfcf]">{r.name}</b>
                         {r.games > 0 && (
-                          <span className="text-xs text-[#6b5a55]">{Math.round((100 * r.wins) / r.games)}%</span>
+                          <span className="text-xs text-[#9a877f]">{Math.round((100 * r.wins) / r.games)}%</span>
                         )}
                       </span>
                     </td>
@@ -116,7 +116,7 @@ export default async function StatsPage() {
             </table>
           </div>
         )}
-        <p className="mt-4 text-xs text-[#6b5a55]">
+        <p className="mt-4 text-xs text-[#9a877f]">
           Records follow the soul (your browser identity) across towns and nights. Playtime counts nights seen through to the end.
         </p>
       </div>

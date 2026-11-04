@@ -57,8 +57,14 @@ export default function Home() {
 
   useEffect(() => {
     void refreshRooms();
-    const t = setInterval(refreshRooms, 3000);
-    return () => clearInterval(t);
+    let t = setInterval(refreshRooms, 3000);
+    // a hidden tab does not need a live town list — pause until visible again
+    const onVis = () => {
+      clearInterval(t);
+      if (!document.hidden) { void refreshRooms(); t = setInterval(refreshRooms, 3000); }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
   }, [refreshRooms]);
 
   const saveName = () => localStorage.setItem("hc_name", name.trim() || "Stranger");
@@ -208,7 +214,7 @@ export default function Home() {
             onChange={(e) => setName(e.target.value)}
             maxLength={14}
             placeholder="Stranger"
-            className="mt-1 w-full rounded border border-[#3a2733] bg-[#0d0810] px-3 py-2.5 text-[#e9dfcf] placeholder:text-[#5a4a50] focus:border-[#c9762f] focus-visible:outline-2 focus-visible:outline-[#c9762f]"
+            className="mt-1 w-full rounded border border-[#3a2733] bg-[#0d0810] px-3 py-2.5 text-[#e9dfcf] placeholder:text-[#8a7a82] focus:border-[#c9762f] focus-visible:outline-2 focus-visible:outline-[#c9762f]"
           />
           <button
             onClick={create}
@@ -223,7 +229,7 @@ export default function Home() {
           >
             <BookOpen className="h-4 w-4 text-[#d99a3d]" /> Walk Alone · Singleplayer Tutorial
           </Link>
-          <div className="my-5 flex items-center gap-3 text-xs text-[#5a4a50]">
+          <div className="my-5 flex items-center gap-3 text-xs text-[#8a7a82]">
             <div className="h-px flex-1 bg-[#3a2733]" /> or travel to one <div className="h-px flex-1 bg-[#3a2733]" />
           </div>
           <div className="flex gap-2">
@@ -236,7 +242,7 @@ export default function Home() {
               name="town-code"
               autoComplete="off"
               spellCheck={false}
-              className="w-full rounded border border-[#3a2733] bg-[#0d0810] px-3 py-2.5 text-center font-mono text-xl tracking-[0.5em] text-[#d99a3d] placeholder:text-[#5a4a50] focus:border-[#c9762f] focus-visible:outline-2 focus-visible:outline-[#c9762f]"
+              className="w-full rounded border border-[#3a2733] bg-[#0d0810] px-3 py-2.5 text-center font-mono text-xl tracking-[0.5em] text-[#d99a3d] placeholder:text-[#8a7a82] focus:border-[#c9762f] focus-visible:outline-2 focus-visible:outline-[#c9762f]"
               onKeyDown={(e) => e.key === "Enter" && join()}
             />
             <button
@@ -267,16 +273,16 @@ export default function Home() {
               </button>
             </div>
             <div className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
-              {!roomsLoaded && <p className="text-sm text-[#6b5a55]">Reading the map…</p>}
+              {!roomsLoaded && <p className="text-sm text-[#9a877f]">Reading the map…</p>}
               {roomsLoaded && rooms.length === 0 && (
-                <p className="text-sm italic text-[#6b5a55]">No towns on the map yet. Found one, and others will find you.</p>
+                <p className="text-sm italic text-[#9a877f]">No towns on the map yet. Found one, and others will find you.</p>
               )}
               {rooms.map((r) => (
                 <div
                   key={r.code}
                   className="group flex items-center gap-3 rounded border border-[#2a1c28] bg-[#0d0810]/80 px-3 py-2.5 transition-colors hover:border-[#c9762f]/40"
                 >
-                  <span className={`shrink-0 ${r.phase === "lobby" ? "text-[#d99a3d]" : r.phase === "ended" ? "text-[#6b5a55]" : "text-[#8f7d9b]"}`}>
+                  <span className={`shrink-0 ${r.phase === "lobby" ? "text-[#d99a3d]" : r.phase === "ended" ? "text-[#9a877f]" : "text-[#8f7d9b]"}`}>
                     {r.phase === "lobby" ? <Flame className="h-4 w-4" /> : r.phase === "meeting" ? <Bell className="h-4 w-4" /> : r.phase === "ended" ? <Skull className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                   </span>
                   <div className="min-w-0 flex-1">
@@ -286,7 +292,7 @@ export default function Home() {
                         {r.phase === "lobby" ? "gathering at dusk" : r.phase === "meeting" ? "the bell tolls" : r.phase === "ended" ? "the tale ended" : `night ${r.round || 1} has fallen`}
                       </span>
                     </div>
-                    <div className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-[#6b5a55]">
+                    <div className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-[#9a877f]">
                       <Users className="h-3 w-3 shrink-0" />
                       <span>{r.playerCount}/10</span>
                       <span className="truncate">· {r.names.slice(0, 4).join(", ")}{r.names.length > 4 ? "…" : ""}</span>
@@ -310,14 +316,14 @@ export default function Home() {
                       Return
                     </button>
                   ) : (
-                    <span className="shrink-0 text-xs italic text-[#5a4a50]">in progress</span>
+                    <span className="shrink-0 text-xs italic text-[#8a7a82]">in progress</span>
                   )}
                 </div>
               ))}
             </div>
           </div>
 
-          <p className="mt-4 text-xs leading-relaxed text-[#6b5a55]">
+          <p className="mt-4 text-xs leading-relaxed text-[#9a877f]">
             4–10 townsfolk. One or two among you are Hollow. The wards begin broken:
             take kits from the one cart, deliver them, then press E to play a repair puzzle. Push the cart
             together to move it faster; carrying a kit slows and tires you. Drop it if you

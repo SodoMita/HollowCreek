@@ -24,6 +24,7 @@ function getPid(): string {
 export default function GameClient({ code }: { code: string }) {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -48,8 +49,9 @@ export default function GameClient({ code }: { code: string }) {
   const [pinText, setPinText] = useState("");
   const [noteFocus, setNoteFocus] = useState<{ id: string; x: number; author: string; text: string } | null>(null);
   const focusRef = useRef<number | null>(null);
+  const noteOpenRef = useRef(false);
   const rendererRef = useRef<Renderer | null>(null);
-  useEffect(() => { focusRef.current = noteFocus ? noteFocus.x : null; }, [noteFocus]);
+  useEffect(() => { focusRef.current = noteFocus ? noteFocus.x : null; noteOpenRef.current = !!noteFocus; }, [noteFocus]);
   const [leaving, setLeaving] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(createDefaultSettings);
 
@@ -68,6 +70,7 @@ export default function GameClient({ code }: { code: string }) {
   const lastPhase = useRef<string>("lobby");
   const leavingRef = useRef(false);
   const chatInputRef = useRef<HTMLInputElement>(null);
+  const pendingInputRef = useRef<Record<string, unknown> | null>(null); // last intent the server never got
   useEffect(() => {
     chatOpenRef.current = chatOpen;
   }, [chatOpen]);
@@ -87,7 +90,8 @@ export default function GameClient({ code }: { code: string }) {
         setToast(data.error);
         setTimeout(() => setToast(null), 2200);
       }
-    } catch { /* network hiccup — next poll resyncs */ } finally { clearTimeout(timeout); }
+    } catch { pendingInputRef.current = payload; } // dropped intent: re-sent after the next healthy poll
+    finally { clearTimeout(timeout); }
   }, [code]);
 
   const getSettingsStore = useCallback(() => {
@@ -215,22 +219,29 @@ export default function GameClient({ code }: { code: string }) {
     let timer: ReturnType<typeof setInterval> | null = null;
     (async () => {
       const name = localStorage.getItem("hc_name") || "Stranger";
-      const res = await fetch("/api/game/join", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code, playerId: getPid(), name }),
-      });
-      const data = await res.json();
-      if (!alive) return;
-      if (!res.ok || !data.ok) { setJoinError(data.error ?? "Could not enter the town."); return; }
-      // the server may re-adopt a stale seat under our name — use its canonical id
-      if (data.playerId && data.playerId !== getPid()) localStorage.setItem("hc_pid", data.playerId);
+      const doJoin = async (): Promise<boolean> => {
+        try {
+          const res = await fetch("/api/game/join", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ code, playerId: getPid(), name }),
+          });
+          const data = await res.json();
+          if (!alive) return false;
+          if (!res.ok || !data.ok) { setJoinError(data.error ?? "Could not enter the town."); return false; }
+          // the server may re-adopt a stale seat under our name — use its canonical id
+          if (data.playerId && data.playerId !== getPid()) localStorage.setItem("hc_pid", data.playerId);
+          return true;
+        } catch { return false; }
+      };
+      if (!(await doJoin())) return;
       let inflight = false;
       let failures = 0;
       let delay = 100;
       let lastFp = "";
       let lastShownNow = 0;
       let lastRev = ""; // server fingerprint of the last state we hold
+      let notFound = 0; // consecutive 404s — after 3, the server lost us (restart): re-join
       const tick = async () => {
         if (inflight) return; // never stack overlapping state fetches
         inflight = true;
@@ -240,13 +251,21 @@ export default function GameClient({ code }: { code: string }) {
           const revParam = lastRev ? `&rev=${encodeURIComponent(lastRev)}` : "";
           const r = await fetch(`/api/game/state?code=${code}&playerId=${getPid()}${revParam}`, { signal: controller.signal });
           if (r.status === 304) { failures = 0; return; } // unchanged — skip the payload entirely
+          if (r.status === 404) {
+            failures++;
+            if (++notFound >= 3) { notFound = 0; await doJoin(); } // server restarted — reclaim the seat
+            return;
+          }
           if (!r.ok) { failures++; return; }
+          notFound = 0;
           const etag = r.headers.get("etag");
           if (etag) lastRev = etag;
           const s: Snapshot = await r.json();
           if (!alive) return;
           failures = 0;
           snapRef.current = s;
+          if (pendingInputRef.current) { const retry = pendingInputRef.current; pendingInputRef.current = null; void send(retry); }
+          mainRef.current?.toggleAttribute("inert", !!(wardPanelRef.current?.isOpen || timePanelRef.current?.isOpen || settingsDialogRef.current?.isOpen || noteOpenRef.current));
           if (timePanelRef.current?.isOpen && (!s.self.hasTimepiece || s.phase !== "playing")) timePanelRef.current.close();
           wardPanelRef.current?.update(s.minigame, s.self.stamina, s.self.exhausted);
           // Skip the React re-render when nothing but the clock changed (idle players cost ~nothing then).
@@ -267,7 +286,8 @@ export default function GameClient({ code }: { code: string }) {
       timer = setInterval(() => {
         // adaptive: 100ms while healthy, up to 1s after repeated failures or when the tab is hidden
         const hidden = typeof document !== "undefined" && document.hidden;
-        const want = failures >= 3 || hidden ? 1000 : 100;
+        const base = failures >= 3 || hidden ? Math.min(1000 * 2 ** Math.min(Math.max(failures - 3, 0), 3), 8000) : 100;
+        const want = Math.round(base * (0.8 + Math.random() * 0.4)); // jitter avoids thundering herd
         if (want !== delay) { delay = want; if (timer) clearInterval(timer); timer = setInterval(tick, delay); }
         void tick();
       }, 100);
@@ -379,8 +399,14 @@ export default function GameClient({ code }: { code: string }) {
     };
     const unsubscribe = store.subscribe((next) => { renderer.setSettings(next); resize(); });
     resize();
-    window.addEventListener("resize", resize);
-    window.visualViewport?.addEventListener("resize", resize);
+    // visualViewport fires continuously while the mobile URL bar animates — debounce
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    const debouncedResize = () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => { resizeTimer = null; resize(); }, 150);
+    };
+    window.addEventListener("resize", debouncedResize);
+    window.visualViewport?.addEventListener("resize", debouncedResize);
     const loop = (nowMs: number) => {
       raf = requestAnimationFrame(loop);
       const dt = Math.min(0.05, (nowMs - last) / 1000);
@@ -407,8 +433,9 @@ export default function GameClient({ code }: { code: string }) {
     return () => {
       unsubscribe();
       cancelAnimationFrame(raf);
-      window.removeEventListener("resize", resize);
-      window.visualViewport?.removeEventListener("resize", resize);
+      if (resizeTimer) clearTimeout(resizeTimer);
+      window.removeEventListener("resize", debouncedResize);
+      window.visualViewport?.removeEventListener("resize", debouncedResize);
     };
   }, [getSettingsStore]);
 
@@ -466,7 +493,7 @@ export default function GameClient({ code }: { code: string }) {
   ] : [];
 
   return (
-    <main id="main" className="fixed inset-0 h-[100dvh] w-full select-none overflow-hidden bg-[#0b0710]" style={{ touchAction: "none" }}>
+    <main id="main" ref={mainRef} className="fixed inset-0 h-[100dvh] w-full select-none overflow-hidden bg-[#0b0710]" style={{ touchAction: "none" }}>
       <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-2 focus:rounded focus:bg-[#8f3b1f] focus:px-3 focus:py-2 focus:text-[#f3e6d0]">Skip to the game</a>
       <canvas ref={canvasRef} className="absolute inset-0" />
 
@@ -606,7 +633,7 @@ export default function GameClient({ code }: { code: string }) {
                     key={o.key}
                     disabled={!!s.self.myVote}
                     onClick={() => send({ action: "vote", vote: o.key })}
-                    className={`flex items-center gap-2 rounded px-2.5 py-1.5 text-left text-sm transition-colors ${s.self.myVote === o.key ? "bg-[#8f3b1f] text-[#f3e6d0]" : s.self.myVote ? "bg-[#1d1420] text-[#6b5a55]" : "bg-[#1d1420] text-[#d8c9b4] hover:bg-[#2a1a26]"}`}
+                    className={`flex items-center gap-2 rounded px-2.5 py-1.5 text-left text-sm transition-colors ${s.self.myVote === o.key ? "bg-[#8f3b1f] text-[#f3e6d0]" : s.self.myVote ? "bg-[#1d1420] text-[#9a877f]" : "bg-[#1d1420] text-[#d8c9b4] hover:bg-[#2a1a26]"}`}
                   >
                     <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: o.color }} />
                     {o.label}
@@ -614,7 +641,7 @@ export default function GameClient({ code }: { code: string }) {
                 ))}
               </div>
               {s.self.myVote && <p className="mt-2 text-xs text-[#9c8b7a]">Your verdict is cast. Wait for the toll.</p>}
-              <p className="mt-2 text-xs text-[#6b5a55]">Most votes: caged in the square. Caged folk may still speak — free them by vote or iron key.</p>
+              <p className="mt-2 text-xs text-[#9a877f]">Most votes: caged in the square. Caged folk may still speak — free them by vote or iron key.</p>
             </div>
           )}
 
@@ -641,7 +668,7 @@ export default function GameClient({ code }: { code: string }) {
           {s.self.role === "hollow" && s.self.alive && s.phase === "playing" && (
             <button onClick={() => void send({ action: "sabotage" })}
               disabled={!s.self.canSabotage}
-              className={`absolute bottom-[calc(5.1rem+env(safe-area-inset-bottom))] right-2 z-10 rounded border px-3 py-1.5 text-xs backdrop-blur sm:right-4 ${s.self.canSabotage ? "border-[#d87762] bg-[#391519]/90 text-[#ffd0bf]" : "border-[#3a2733] bg-[#140d18]/80 text-[#807070]"}`}>
+              className={`absolute bottom-[calc(5.1rem+env(safe-area-inset-bottom))] right-2 z-10 rounded border px-3 py-1.5 text-xs backdrop-blur sm:right-4 ${s.self.canSabotage ? "border-[#d87762] bg-[#391519]/90 text-[#ffd0bf]" : "border-[#3a2733] bg-[#140d18]/80 text-[#9a8a8a]"}`}>
               Ruin · {keyLabel(settings.controls.ruin)}{s.self.sabotageCooldownMs > 0 ? <span className="tabular-nums">{` · ${Math.ceil(s.self.sabotageCooldownMs / 1000)}s`}</span> : ""}
             </button>
           )}
@@ -716,7 +743,7 @@ export default function GameClient({ code }: { code: string }) {
                   <button
                     onClick={() => send({ action: "blackout" })}
                     title="Snuff every lantern (F)"
-                    className={`h-[52px] w-[52px] rounded-full border-2 font-display text-sm sm:h-16 sm:w-16 sm:text-base short:h-12 short:w-12 text-base leading-tight backdrop-blur ${s.self.canBlackout ? "border-[#7a6ab0] bg-[#1a1430]/90 text-[#b0a0e0] shadow-[0_0_18px_rgba(120,100,200,0.35)]" : "border-[#3a2733] bg-[#140d18]/80 text-[#6b5a55]"}`}
+                    className={`h-[52px] w-[52px] rounded-full border-2 font-display text-sm sm:h-16 sm:w-16 sm:text-base short:h-12 short:w-12 text-base leading-tight backdrop-blur ${s.self.canBlackout ? "border-[#7a6ab0] bg-[#1a1430]/90 text-[#b0a0e0] shadow-[0_0_18px_rgba(120,100,200,0.35)]" : "border-[#3a2733] bg-[#140d18]/80 text-[#9a877f]"}`}
                   >Snuff<br /><span className="text-[10px]">{keyLabel(settings.controls.blackout)}</span></button>
                 </div>
               )}
@@ -727,7 +754,7 @@ export default function GameClient({ code }: { code: string }) {
                 <button
                   onClick={() => send({ action: "ability" })}
                   disabled={!s.self.alive}
-                  className={`h-[52px] w-[52px] rounded-full border-2 font-display text-sm sm:h-16 sm:w-16 sm:text-base short:h-12 short:w-12 text-base leading-tight backdrop-blur ${s.abilityReady ? (s.self.role === "hollow" ? "border-[#ff4a3a] bg-[#4a1210]/90 text-[#ff8a7a] shadow-[0_0_20px_rgba(255,60,40,0.4)]" : "border-[#d99a3d] bg-[#3a2410]/90 text-[#ffd98a]") : "border-[#3a2733] bg-[#140d18]/80 text-[#6b5a55]"}`}
+                  className={`h-[52px] w-[52px] rounded-full border-2 font-display text-sm sm:h-16 sm:w-16 sm:text-base short:h-12 short:w-12 text-base leading-tight backdrop-blur ${s.abilityReady ? (s.self.role === "hollow" ? "border-[#ff4a3a] bg-[#4a1210]/90 text-[#ff8a7a] shadow-[0_0_20px_rgba(255,60,40,0.4)]" : "border-[#d99a3d] bg-[#3a2410]/90 text-[#ffd98a]") : "border-[#3a2733] bg-[#140d18]/80 text-[#9a877f]"}`}
                 >{s.abilityLabel}</button>
               </div>
             </div>
@@ -735,7 +762,7 @@ export default function GameClient({ code }: { code: string }) {
 
           {/* ---- chat ---- */}
           {pinOpen && s.phase === "playing" && (
-            <div className="hc-hud-item absolute bottom-20 left-1/2 w-[min(92vw,420px)] -translate-x-1/2 rounded-lg border border-[#8a6f4d]/60 bg-[#140d18]/95 p-3 sm:bottom-24" data-testid="pin-note-panel">
+            <div className="hc-hud-item absolute bottom-20 left-1/2 w-[min(92vw,420px)] -translate-x-1/2 rounded-lg border border-[#6e5638]/60 bg-[#140d18]/95 p-3 sm:bottom-24" data-testid="pin-note-panel">
               <div className="mb-1.5 text-xs uppercase tracking-widest text-[#9c8b7a]">Pin a page to a wall or tree — inside a house it goes on the interior wall</div>
               <textarea
                 value={pinText}
@@ -745,10 +772,10 @@ export default function GameClient({ code }: { code: string }) {
                 rows={4}
                 placeholder="Write your note… (max 200 characters)"
                 aria-label="Write the page to pin"
-                className="w-full resize-none rounded border border-[#d99a3d]/40 bg-[#1d1420] px-3 py-2 text-sm text-[#e9dfcf] placeholder:text-[#6b5a55] focus-visible:outline-2 focus-visible:outline-[#d99a3d]"
+                className="w-full resize-none rounded border border-[#d99a3d]/40 bg-[#1d1420] px-3 py-2 text-sm text-[#e9dfcf] placeholder:text-[#9a877f] focus-visible:outline-2 focus-visible:outline-[#d99a3d]"
               />
               <div className="mt-2 flex items-center justify-between">
-                <span className="text-[11px] text-[#6b5a55]">{pinText.trim().length}/200</span>
+                <span className="text-[11px] text-[#9a877f]">{pinText.trim().length}/200</span>
                 <div className="flex gap-2">
                   <button onClick={() => { setPinOpen(false); setPinText(""); }} className="rounded border border-[#3a2733] px-3 py-1.5 text-xs text-[#9c8b7a] hover:text-[#e9dfcf]">Cancel</button>
                   <button onClick={() => void pinNote()} disabled={!pinText.trim()} data-testid="pin-note-submit"
@@ -761,14 +788,14 @@ export default function GameClient({ code }: { code: string }) {
           {noteFocus && (
             <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0b0710]/60 backdrop-blur-[2px]" onClick={() => setNoteFocus(null)}>
               <div data-testid="note-reader" onClick={(e) => e.stopPropagation()}
-                className="hc-rise w-[min(92vw,460px)] -rotate-1 rounded-sm border border-[#8a6f4d] bg-[#f4ead2] p-5 text-[#2c2118] shadow-2xl sm:p-7">
+                className="hc-rise w-[min(92vw,460px)] -rotate-1 rounded-sm border border-[#6e5638] bg-[#f4ead2] p-5 text-[#2c2118] shadow-2xl sm:p-7">
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="text-xs uppercase tracking-[0.25em] text-[#8a6f4d]">Pinned page</span>
-                  <button onClick={() => setNoteFocus(null)} aria-label="Close page" className="rounded px-2 py-0.5 text-[#8a6f4d] hover:bg-[#e0d2b2]">✕</button>
+                  <span className="text-xs uppercase tracking-[0.25em] text-[#6e5638]">Pinned page</span>
+                  <button onClick={() => setNoteFocus(null)} aria-label="Close page" className="rounded px-2 py-0.5 text-[#6e5638] hover:bg-[#e0d2b2]">✕</button>
                 </div>
                 <p className="whitespace-pre-wrap break-words font-display text-lg leading-relaxed sm:text-xl">{noteFocus.text}</p>
-                <p className="mt-3 text-right text-xs italic text-[#8a6f4d]">— pinned by {noteFocus.author}</p>
-                <p className="mt-2 text-center text-[11px] text-[#8a6f4d]">zoomed in · click anywhere to put it back</p>
+                <p className="mt-3 text-right text-xs italic text-[#6e5638]">— pinned by {noteFocus.author}</p>
+                <p className="mt-2 text-center text-[11px] text-[#6e5638]">zoomed in · click anywhere to put it back</p>
               </div>
             </div>
           )}
@@ -786,7 +813,7 @@ export default function GameClient({ code }: { code: string }) {
                 aria-label="Chat message"
                 autoComplete="off"
                 spellCheck={false}
-                className="w-full rounded-full border border-[#d99a3d]/50 bg-[#140d18]/95 px-5 py-3 text-[#e9dfcf] placeholder:text-[#6b5a55] focus-visible:outline-2 focus-visible:outline-[#d99a3d]"
+                className="w-full rounded-full border border-[#d99a3d]/50 bg-[#140d18]/95 px-5 py-3 text-[#e9dfcf] placeholder:text-[#9a877f] focus-visible:outline-2 focus-visible:outline-[#d99a3d]"
               />
             </div>
           )}
@@ -843,7 +870,7 @@ export default function GameClient({ code }: { code: string }) {
                   {voiceStatus.error}
                   {voiceStatus.error.includes("Enable sound") && <button onClick={() => void voiceRef.current?.resumePlayback()} className="ml-2 underline">Enable sound</button>}
                 </p>}
-                <p className="mt-3 text-xs text-[#6b5a55]">4–10 players · 1–2 of you will be Hollow</p>
+                <p className="mt-3 text-xs text-[#9a877f]">4–10 players · 1–2 of you will be Hollow</p>
               </div>
             </div>
           )}
