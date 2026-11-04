@@ -1,6 +1,5 @@
 // Proximity queries — pure helpers over room state (no I/O).
-import { CAGE_UNLOCK_RANGE, INTERACT_RANGE, KILL_RANGE, MEETING_FROM, MEETING_TO } from "./types";
-import { STATIONS } from "./buildings";
+import { CAGE_UNLOCK_RANGE, INTERACT_RANGE, KILL_RANGE, MEETING_FROM, MEETING_TO, STATIONS } from "./types";
 import type { P, Room } from "./engine";
 
 const dist = (a: number, b: number) => Math.abs(a - b);
