@@ -60,3 +60,37 @@ export function feed(room: Room, text: string) {
   room.feed.push({ text, at: roomNow(room) });
   if (room.feed.length > 24) room.feed.shift();
 }
+
+// Persistence bookkeeping + SSE change listeners (moved from engine).
+// ---------------------------------------------------------------------------
+// Persistence — the same players repeat in the same room even across a server
+// restart. Writes are queued and flushed on an interval so the tick loop never
+// waits on the database.
+// ---------------------------------------------------------------------------
+
+const gPersist = globalThis as typeof globalThis & {
+  __hollowDirtyRooms?: Set<string>;
+  __hollowPersistTimer?: ReturnType<typeof setInterval>;
+};
+export const dirtyRooms: Set<string> = gPersist.__hollowDirtyRooms ?? new Set();
+gPersist.__hollowDirtyRooms = dirtyRooms;
+
+// Change listeners for server-push (SSE) state streaming: fired on every
+// mutation and every tick, so subscribers can re-fingerprint and push.
+const roomListeners: Map<string, Set<() => void>> = new Map();
+export function onRoomEvent(code: string, cb: () => void): () => void {
+  let set = roomListeners.get(code);
+  if (!set) { set = new Set(); roomListeners.set(code, set); }
+  set.add(cb);
+  return () => { set.delete(cb); if (set.size === 0) roomListeners.delete(code); };
+}
+export function emitRoom(code: string) {
+  for (const cb of roomListeners.get(code) ?? []) { try { cb(); } catch { /* listener bug must not break the room */ } }
+}
+
+export function markDirty(room: Room) {
+  if (room.replaying) return;
+  room.rev++;
+  dirtyRooms.add(room.code);
+  emitRoom(room.code);
+}

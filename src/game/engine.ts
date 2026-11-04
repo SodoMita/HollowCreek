@@ -19,7 +19,7 @@ import { bumpStats } from "./stats";
 import { shuffle } from "./rng";
 import { canonicalInput } from "./input";
 import { captureHistory, frameAt, restoreFrame } from "./history";
-import { feed, journal, kitId, record, roomNow, seeded } from "./chronicle";
+import { dirtyRooms, emitRoom, feed, journal, kitId, markDirty, onRoomEvent, record, roomNow, seeded } from "./chronicle";
 import { heldPiece, loosePieces, nearTimepiece, nearestTimepiece, usedPieces } from "./timepieces";
 import { inMeetingArea, killTarget, nearestBody, nearestOccupiedCage, stationNear } from "./proximity";
 import { snapshotEtag } from "./fingerprint";
@@ -168,38 +168,6 @@ g.__hollowRoomLoads = roomLoads;
 // ---------------------------------------------------------------------------
 
 
-// ---------------------------------------------------------------------------
-// Persistence — the same players repeat in the same room even across a server
-// restart. Writes are queued and flushed on an interval so the tick loop never
-// waits on the database.
-// ---------------------------------------------------------------------------
-
-const gPersist = globalThis as typeof globalThis & {
-  __hollowDirtyRooms?: Set<string>;
-  __hollowPersistTimer?: ReturnType<typeof setInterval>;
-};
-const dirtyRooms: Set<string> = gPersist.__hollowDirtyRooms ?? new Set();
-gPersist.__hollowDirtyRooms = dirtyRooms;
-
-// Change listeners for server-push (SSE) state streaming: fired on every
-// mutation and every tick, so subscribers can re-fingerprint and push.
-const roomListeners: Map<string, Set<() => void>> = new Map();
-export function onRoomEvent(code: string, cb: () => void): () => void {
-  let set = roomListeners.get(code);
-  if (!set) { set = new Set(); roomListeners.set(code, set); }
-  set.add(cb);
-  return () => { set.delete(cb); if (set.size === 0) roomListeners.delete(code); };
-}
-function emitRoom(code: string) {
-  for (const cb of roomListeners.get(code) ?? []) { try { cb(); } catch { /* listener bug must not break the room */ } }
-}
-
-function markDirty(room: Room) {
-  if (room.replaying) return;
-  room.rev++;
-  dirtyRooms.add(room.code);
-  emitRoom(room.code);
-}
 
 async function flushRooms() {
   const codes = [...dirtyRooms];
