@@ -2,7 +2,7 @@
 // test-command-replay, test-replay-determinism) are excluded — they need
 // DATABASE_URL and belong to CI.
 import { spawnSync } from "node:child_process";
-const SUITES = ["test-rng", "test-fingerprint", "test-wards", "test-house-wards", "test-ward-ui", "test-voice", "test-voice-client", "test-input", "test-history", "test-proximity"];
+const SUITES = ["test-rng", "test-fingerprint", "test-wards", "test-house-wards", "test-ward-ui", "test-voice", "test-voice-client", "test-input", "test-history", "test-proximity", "test-focus-trap"];
 let failed = 0;
 for (const t of SUITES) {
   const r = spawnSync(process.execPath, [`scripts/${t}.mjs`], { stdio: "pipe", encoding: "utf8" });
