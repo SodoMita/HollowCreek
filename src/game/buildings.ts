@@ -1,5 +1,7 @@
 // The road remains one continuous coordinate space. Houses occupy new ground
 // beyond the original 0–4200 town; their thresholds never move a player.
+import { ix } from "./types";
+
 export const WORLD_MIN = -1500;
 export const WORLD_MAX = 5750;
 export const DOOR_REACH = 58;
@@ -89,10 +91,10 @@ export function walkThroughBuildings(x: number, nextX: number, inside: string | 
     const d = doors.find((item) => item.id === b.id);
     const threshold = doorX(b);
     if (d?.open && (x - threshold) * b.side >= 0 && (next - threshold) * b.side < 0) {
-      return { x: next, inside: b.id };
+      return { x: ix(next), inside: b.id };
     }
   }
-  return { x: next, inside: null };
+  return { x: ix(next), inside: null };
 }
 
 export function dropBuildingKeys(doors: DoorState[], playerId: string, x: number, inside: string | null) {

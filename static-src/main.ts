@@ -8,7 +8,7 @@ import { AudioDirector } from "../src/game/audio";
 import { VoiceChat, type VoiceStatus } from "../src/game/voice";
 import { SettingsStore, applyDocumentPreferences, keyLabel, matchesControl, type BindableAction } from "../src/game/settings";
 import { SettingsDialog } from "../src/game/settings-ui";
-import { BELL_X } from "../src/game/types";
+import { BELL_X, CARRY_SPEED, GHOST_SPEED, SPEED } from "../src/game/types";
 import { BUILDINGS, DOOR_REACH, doorX } from "../src/game/buildings";
 import type { RoomListing, Snapshot } from "../src/game/types";
 
@@ -677,8 +677,16 @@ function loop(nowMs: number) {
   if (!snap || $("game").style.display === "none") return;
   for (const p of snap.players) {
     const cur = displayX.get(p.id);
-    if (cur === undefined || Math.abs(cur - p.x) > 300) displayX.set(p.id, p.x);
-    else displayX.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 10));
+    if (cur === undefined || Math.abs(cur - p.x) > 300) { displayX.set(p.id, p.x); continue; }
+    if (p.id === snap.self.id && snap.phase === "playing" && !snap.self.caged) {
+      // Local prediction at the authoritative speed; the server poll only
+      // corrects drift, so movement no longer lags behind the input.
+      const spd = !snap.self.alive ? GHOST_SPEED : snap.self.hasSupply ? CARRY_SPEED : SPEED;
+      const pred = cur + lastDir * spd * dt;
+      displayX.set(p.id, Math.abs(p.x - pred) > 90 ? p.x : pred + (p.x - pred) * Math.min(1, dt * 25));
+    } else {
+      displayX.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 16));
+    }
   }
   renderer.render(ctx, vw(), vh(), snap, displayX, nowMs / 1000, dt);
 }

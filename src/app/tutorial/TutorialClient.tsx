@@ -67,6 +67,7 @@ import {
   SPEED,
   STAMINA_IDLE_REGEN,
   STATIONS,
+  GHOST_SPEED,
   SUPPLY_CART_START,
   TIMEPIECE_X,
   TIME_VISIT_MS,
@@ -887,8 +888,16 @@ export default function TutorialClient() {
       }
       for (const p of snap.players) {
         const cur = displayX.current.get(p.id);
-        if (cur === undefined || Math.abs(cur - p.x) > 300) displayX.current.set(p.id, p.x);
-        else displayX.current.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 10));
+        if (cur === undefined || Math.abs(cur - p.x) > 300) { displayX.current.set(p.id, p.x); continue; }
+        if (p.id === snap.self.id && !snap.self.caged) {
+          // Local prediction at the authoritative speed; the local step only
+          // corrects drift, so movement no longer lags behind the input.
+          const spd = !snap.self.alive ? GHOST_SPEED : snap.self.hasSupply ? CARRY_SPEED : SPEED;
+          const pred = cur + lastDir.current * spd * dt;
+          displayX.current.set(p.id, Math.abs(p.x - pred) > 90 ? p.x : pred + (p.x - pred) * Math.min(1, dt * 25));
+        } else {
+          displayX.current.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 16));
+        }
       }
 
       renderer.render(ctx, vw(), vh(), snap, displayX.current, nowMs / 1000, dt);

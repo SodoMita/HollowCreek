@@ -3,6 +3,10 @@ import type { WardGameView, WardKind } from "./wards";
 import type { DoorState } from "./buildings";
 
 export const WORLD_W = 4200;
+// Game state uses NO floats for positions: every world coordinate (player x,
+// cart, drops, keys, bodies, doors, cages) is an integer, so replays and
+// snapshots compare exactly. Rendering may still interpolate on the client.
+export const ix = (v: number) => Math.round(v);
 export const SPEED = 190; // px per second
 export const GHOST_SPEED = 260;
 export const TICK_MS = 50;

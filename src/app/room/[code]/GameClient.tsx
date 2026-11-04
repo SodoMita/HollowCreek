@@ -12,7 +12,7 @@ import { AudioDirector } from "@/game/audio";
 import { VoiceChat, type VoiceStatus } from "@/game/voice";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
-import { BELL_X } from "@/game/types";
+import { BELL_X, CARRY_SPEED, GHOST_SPEED, SPEED } from "@/game/types";
 import type { Snapshot } from "@/game/types";
 
 function getPid(): string {
@@ -348,8 +348,16 @@ export default function GameClient({ code }: { code: string }) {
       if (!s) return;
       for (const p of s.players) {
         const cur = displayX.current.get(p.id);
-        if (cur === undefined || Math.abs(cur - p.x) > 300) displayX.current.set(p.id, p.x);
-        else displayX.current.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 10));
+        if (cur === undefined || Math.abs(cur - p.x) > 300) { displayX.current.set(p.id, p.x); continue; }
+        if (p.id === s.self.id && s.phase === "playing" && !s.self.caged) {
+          // Local prediction at the authoritative speed; the server poll only
+          // corrects drift, so movement no longer lags behind the input.
+          const spd = !s.self.alive ? GHOST_SPEED : s.self.hasSupply ? CARRY_SPEED : SPEED;
+          const pred = cur + lastDir.current * spd * dt;
+          displayX.current.set(p.id, Math.abs(p.x - pred) > 90 ? p.x : pred + (p.x - pred) * Math.min(1, dt * 25));
+        } else {
+          displayX.current.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 16));
+        }
       }
       renderer.render(ctx, vw(), vh(), s, displayX.current, nowMs / 1000, dt);
     };

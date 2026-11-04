@@ -11,7 +11,7 @@ import {
   SABOTAGE_COOLDOWN_MS, SABOTAGE_VIGOR_COST, SPEED, STAMINA_BELL_COST,
   STAMINA_BLACKOUT_COST, STAMINA_IDLE_REGEN, STAMINA_KILL_COST,
   STAMINA_UNLOCK_COST, STATIONS, SUPPLY_CART_START, TICK_MS,
-  VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW, WORLD_W, TIMEPIECE_X, TIME_VISIT_MS, HISTORY_SAMPLE_MS,
+  VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW, WORLD_W, TIMEPIECE_X, TIME_VISIT_MS, HISTORY_SAMPLE_MS, ix,
 } from "./types";
 import { BUILDINGS, buildingHint, clampWorld, doorX, dropBuildingKeys, newDoors, interactWithBuilding, walkThroughBuildings, type DoorState } from "./buildings";
 import { bumpStats } from "./stats";
@@ -569,7 +569,7 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
   const hollowCount = ps.length >= 6 ? 2 : 1;
   shuffled.forEach((p, i) => {
     p.role = i < hollowCount ? "hollow" : "crew";
-    p.x = 300 + Math.random() * (WORLD_W - 600);
+    p.x = ix(300 + Math.random() * (WORLD_W - 600));
     p.killAt = Date.now() + 10000;
   });
   // Shared pool: the town's wards belong to everyone. A death never orphans
@@ -589,9 +589,9 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
   room.endedAt = 0;
   room.round += 1;
   // The cage key hides somewhere on the outskirts, clear of the timepiece's pickup range.
-  room.keyX = Math.random() < 0.5 ? 150 + Math.random() * 1400 : 2700 + Math.random() * 1350;
+  room.keyX = ix(Math.random() < 0.5 ? 150 + Math.random() * 1400 : 2700 + Math.random() * 1350);
   if (Math.abs(room.keyX - TIMEPIECE_X) < INTERACT_RANGE + 60) {
-    room.keyX = TIMEPIECE_X + (room.keyX < TIMEPIECE_X ? -1 : 1) * (INTERACT_RANGE + 65);
+    room.keyX = TIMEPIECE_X + (room.keyX < TIMEPIECE_X ? -1 : 1) * (INTERACT_RANGE + 65); // int
   }
   room.phase = "playing";
   room.nextFlicker = Date.now() + 15000 + Math.random() * 15000;
@@ -866,7 +866,7 @@ function freePlayer(room: Room, p: P, stepOutside = true) {
   p.caged = false;
   p.cageIndex = -1;
   if (stepOutside) {
-    p.x = Math.min(WORLD_W - 30, cage.x + CELL_HALF + 18);
+    p.x = ix(Math.min(WORLD_W - 30, cage.x + CELL_HALF + 18));
     p.dir = 0;
   }
 }
@@ -1505,7 +1505,7 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
         p.match.cagesOpened++;
         p.hasKey = false;
         p.stamina = Math.max(0, p.stamina - STAMINA_UNLOCK_COST);
-        room.keyX = room.cages[ci].x + 40; // the key falls by the open cage — the town learns where it lies
+        room.keyX = room.cages[ci].x + 40; // the key falls by the open cage — the town learns where it lies (int)
         feed(room, `${p.name} unlocks the cage. ${occ.name} steps free. The key clatters to the ground.`);
         record(room, p, "unlock_cage", { freed: occ.name, freedId: occ.id, cageIndex: ci });
         if (!room.replaying) bumpStats(p.id, p.name, { unlocks: 1 });
@@ -1744,7 +1744,7 @@ function tickRoom(room: Room, now: number) {
     }
 
     if (team.length) {
-      room.cartX = clampWorld(room.cartX + team[0].dir * cartSpeed * dt, 90);
+      room.cartX = clampWorld(room.cartX + team[0].dir * ix(cartSpeed * dt), 90);
     }
 
     if (room.phase === "meeting" && room.meeting && now >= room.meeting.endsAt) resolveMeeting(room);
@@ -1923,7 +1923,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
           id: p.id,
           name: p.name,
           color: p.color,
-          x: seen ? Math.round(p.x * 10) / 10 : -9999, // meeting roster: names known, positions hidden
+          x: seen ? ix(p.x) : -9999, // positions are integers; meeting roster hides them
           facing: p.facing,
           moving: seen && p.moving && p.dir !== 0,
           alive: p.alive,
@@ -1956,7 +1956,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     timepieceX: room.timepieceX !== null && canSee(room.timepieceX) ? room.timepieceX : null,
     time: room.temporalShadow ? undefined : { mode: "present", earliest: room.history[0]?.at ?? room.startedAt, latest: room.history.at(-1)?.at ?? room.startedAt },
     supplyDrops: room.supplyDrops.filter((item) => canSee(item.x)).map((item) => item.x),
-    cartX: Math.round(room.cartX * 10) / 10,
+    cartX: ix(room.cartX),
     cartPushers: room.cartPushers,
     cages: room.cages.map((c) => ({ x: c.x, occupant: c.occupant })),
     tasks: room.pool.map((t) => {
