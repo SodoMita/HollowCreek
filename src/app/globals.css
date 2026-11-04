@@ -64,6 +64,8 @@ html, body {
   transition: none !important;
   scroll-behavior: auto !important;
 }
+/* decorative weather is removed outright, not frozen mid-fall */
+.hc-reduced-motion .hc-leaf, .hc-reduced-motion .hc-fog { display: none !important; }
 
 /* OS-level reduced motion is honored even before the in-game setting loads */
 @media (prefers-reduced-motion: reduce) {
@@ -73,4 +75,5 @@ html, body {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+  .hc-leaf, .hc-fog { display: none !important; }
 }

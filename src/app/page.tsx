@@ -103,7 +103,8 @@ export default function Home() {
   };
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#0b0710]">
+    <main id="main" className="relative min-h-screen overflow-hidden bg-[#0b0710]">
+      <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-2 focus:rounded focus:bg-[#8f3b1f] focus:px-3 focus:py-2 focus:text-[#f3e6d0]">Skip to towns</a>
       {/* sky */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-[#120b1e] via-[#33172b] to-[#6e3320]" />
       {/* moon */}
@@ -122,7 +123,7 @@ export default function Home() {
       ))}
       {/* fog */}
       {settings.graphics.fog && <div
-        className="pointer-events-none absolute bottom-[16%] left-[-10%] h-40 w-[120%] rounded-full bg-[#8a7f95]/10 blur-2xl"
+        className="hc-fog pointer-events-none absolute bottom-[16%] left-[-10%] h-40 w-[120%] rounded-full bg-[#8a7f95]/10 blur-2xl"
         style={{ animation: "hc-fog-drift 14s ease-in-out infinite" }}
       />}
       {/* skyline silhouette */}
@@ -197,13 +198,17 @@ export default function Home() {
               </Link>
             </div>
           </div>
-          <label className="mt-5 block text-xs uppercase tracking-widest text-[#9c8b7a]">Your name</label>
+          <label htmlFor="hc-name" className="mt-5 block text-xs uppercase tracking-widest text-[#9c8b7a]">Your name</label>
           <input
+            id="hc-name"
+            name="player-name"
+            autoComplete="nickname"
+            spellCheck={false}
             value={name}
             onChange={(e) => setName(e.target.value)}
             maxLength={14}
             placeholder="Stranger"
-            className="mt-1 w-full rounded border border-[#3a2733] bg-[#0d0810] px-3 py-2.5 text-[#e9dfcf] outline-none placeholder:text-[#5a4a50] focus:border-[#c9762f]"
+            className="mt-1 w-full rounded border border-[#3a2733] bg-[#0d0810] px-3 py-2.5 text-[#e9dfcf] placeholder:text-[#5a4a50] focus:border-[#c9762f] focus-visible:outline-2 focus-visible:outline-[#c9762f]"
           />
           <button
             onClick={create}
@@ -227,7 +232,11 @@ export default function Home() {
               onChange={(e) => setCode(e.target.value.toUpperCase())}
               maxLength={4}
               placeholder="CODE"
-              className="w-full rounded border border-[#3a2733] bg-[#0d0810] px-3 py-2.5 text-center font-mono text-xl tracking-[0.5em] text-[#d99a3d] outline-none placeholder:text-[#5a4a50] focus:border-[#c9762f]"
+              aria-label="Town code"
+              name="town-code"
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full rounded border border-[#3a2733] bg-[#0d0810] px-3 py-2.5 text-center font-mono text-xl tracking-[0.5em] text-[#d99a3d] placeholder:text-[#5a4a50] focus:border-[#c9762f] focus-visible:outline-2 focus-visible:outline-[#c9762f]"
               onKeyDown={(e) => e.key === "Enter" && join()}
             />
             <button
@@ -238,7 +247,7 @@ export default function Home() {
               <DoorOpen className="h-4 w-4" /> Join
             </button>
           </div>
-          {error && <p className="mt-3 text-sm text-[#e06a5a]">{error}</p>}
+          {error && <p role="alert" className="mt-3 text-sm text-[#e06a5a]">{error}</p>}
 
           {/* ---- open towns browser ---- */}
           <div className="mt-6 border-t border-[#3a2733] pt-4">

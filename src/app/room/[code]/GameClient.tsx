@@ -151,7 +151,8 @@ export default function GameClient({ code }: { code: string }) {
   const openChat = useCallback(() => {
     stopInteract();
     setChatOpen(true);
-    setTimeout(() => chatInputRef.current?.focus(), 30);
+    // focus the field on desktop only — popping the keyboard on phones is hostile
+    if (window.matchMedia("(pointer: fine)").matches) setTimeout(() => chatInputRef.current?.focus(), 30);
   }, [stopInteract]);
 
   useEffect(() => {
@@ -460,7 +461,8 @@ export default function GameClient({ code }: { code: string }) {
   ] : [];
 
   return (
-    <main className="fixed inset-0 h-[100dvh] w-full select-none overflow-hidden bg-[#0b0710]" style={{ touchAction: "none" }}>
+    <main id="main" className="fixed inset-0 h-[100dvh] w-full select-none overflow-hidden bg-[#0b0710]" style={{ touchAction: "none" }}>
+      <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-2 focus:rounded focus:bg-[#8f3b1f] focus:px-3 focus:py-2 focus:text-[#f3e6d0]">Skip to the game</a>
       <canvas ref={canvasRef} className="absolute inset-0" />
 
       {!s && !joinError && (
@@ -477,8 +479,9 @@ export default function GameClient({ code }: { code: string }) {
               <span className="hidden font-display text-lg text-[#d99a3d] md:inline">Hollow Creek</span>
               <button
                 onClick={() => { void navigator.clipboard?.writeText(s.code); setToast("Town code copied"); setTimeout(() => setToast(null), 1500); }}
-                className="rounded bg-[#2a1a26] px-2 py-0.5 font-mono tracking-[0.3em] text-[#e9dfcf] hover:bg-[#3a2733] md:ml-3"
+                className="rounded bg-[#2a1a26] px-2 py-0.5 font-mono tracking-[0.3em] text-[#e9dfcf] hover:bg-[#3a2733] focus-visible:outline-2 focus-visible:outline-[#d99a3d] md:ml-3"
                 title="Copy town code"
+                aria-label={`Copy town code ${s.code}`}
               >{s.code}</button>
               <span className="ml-2 hidden text-[#9c8b7a] sm:inline">{s.playerCount} souls</span>
               {me?.inside && <span className="ml-2 text-[#e2be83]">Inside {BUILDINGS.find((b) => b.id === me.inside)?.name}</span>}
@@ -509,7 +512,7 @@ export default function GameClient({ code }: { code: string }) {
               <div className="mt-1 hidden w-72 sm:block">
                 <div className="mb-1 text-center text-xs uppercase tracking-widest text-[#9c8b7a]">Town wards restored</div>
                 <div className="h-3 overflow-hidden rounded-full border border-[#3a2733] bg-[#140d18]/80">
-                  <div className="h-full bg-gradient-to-r from-[#8f3b1f] to-[#d99a3d] transition-all duration-500" style={{ width: `${s.taskBar.total ? (100 * s.taskBar.done) / s.taskBar.total : 0}%` }} />
+                  <div className="h-full bg-gradient-to-r from-[#8f3b1f] to-[#d99a3d] transition-[width] duration-500" style={{ width: `${s.taskBar.total ? (100 * s.taskBar.done) / s.taskBar.total : 0}%` }} />
                 </div>
               </div>
             )}
@@ -522,7 +525,9 @@ export default function GameClient({ code }: { code: string }) {
               <button
                 onClick={() => { ensureAudio(); const m = !muted; getSettingsStore().update((draft) => { draft.audio.muted = m; }); audioRef.current?.setMuted(m); }}
                 title={muted ? "Unmute" : "Mute"}
-                className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] sm:py-1.5"
+                aria-label={muted ? "Unmute sound" : "Mute sound"}
+                aria-pressed={muted}
+                className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] focus-visible:outline-2 focus-visible:outline-[#d99a3d] sm:py-1.5"
               >{muted ? "🔇" : "🔊"}</button>
               <button onClick={toggleVoice} disabled={voiceStatus.starting} aria-label={voiceStatus.active ? "Leave proximity voice" : "Join proximity voice"}
                 aria-pressed={voiceStatus.active} title={voiceStatus.active ? `Voice: ${voiceStatus.connected} connected (${voiceStatus.p2pCount} P2P, ${voiceStatus.relayCount} Relay) · ${voiceStatus.nearby} nearby · ${voiceStatus.speaking ? "Speaking" : "Listening"} · ${keyLabel(settings.controls.talk)} to leave` : `Join proximity voice (${keyLabel(settings.controls.talk)}) — asks for microphone permission`}
@@ -551,7 +556,7 @@ export default function GameClient({ code }: { code: string }) {
             </p>
           )}
 
-          {s.time?.mode === "past" && <div data-testid="past-countdown" className="hc-hud-item absolute left-1/2 top-14 z-10 -translate-x-1/2 rounded border border-[#83b9b4]/70 bg-[#172c32]/95 px-4 py-2 text-center text-xs text-[#d2eee5] shadow-lg"><span className="font-semibold uppercase tracking-widest">In the past</span> · {Math.max(0, Math.ceil(((s.time.endsAt ?? s.now) - s.now) / 1000))}s remaining <button onClick={activateTimepiece} className="ml-2 underline">Return now</button></div>}
+          {s.time?.mode === "past" && <div data-testid="past-countdown" className="hc-hud-item absolute left-1/2 top-14 z-10 -translate-x-1/2 rounded border border-[#83b9b4]/70 bg-[#172c32]/95 px-4 py-2 text-center text-xs tabular-nums text-[#d2eee5] shadow-lg"><span className="font-semibold uppercase tracking-widest">In the past</span> · {Math.max(0, Math.ceil(((s.time.endsAt ?? s.now) - s.now) / 1000))}s remaining <button onClick={activateTimepiece} className="ml-2 underline">Return now</button></div>}
 
           {/* ---- task list ---- */}
           {s.phase !== "lobby" && s.self.alive && s.tasks.length > 0 && (
@@ -581,7 +586,7 @@ export default function GameClient({ code }: { code: string }) {
               <div className="hidden font-display text-2xl text-[#d99a3d] sm:block" style={{ animation: "hc-bell-swing 1s ease-in-out infinite", display: undefined }}>🔔</div>
               <div className="font-display text-base leading-tight text-[#e9dfcf] sm:text-xl">🔔 {s.meeting.reason}</div>
               <div className="mt-1 text-sm text-[#9c8b7a]">
-                {s.meeting.inArea ? <>Cast your verdict — <span className="text-[#d99a3d]">{secsLeft}s</span></> : <>Walk to the town square {me && me.x < BELL_X ? "→ east" : "← west"} — <span className="text-[#d99a3d]">{secsLeft}s</span></>}
+                {s.meeting.inArea ? <>Cast your verdict — <span className="tabular-nums text-[#d99a3d]">{secsLeft}s</span></> : <>Walk to the town square {me && me.x < BELL_X ? "→ east" : "← west"} — <span className="tabular-nums text-[#d99a3d]">{secsLeft}s</span></>}
               </div>
             </div>
           )}
@@ -632,7 +637,7 @@ export default function GameClient({ code }: { code: string }) {
             <button onClick={() => void send({ action: "sabotage" })}
               disabled={!s.self.canSabotage}
               className={`absolute bottom-[calc(5.1rem+env(safe-area-inset-bottom))] right-2 z-10 rounded border px-3 py-1.5 text-xs backdrop-blur sm:right-4 ${s.self.canSabotage ? "border-[#d87762] bg-[#391519]/90 text-[#ffd0bf]" : "border-[#3a2733] bg-[#140d18]/80 text-[#807070]"}`}>
-              Ruin · {keyLabel(settings.controls.ruin)}{s.self.sabotageCooldownMs > 0 ? ` · ${Math.ceil(s.self.sabotageCooldownMs / 1000)}s` : ""}
+              Ruin · {keyLabel(settings.controls.ruin)}{s.self.sabotageCooldownMs > 0 ? <span className="tabular-nums">{` · ${Math.ceil(s.self.sabotageCooldownMs / 1000)}s`}</span> : ""}
             </button>
           )}
 
@@ -644,7 +649,7 @@ export default function GameClient({ code }: { code: string }) {
                   <Zap className={`h-3.5 w-3.5 ${s.self.stamina <= 0 ? "text-[#e06a5a]" : s.self.stamina < 0.3 ? "text-[#d99a3d]" : "text-[#a8c98a]"}`} />
                   <div className="h-2 w-24 overflow-hidden rounded-full border border-[#3a2733] bg-[#140d18]/80 sm:w-28">
                     <div
-                      className={`h-full transition-all duration-300 ${s.self.stamina <= 0 ? "bg-[#e06a5a]" : s.self.stamina < 0.3 ? "bg-[#d99a3d]" : "bg-[#6b8e23]"}`}
+                      className={`h-full transition-[width] duration-300 ${s.self.stamina <= 0 ? "bg-[#e06a5a]" : s.self.stamina < 0.3 ? "bg-[#d99a3d]" : "bg-[#6b8e23]"}`}
                       style={{ width: `${Math.round(s.self.stamina * 100)}%` }}
                     />
                   </div>
@@ -701,7 +706,7 @@ export default function GameClient({ code }: { code: string }) {
               {s.self.role === "hollow" && s.self.alive && s.phase === "playing" && (
                 <div className="flex flex-col items-center gap-1">
                   {s.self.blackoutCooldownMs > 0 && (
-                    <span className="rounded bg-[#0d0810]/80 px-2 py-0.5 text-xs text-[#9aa]">{Math.ceil(s.self.blackoutCooldownMs / 1000)}s</span>
+                    <span className="rounded bg-[#0d0810]/80 px-2 py-0.5 text-xs tabular-nums text-[#9aa]">{Math.ceil(s.self.blackoutCooldownMs / 1000)}s</span>
                   )}
                   <button
                     onClick={() => send({ action: "blackout" })}
@@ -734,7 +739,8 @@ export default function GameClient({ code }: { code: string }) {
                 maxLength={200}
                 rows={4}
                 placeholder="Write your note… (max 200 characters)"
-                className="w-full resize-none rounded border border-[#d99a3d]/40 bg-[#1d1420] px-3 py-2 text-sm text-[#e9dfcf] outline-none placeholder:text-[#6b5a55]"
+                aria-label="Write the page to pin"
+                className="w-full resize-none rounded border border-[#d99a3d]/40 bg-[#1d1420] px-3 py-2 text-sm text-[#e9dfcf] placeholder:text-[#6b5a55] focus-visible:outline-2 focus-visible:outline-[#d99a3d]"
               />
               <div className="mt-2 flex items-center justify-between">
                 <span className="text-[11px] text-[#6b5a55]">{pinText.trim().length}/200</span>
@@ -772,7 +778,10 @@ export default function GameClient({ code }: { code: string }) {
                 onBlur={submitChat}
                 maxLength={120}
                 placeholder={s.self.alive ? "Say something… (it appears above your head)" : "Whisper to the dead…"}
-                className="w-full rounded-full border border-[#d99a3d]/50 bg-[#140d18]/95 px-5 py-3 text-[#e9dfcf] outline-none placeholder:text-[#6b5a55]"
+                aria-label="Chat message"
+                autoComplete="off"
+                spellCheck={false}
+                className="w-full rounded-full border border-[#d99a3d]/50 bg-[#140d18]/95 px-5 py-3 text-[#e9dfcf] placeholder:text-[#6b5a55] focus-visible:outline-2 focus-visible:outline-[#d99a3d]"
               />
             </div>
           )}
@@ -788,8 +797,8 @@ export default function GameClient({ code }: { code: string }) {
                 <div className="mt-5 grid grid-cols-2 gap-2 text-left text-sm">
                   {s.players.map((p) => (
                     <div key={p.id} className="flex items-center gap-2 rounded bg-[#1d1420] px-3 py-2">
-                      <span className="h-3.5 w-3.5 rounded-full" style={{ background: p.color }} />
-                      <span className="truncate text-[#d8c9b4]">{p.name}</span>
+                      <span className="h-3.5 w-3.5 shrink-0 rounded-full" style={{ background: p.color }} />
+                      <span className="min-w-0 truncate text-[#d8c9b4]">{p.name}</span>
                       {p.isHost && <span className="ml-auto text-xs text-[#d99a3d]">host</span>}
                     </div>
                   ))}
@@ -887,7 +896,7 @@ export default function GameClient({ code }: { code: string }) {
                               </span>
                               <span className="text-[10px] text-[#9c8b7a]">{!player.alive ? "dead" : player.caged ? "jailed" : "free"}</span>
                             </div>
-                            <div className="grid grid-cols-4 gap-x-2 gap-y-1 text-[10px] text-[#9c8b7a] sm:text-xs">
+                            <div className="grid grid-cols-4 gap-x-2 gap-y-1 text-[10px] tabular-nums text-[#9c8b7a] sm:text-xs">
                               {labels.map(([label, value]) => <span key={label}>{label} <b className="text-[#e9dfcf]">{value}</b></span>)}
                             </div>
                           </div>
@@ -905,7 +914,7 @@ export default function GameClient({ code }: { code: string }) {
                 {s.self.id === s.hostId ? (
                   <button
                     onClick={() => send({ action: "restart" })}
-                    className="mt-6 flex w-full items-center justify-center gap-2 rounded bg-[#8f3b1f] py-3 font-display text-2xl text-[#f3e6d0] transition hover:bg-[#a84a26]"
+                    className="mt-6 flex w-full items-center justify-center gap-2 rounded bg-[#8f3b1f] py-3 font-display text-2xl text-[#f3e6d0] transition-colors hover:bg-[#a84a26]"
                   >
                     <Flame className="h-5 w-5" /> Gather the same souls again
                   </button>

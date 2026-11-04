@@ -54,7 +54,7 @@ export default async function StatsPage() {
     <main className="min-h-screen bg-[#0b0710] px-4 py-10">
       <div className="pointer-events-none fixed inset-0 bg-gradient-to-b from-[#120b1e]/60 via-transparent to-transparent" />
       <div className="relative mx-auto max-w-5xl">
-        <Link href="/" className="flex w-fit items-center gap-1.5 text-sm text-[#9c8b7a] transition hover:text-[#d99a3d]">
+        <Link href="/" className="flex w-fit items-center gap-1.5 text-sm text-[#9c8b7a] transition-colors hover:text-[#d99a3d]">
           <ArrowLeft className="h-4 w-4" /> back to the crossroads
         </Link>
         <h1 className="mt-3 font-display text-6xl text-[#e9dfcf] drop-shadow-[0_4px_24px_rgba(200,90,40,0.3)]">Hall of Records</h1>
@@ -92,7 +92,7 @@ export default async function StatsPage() {
               </thead>
               <tbody>
                 {rows.map((r, i) => (
-                  <tr key={r.playerId} className={`border-b border-[#241a26] transition hover:bg-[#1d1420]/70 ${i < 3 ? "bg-[#1c1210]/40" : ""}`}>
+                  <tr key={r.playerId} className={`border-b border-[#241a26] transition-colors hover:bg-[#1d1420]/70 ${i < 3 ? "bg-[#1c1210]/40" : ""}`}>
                     <td className="px-4 py-2.5">
                       <span className="flex items-center gap-2">
                         {i === 0 ? <Trophy className="h-4 w-4 text-[#d99a3d]" />

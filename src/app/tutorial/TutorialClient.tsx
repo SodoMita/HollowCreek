@@ -1005,7 +1005,7 @@ export default function TutorialClient() {
                   key={ch.id}
                   onClick={() => setCurrentChapter(ch.id)}
                   title={ch.title}
-                  className={`h-5 w-5 rounded text-[11px] font-mono transition ${
+                  className={`h-5 w-5 rounded text-[11px] font-mono transition-colors ${
                     currentChapter === ch.id
                       ? "bg-[#d99a3d] font-bold text-[#140d18]"
                       : completedChapters.includes(ch.id)
@@ -1071,7 +1071,7 @@ export default function TutorialClient() {
             />
             <div className="h-2 w-28 overflow-hidden rounded-full border border-[#3a2733] bg-[#140d18]/80">
               <div
-                className={`h-full transition-all duration-300 ${
+                className={`h-full transition-[width] duration-300 ${
                   stamina <= 0 ? "bg-[#e06a5a]" : stamina < 0.3 ? "bg-[#d99a3d]" : "bg-[#6b8e23]"
                 }`}
                 style={{ width: `${Math.round(stamina * 100)}%` }}
@@ -1185,7 +1185,7 @@ export default function TutorialClient() {
                 <button
                   key={k}
                   onClick={() => openPracticeWard(k)}
-                  className={`rounded px-2 py-1 text-xs transition ${
+                  className={`rounded px-2 py-1 text-xs transition-colors ${
                     practiceKind === k
                       ? "bg-[#d99a3d] font-bold text-[#140d18]"
                       : "border border-[#3a2733] bg-[#1d1420] text-[#c9b8a4] hover:border-[#d99a3d]"
