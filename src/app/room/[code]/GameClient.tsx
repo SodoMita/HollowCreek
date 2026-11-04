@@ -596,7 +596,7 @@ export default function GameClient({ code }: { code: string }) {
                     key={o.key}
                     disabled={!!s.self.myVote}
                     onClick={() => send({ action: "vote", vote: o.key })}
-                    className={`flex items-center gap-2 rounded px-2.5 py-1.5 text-left text-sm transition ${s.self.myVote === o.key ? "bg-[#8f3b1f] text-[#f3e6d0]" : s.self.myVote ? "bg-[#1d1420] text-[#6b5a55]" : "bg-[#1d1420] text-[#d8c9b4] hover:bg-[#2a1a26]"}`}
+                    className={`flex items-center gap-2 rounded px-2.5 py-1.5 text-left text-sm transition-colors ${s.self.myVote === o.key ? "bg-[#8f3b1f] text-[#f3e6d0]" : s.self.myVote ? "bg-[#1d1420] text-[#6b5a55]" : "bg-[#1d1420] text-[#d8c9b4] hover:bg-[#2a1a26]"}`}
                   >
                     <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: o.color }} />
                     {o.label}
@@ -712,7 +712,7 @@ export default function GameClient({ code }: { code: string }) {
               )}
               <div className="flex flex-col items-center gap-1">
                 {s.self.role === "hollow" && s.self.killCooldownMs > 0 && s.self.alive && (
-                  <span className="rounded bg-[#0d0810]/80 px-2 py-0.5 text-xs text-[#ff6a5a]">{Math.ceil(s.self.killCooldownMs / 1000)}s</span>
+                  <span className="rounded bg-[#0d0810]/80 px-2 py-0.5 text-xs tabular-nums text-[#ff6a5a]">{Math.ceil(s.self.killCooldownMs / 1000)}s</span>
                 )}
                 <button
                   onClick={() => send({ action: "ability" })}
@@ -925,7 +925,7 @@ export default function GameClient({ code }: { code: string }) {
           )}
 
           {toast && (
-            <div className="absolute bottom-32 left-1/2 sm:bottom-44 -translate-x-1/2 rounded bg-[#1c1210]/95 px-4 py-2 text-sm text-[#d99a3d]">{toast}</div>
+            <div role="status" aria-live="polite" className="absolute bottom-32 left-1/2 sm:bottom-44 -translate-x-1/2 rounded bg-[#1c1210]/95 px-4 py-2 text-sm text-[#d99a3d]">{toast}</div>
           )}
         </>
       )}

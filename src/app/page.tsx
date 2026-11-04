@@ -177,22 +177,22 @@ export default function Home() {
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => settingsDialog.current?.open()}
-                className="rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#c9b8a4] transition hover:border-[#c9762f]/40 hover:text-[#ffd98a]"
+                className="rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#c9b8a4] transition-colors hover:border-[#c9762f]/40 hover:text-[#ffd98a]"
                 aria-label="Open settings"
               >⚙ Settings</button>
               <Link
                 href="/tutorial"
-                className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition hover:border-[#c9762f]/40 hover:text-[#ffd98a]"
+                className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition-colors hover:border-[#c9762f]/40 hover:text-[#ffd98a]"
               >
                 <BookOpen className="h-3.5 w-3.5 text-[#d99a3d]" /> Tutorial
               </Link>
               <Link
                 href="/stats"
-                className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition hover:border-[#c9762f]/40 hover:text-[#d99a3d]"
+                className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition-colors hover:border-[#c9762f]/40 hover:text-[#d99a3d]"
               >
                 <Trophy className="h-3.5 w-3.5" /> Records
               </Link>
-              <Link href="/art" className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition hover:border-[#c9762f]/40 hover:text-[#ffd98a]">
+              <Link href="/art" className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition-colors hover:border-[#c9762f]/40 hover:text-[#ffd98a]">
                 <Palette className="h-3.5 w-3.5" /> Art
               </Link>
             </div>
@@ -208,13 +208,13 @@ export default function Home() {
           <button
             onClick={create}
             disabled={busy}
-            className="mt-4 flex w-full items-center justify-center gap-2 rounded bg-[#8f3b1f] px-4 py-3 font-display text-xl tracking-wide text-[#f3e6d0] transition hover:bg-[#a84a26] disabled:opacity-50"
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded bg-[#8f3b1f] px-4 py-3 font-display text-xl tracking-wide text-[#f3e6d0] transition-colors hover:bg-[#a84a26] disabled:opacity-50"
           >
             <Plus className="h-5 w-5" strokeWidth={2.5} /> Found a new town
           </button>
           <Link
             href="/tutorial"
-            className="mt-2.5 flex w-full items-center justify-center gap-2 rounded border border-[#84624c]/80 bg-[#1f151c]/90 px-4 py-2.5 font-display text-lg tracking-wide text-[#ffd98a] transition hover:bg-[#321f28]"
+            className="mt-2.5 flex w-full items-center justify-center gap-2 rounded border border-[#84624c]/80 bg-[#1f151c]/90 px-4 py-2.5 font-display text-lg tracking-wide text-[#ffd98a] transition-colors hover:bg-[#321f28]"
           >
             <BookOpen className="h-4 w-4 text-[#d99a3d]" /> Walk Alone · Singleplayer Tutorial
           </Link>
@@ -233,7 +233,7 @@ export default function Home() {
             <button
               onClick={() => join()}
               disabled={busy}
-              className="flex shrink-0 items-center gap-1.5 rounded border border-[#c9762f]/50 px-4 font-display text-xl text-[#d99a3d] transition hover:bg-[#c9762f]/10 disabled:opacity-50"
+              className="flex shrink-0 items-center gap-1.5 rounded border border-[#c9762f]/50 px-4 font-display text-xl text-[#d99a3d] transition-colors hover:bg-[#c9762f]/10 disabled:opacity-50"
             >
               <DoorOpen className="h-4 w-4" /> Join
             </button>
@@ -246,8 +246,9 @@ export default function Home() {
               <h3 className="font-display text-2xl text-[#e9dfcf]">Open towns</h3>
               <button
                 onClick={() => void refreshRooms()}
-                className="flex items-center gap-1.5 text-xs text-[#9c8b7a] transition hover:text-[#d99a3d]"
-                title="Refresh"
+                className="flex items-center gap-1.5 rounded text-xs text-[#9c8b7a] transition-colors hover:text-[#d99a3d] focus-visible:outline-2 focus-visible:outline-[#d99a3d]"
+                title="Refresh the list of open towns"
+                aria-label="Refresh the list of open towns"
               >
                 <RefreshCw className="h-3.5 w-3.5" /> live
                 <span className="relative flex h-2 w-2">
@@ -264,7 +265,7 @@ export default function Home() {
               {rooms.map((r) => (
                 <div
                   key={r.code}
-                  className="group flex items-center gap-3 rounded border border-[#2a1c28] bg-[#0d0810]/80 px-3 py-2.5 transition hover:border-[#c9762f]/40"
+                  className="group flex items-center gap-3 rounded border border-[#2a1c28] bg-[#0d0810]/80 px-3 py-2.5 transition-colors hover:border-[#c9762f]/40"
                 >
                   <span className={`shrink-0 ${r.phase === "lobby" ? "text-[#d99a3d]" : r.phase === "ended" ? "text-[#6b5a55]" : "text-[#8f7d9b]"}`}>
                     {r.phase === "lobby" ? <Flame className="h-4 w-4" /> : r.phase === "meeting" ? <Bell className="h-4 w-4" /> : r.phase === "ended" ? <Skull className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -286,7 +287,7 @@ export default function Home() {
                     <button
                       onClick={() => join(r.code)}
                       disabled={busy || r.playerCount >= 10}
-                      className="shrink-0 rounded bg-[#8f3b1f]/80 px-3 py-1.5 font-display text-base text-[#f3e6d0] transition hover:bg-[#a84a26] disabled:opacity-40"
+                      className="shrink-0 rounded bg-[#8f3b1f]/80 px-3 py-1.5 font-display text-base text-[#f3e6d0] transition-colors hover:bg-[#a84a26] disabled:opacity-40"
                     >
                       {r.playerCount >= 10 ? "Full" : "Join"}
                     </button>
@@ -295,7 +296,7 @@ export default function Home() {
                       onClick={() => join(r.code)}
                       disabled={busy}
                       title="Only the town's own souls may return"
-                      className="shrink-0 rounded border border-[#3a2733] px-3 py-1.5 font-display text-base text-[#9c8b7a] transition hover:border-[#c9762f]/40 hover:text-[#d99a3d] disabled:opacity-40"
+                      className="shrink-0 rounded border border-[#3a2733] px-3 py-1.5 font-display text-base text-[#9c8b7a] transition-colors hover:border-[#c9762f]/40 hover:text-[#d99a3d] disabled:opacity-40"
                     >
                       Return
                     </button>

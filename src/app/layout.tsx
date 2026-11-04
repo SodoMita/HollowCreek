@@ -5,8 +5,7 @@ import "./globals.css";
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  // zoom stays enabled (accessibility); the game canvas pins touch-action itself
   viewportFit: "cover",
   themeColor: "#0b0710",
 };
