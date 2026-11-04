@@ -101,7 +101,7 @@ try {
   const tooLong = input(room, A, { action: "pin_note", noteText: long });
   assert.ok(!tooLong.ok, "overlong page rejected");
   assert.ok(tooLong.error.includes("200"), "error states the 200-char limit");
-  assert.equal(room.notes.length, 2, "rejected pins create nothing");
+  assert.equal(room.notes.length, 2, "rejected pins create nothing so far (wall + tree)");
   // far from any wall/tree
   let farX = 0, farDist = -1;
   for (let x = -1400; x <= 5700; x += 5) {
@@ -114,12 +114,22 @@ try {
   assert.ok(!input(room, A, { action: "pin_note", noteText: "Nowhere to pin." }).ok, "pinning in the open road rejected");
   stand(room, A, -320);
   A.inside = "tollhouse";
-  assert.ok(!input(room, A, { action: "pin_note", noteText: "Inside." }).ok, "pinning from inside a house rejected");
+  const insidePin = input(room, A, { action: "pin_note", noteText: "Inside the tollhouse." });
+  assert.ok(insidePin.ok, `pinning inside a house works${insidePin.error ? `: ${insidePin.error}` : ""}`);
+  const inNote = room.notes.at(-1);
+  assert.equal(inNote.house, "tollhouse", "interior page is tagged with its house");
+  assert.equal(inNote.kind, "wall");
+  assert.ok(inNote.x >= -470 + 12 && inNote.x <= -170 - 12, "interior page x clamps into the house");
+  assert.ok(game.snapshot(room, A.id).notes.some((n) => n.id === inNote.id), "a soul inside sees the interior page in its snapshot");
   A.inside = null;
+  assert.ok(!(game.snapshot(room, A.id).notes ?? []).some((n) => n.id === inNote.id), "from outside the interior page is not visible");
+  assert.equal(room.notes.length, 3, "the interior pin was stored (wall + tree + interior)");
+  stand(room, A, -320);
+  assert.ok(game.snapshot(room, A.id).notes.some((n) => n.id === wallNote.id), "exterior pages stay visible from outside");
   A.alive = false;
   assert.ok(!input(room, A, { action: "pin_note", noteText: "Ghost." }).ok, "the dead cannot pin pages");
   A.alive = true;
-  assert.equal(room.notes.length, 2);
+  assert.equal(room.notes.length, 3, "the dead pin created nothing (wall + tree + interior)");
 
   // --- 4. snapshot carries real text, vision-filtered ------------------------
   const near = game.snapshot(room, A.id);

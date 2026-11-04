@@ -397,7 +397,7 @@ function renderHud(s: Snapshot) {
   const nearNote = (s.notes ?? []).filter((n) => Math.abs(n.x - meX) <= 150).sort((a, b) => Math.abs(a.x - meX) - Math.abs(b.x - meX))[0];
   $("readnote").style.display = nearNote && s.phase === "playing" ? "inline-block" : "none";
   $("readnote").dataset.noteId = nearNote ? nearNote.id : "";
-  $("pinbtn").style.display = s.phase === "playing" && s.self.alive && !(me && me.inside) ? "inline-block" : "none";
+  $("pinbtn").style.display = s.phase === "playing" && s.self.alive ? "inline-block" : "none";
   $("pushbtn").style.display = s.phase === "playing" && s.self.alive && !s.self.caged && !s.self.hasSupply ? "block" : "none";
   $("pushbtn").textContent = `Hold Push + ◀▶${s.cartPushers > 0 ? ` · ${s.cartPushers}` : ""}`;
   $("ruinbtn").style.display = s.phase === "playing" && s.self.alive && s.self.role === "hollow" ? "block" : "none";

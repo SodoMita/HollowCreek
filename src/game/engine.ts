@@ -1486,16 +1486,24 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
   if (body.action === "pin_note") {
     if (!p.alive) return { ok: false, error: "The dead cannot pin pages." };
     if (room.phase !== "playing") return { ok: false, error: "The night has not begun." };
-    if (p.inside) return { ok: false, error: "Step outside to pin a page." };
     if (p.caged) return { ok: false, error: "A caged soul cannot pin a page." };
     const text = typeof body.noteText === "string" ? body.noteText.replace(/\s+/g, " ").trim() : "";
     if (!text) return { ok: false, error: "Write something on the page first." };
     if (text.length > NOTE_TEXT_MAX) return { ok: false, error: `Keep the page under ${NOTE_TEXT_MAX} characters.` };
-    const anchor = snapAnchor(p.x);
-    if (!anchor || Math.abs(anchor.x - p.x) > NOTE_REACH) return { ok: false, error: "Stand beside a house wall or a tree to pin a page." };
-    const note: Note = { id: `note:${room.code}:${room.round}:${room.notes.length}:${room.activeEventId || randomUUID()}`, authorId: p.id, authorName: p.name, text, x: ix(anchor.x), kind: anchor.kind, at: roomNow(room) };
+    let anchor: { x: number; kind: "wall" | "tree"; ref: string } | null, house: string | null = null;
+    if (p.inside) {
+      // Inside a house the page goes on that house's interior wall.
+      const b = BUILDINGS.find((item) => item.id === p.inside);
+      if (!b) return { ok: false, error: "This place has no walls to pin to." };
+      house = b.id;
+      anchor = { x: ix(Math.max(b.x + 12, Math.min(b.x + b.width - 12, p.x))), kind: "wall", ref: b.id };
+    } else {
+      anchor = snapAnchor(p.x);
+      if (!anchor || Math.abs(anchor.x - p.x) > NOTE_REACH) return { ok: false, error: "Stand beside a house wall or a tree to pin a page." };
+    }
+    const note: Note = { id: `note:${room.code}:${room.round}:${room.notes.length}:${room.activeEventId || randomUUID()}`, authorId: p.id, authorName: p.name, text, x: ix(anchor.x), kind: anchor.kind, house, at: roomNow(room) };
     room.notes.push(note);
-    feed(room, `${p.name} pins a page to the ${anchor.kind === "wall" ? (BUILDINGS.find((b) => b.id === anchor.ref)?.name ?? "wall").toLowerCase() : "tree"}.`);
+    feed(room, `${p.name} pins a page to the ${house ? `${(BUILDINGS.find((b) => b.id === house)?.name ?? "house").toLowerCase()} wall` : anchor.kind === "wall" ? (BUILDINGS.find((b) => b.id === anchor!.ref)?.name ?? "wall").toLowerCase() : "tree"}.`);
     record(room, p, "pin_note", { x: note.x, kind: note.kind });
     return { ok: true };
   }
@@ -2035,7 +2043,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
         holder: d.holder === me.id || (owner && canSee(owner.x)) ? d.holder : null };
     }),
     keyX: room.keyX !== null && canSee(room.keyX) ? room.keyX : null,
-    notes: room.notes.filter((n) => canSee(n.x)).map((n) => ({ id: n.id, x: n.x, kind: n.kind, author: n.authorName, text: n.text })),
+    notes: room.notes.filter((n) => (n.house ? me.inside === n.house : !me.inside && canSee(n.x))).map((n) => ({ id: n.id, x: n.x, kind: n.kind, house: n.house, author: n.authorName, text: n.text })),
     timepieces: loosePieces(room).filter((tp) => canSee(tp.x)).map((tp) => tp.x),
     timepieceX: (() => { const tp = loosePieces(room).find((t2) => canSee(t2.x)); return tp ? tp.x : null; })(),
     time: room.temporalShadow ? undefined : { mode: "present", earliest: room.history[0]?.at ?? room.startedAt, latest: room.history.at(-1)?.at ?? room.startedAt },

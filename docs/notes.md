@@ -25,8 +25,13 @@ Pages are real world objects — no placeholders:
   backdrop to put it back.
 - **Write**: a "✎ Pin page" button (or `N` in the React client) opens a textarea
   panel (`data-testid="pin-note-panel"`); submitting sends `pin_note` with the text.
-- The dead, the caged, and players inside a house cannot pin; pinning in the open
-  road (no wall/tree within 90 px) is rejected.
+- **Inside a house** the page goes on that house's *interior wall*: `Note.house` is
+  set to the building id, the x clamps into the house footprint, and the page is
+  visible in snapshots only to souls inside the same house (rendered inside the
+  house cutaway). Outside, `house` is null and the page shows on the facade/trunk
+  within vision.
+- The dead and the caged cannot pin; pinning in the open road (no wall/tree within
+  90 px) is rejected.
 
 Tests: `scripts/test-notes.mjs` (snap to wall vs tree, validation, vision-filtered
 snapshots, pin-in-the-past → present, replay determinism), plus live checks in

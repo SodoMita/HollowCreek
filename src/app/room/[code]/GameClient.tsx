@@ -456,8 +456,8 @@ export default function GameClient({ code }: { code: string }) {
               <span className="ml-2 hidden text-[#9c8b7a] sm:inline">{s.playerCount} souls</span>
               {me?.inside && <span className="ml-2 text-[#e2be83]">Inside {BUILDINGS.find((b) => b.id === me.inside)?.name}</span>}
               {(s.self.hasTimepiece || s.time?.mode === "past") && <button onClick={activateTimepiece} className="ml-2 rounded border border-[#7ba9a6] bg-[#243b3c]/90 px-2 py-1 text-xs text-[#cbeae1]">{s.time?.mode === "past" ? "Return · M" : "Timepiece · M"}</button>}
-              {s.phase === "playing" && s.self.alive && !me?.inside && (
-                <button title="Pin a handwritten page to a wall or tree" aria-label="Pin page"
+              {s.phase === "playing" && s.self.alive && (
+                <button title="Pin a handwritten page to a wall or tree (inside a house: its interior wall)" aria-label="Pin page"
                   onClick={() => setPinOpen((v) => !v)}
                   className="ml-2 rounded bg-[#4a3323] px-1.5 py-0.5 text-xs text-[#f2cf91] hover:bg-[#684327]">
                   ✎<span className="hidden sm:inline"> Pin page</span>
@@ -699,7 +699,7 @@ export default function GameClient({ code }: { code: string }) {
           {/* ---- chat ---- */}
           {pinOpen && s.phase === "playing" && (
             <div className="hc-hud-item absolute bottom-20 left-1/2 w-[min(92vw,420px)] -translate-x-1/2 rounded-lg border border-[#8a6f4d]/60 bg-[#140d18]/95 p-3 sm:bottom-24" data-testid="pin-note-panel">
-              <div className="mb-1.5 text-xs uppercase tracking-widest text-[#9c8b7a]">Pin a page to a wall or tree (stand close)</div>
+              <div className="mb-1.5 text-xs uppercase tracking-widest text-[#9c8b7a]">Pin a page to a wall or tree — inside a house it goes on the interior wall</div>
               <textarea
                 value={pinText}
                 onChange={(e) => setPinText(e.target.value.slice(0, 200))}

@@ -24,6 +24,8 @@ export interface Note {
   /** Snapped world x of the wall face / trunk. Always an integer. */
   x: number;
   kind: "wall" | "tree";
+  /** Building id when pinned on an interior wall, else null. */
+  house: string | null;
   at: number;
 }
 export const MEETING_MS = 45000;
@@ -215,7 +217,7 @@ export interface Snapshot {
   /** Dropped kits can be recovered after a death, cage or voluntary drop. */
   supplyDrops: number[];
   /** Pages pinned to walls/trees that are inside the viewer's vision. */
-  notes?: { id: string; x: number; kind: "wall" | "tree"; author: string; text: string }[];
+  notes?: { id: string; x: number; kind: "wall" | "tree"; house: string | null; author: string; text: string }[];
   cartX: number;
   cartPushers: number;
   cages: { x: number; occupant: string | null }[];

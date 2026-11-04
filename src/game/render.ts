@@ -221,6 +221,13 @@ export class Renderer {
       if (sx < -b.width || sx > w + b.width) continue;
       const occupied = snap.players.some((p) => p.inside === b.id && p.alive);
       drawHouseInterior(ctx, b, sx, ground, t, snap.tasks.find((task) => task.inside === b.id), occupied);
+      // Pages pinned on this house's interior wall (only visible to souls inside).
+      for (const note of snap.notes ?? []) {
+        if (note.house !== b.id) continue;
+        const nx = note.x - cam;
+        if (nx < -60 || nx > w + 60) continue;
+        this.drawNote(ctx, nx, ground, "wall", this.focusX === note.x, t);
+      }
     }
 
     // --- stations / buildings ---
@@ -248,6 +255,7 @@ export class Renderer {
 
     // --- pinned pages on walls and tree trunks ---
     for (const note of snap.notes ?? []) {
+      if (note.house) continue; // interior pages are drawn with their house
       const sx = note.x - cam;
       if (sx < -60 || sx > w + 60) continue;
       const big = focused && this.focusX === note.x;
