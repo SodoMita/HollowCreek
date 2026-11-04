@@ -238,10 +238,24 @@ const gPersist = globalThis as typeof globalThis & {
 const dirtyRooms: Set<string> = gPersist.__hollowDirtyRooms ?? new Set();
 gPersist.__hollowDirtyRooms = dirtyRooms;
 
+// Change listeners for server-push (SSE) state streaming: fired on every
+// mutation and every tick, so subscribers can re-fingerprint and push.
+const roomListeners: Map<string, Set<() => void>> = new Map();
+export function onRoomEvent(code: string, cb: () => void): () => void {
+  let set = roomListeners.get(code);
+  if (!set) { set = new Set(); roomListeners.set(code, set); }
+  set.add(cb);
+  return () => { set.delete(cb); if (set.size === 0) roomListeners.delete(code); };
+}
+function emitRoom(code: string) {
+  for (const cb of roomListeners.get(code) ?? []) { try { cb(); } catch { /* listener bug must not break the room */ } }
+}
+
 function markDirty(room: Room) {
   if (room.replaying) return;
   room.rev++;
   dirtyRooms.add(room.code);
+  emitRoom(room.code);
 }
 
 async function flushRooms() {
@@ -1886,6 +1900,7 @@ function tickRooms() {
     if (room.phase === "playing" || room.phase === "meeting") journal(room, "tick", now);
     tickRoom(room, now);
     room.rev++;
+    emitRoom(room.code);
   }
 }
 
