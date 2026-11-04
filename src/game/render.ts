@@ -17,6 +17,9 @@ export class Renderer {
   private leaves: Leaf[] = [];
   private settings: GameSettings = createDefaultSettings();
   cameraX = 0;
+  /** When set, the camera centers on this world x and zooms in to read a page. */
+  focusX: number | null = null;
+  setFocus(x: number | null) { this.focusX = x; }
   private visionR = 420;
   private doorOpenAmount = new Map<string, number>();
 
@@ -57,12 +60,15 @@ export class Renderer {
   ) {
     const graphics = this.settings.graphics;
     // Zoom the world, not the DOM HUD. Gameplay and server vision stay in world units.
-    const zoom = graphics.worldZoom;
+    // A focused page (read-note zoom) overrides both zoom and camera target.
+    const focused = this.focusX !== null;
+    const zoom = focused ? Math.max(graphics.worldZoom, 2.6) : graphics.worldZoom;
     ctx.save(); ctx.scale(zoom, zoom); w /= zoom; h /= zoom;
     if (graphics.reducedMotion) t = 0;
     const me = snap.players.find((p) => p.id === snap.self.id);
     const meX = me ? displayX.get(me.id) ?? me.x : WORLD_W / 2;
-    const targetCam = Math.max(WORLD_MIN, Math.min(WORLD_MAX - w, meX - w / 2));
+    const lookX = focused ? this.focusX! : meX;
+    const targetCam = Math.max(WORLD_MIN, Math.min(WORLD_MAX - w, lookX - w / 2));
     if (graphics.cameraSmoothing) this.cameraX += (targetCam - this.cameraX) * Math.min(1, dt * 6);
     else this.cameraX = targetCam;
     if (WORLD_MAX - WORLD_MIN < w) this.cameraX = (WORLD_MIN + WORLD_MAX - w) / 2;
@@ -238,6 +244,14 @@ export class Renderer {
     for (const drop of snap.supplyDrops) {
       const sx = drop - cam;
       if (sx > -45 && sx < w + 45) drawKit(ctx, sx, ground);
+    }
+
+    // --- pinned pages on walls and tree trunks ---
+    for (const note of snap.notes ?? []) {
+      const sx = note.x - cam;
+      if (sx < -60 || sx > w + 60) continue;
+      const big = focused && this.focusX === note.x;
+      this.drawNote(ctx, sx, ground, note.kind, big, t);
     }
 
     // --- bell tower ---
@@ -489,6 +503,32 @@ export class Renderer {
   }
 
   // -------------------------------------------------------------------------
+
+  /** A handwritten page pinned to a wall face or leaning on a trunk. */
+  private drawNote(ctx: CanvasRenderingContext2D, x: number, ground: number, kind: "wall" | "tree", big: boolean, t: number) {
+    const w = big ? 44 : 18, h = big ? 58 : 24;
+    const y = kind === "wall" ? ground - 118 - h : ground - 74 - h;
+    const sway = Math.sin(t * 1.7 + x * 0.05) * (big ? 2.2 : 1.1);
+    ctx.save();
+    ctx.translate(x, y + h);
+    ctx.rotate((kind === "tree" ? 0.10 : -0.05) + sway * 0.02);
+    ctx.translate(-w / 2, -h);
+    ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = big ? 14 : 6; ctx.shadowOffsetY = big ? 5 : 2;
+    ctx.fillStyle = big ? "#f4ead2" : "#e9dfc4";
+    ctx.strokeStyle = "#8a6f4d"; ctx.lineWidth = big ? 2 : 1;
+    ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.fill(); ctx.stroke();
+    // folded corner
+    ctx.beginPath(); ctx.moveTo(w, 0); ctx.lineTo(w, h * 0.28); ctx.lineTo(w - w * 0.28, 0); ctx.closePath();
+    ctx.fillStyle = "#d8c9a8"; ctx.fill(); ctx.stroke();
+    // ruled text lines
+    ctx.strokeStyle = "#7a6a52"; ctx.lineWidth = big ? 1.6 : 1;
+    const lines = big ? 6 : 3;
+    for (let i = 1; i <= lines; i++) {
+      const ly = (h / (lines + 1)) * i;
+      ctx.beginPath(); ctx.moveTo(w * 0.16, ly); ctx.lineTo(w * (0.84 - (i % 3) * 0.08), ly); ctx.stroke();
+    }
+    ctx.restore();
+  }
 
   private drawTree(ctx: CanvasRenderingContext2D, x: number, ground: number, height: number, seed: number) {
     ctx.save(); ctx.translate(x, ground); ctx.scale(seed % 2 ? -1 : 1, 1);

@@ -13,6 +13,19 @@ export const TICK_MS = 50;
 export const KILL_RANGE = 75;
 export const KILL_COOLDOWN_MS = 18000;
 export const INTERACT_RANGE = 80;
+export const NOTE_REACH = 90; // stand this close to a wall/tree to pin or read a page
+export const NOTE_TEXT_MAX = 200;
+/** A handwritten page pinned to a building wall or a tree trunk. */
+export interface Note {
+  id: string;
+  authorId: string;
+  authorName: string;
+  text: string;
+  /** Snapped world x of the wall face / trunk. Always an integer. */
+  x: number;
+  kind: "wall" | "tree";
+  at: number;
+}
 export const MEETING_MS = 45000;
 export const CELL_HALF = 30;
 export const CAGE_UNLOCK_RANGE = 125;
@@ -201,6 +214,8 @@ export interface Snapshot {
   time?: TimeView;
   /** Dropped kits can be recovered after a death, cage or voluntary drop. */
   supplyDrops: number[];
+  /** Pages pinned to walls/trees that are inside the viewer's vision. */
+  notes?: { id: string; x: number; kind: "wall" | "tree"; author: string; text: string }[];
   cartX: number;
   cartPushers: number;
   cages: { x: number; occupant: string | null }[];
@@ -246,7 +261,8 @@ export interface InputBody {
   dir?: number;
   interactHeld?: boolean;
   cartHeld?: boolean; // hold Push + a direction while beside the cart
-  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "restart" | "leave" | "drop_supply" | "sabotage" | "ward_move" | "ward_cancel" | "door_lock" | "time_travel" | "time_return";
+  action?: "interact" | "ability" | "blackout" | "vote" | "start" | "restart" | "leave" | "drop_supply" | "sabotage" | "ward_move" | "ward_cancel" | "door_lock" | "time_travel" | "time_return" | "pin_note";
+  noteText?: string; // custom page text for pin_note
   wardId?: string;
   targetAt?: number;
   move?: number;

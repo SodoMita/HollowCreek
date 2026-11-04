@@ -141,6 +141,23 @@ try {
   ok((await c.send(hollow, { action: "ability" })).data.ok, "Hollow can strike a nearby past echo");
   ok(!(await c.state(victim.id)).self.alive, "past kill changes the victim's present state");
   await c.send(hollow, { action: "time_return" });
+  // Pinned pages: custom-text notes snapped to walls/trees, carried through time.
+  const d = await room("TimeN"); games.push(d);
+  const writer = d.people.filter((p) => p.role === "crew").sort((x, y) => Math.abs(x.x - 1260) - Math.abs(y.x - 1260))[0].id;
+  await walk(d, writer, -185); // beside the tollhouse wall (tree trunks are farther here)
+  const pin = await d.send(writer, { action: "pin_note", noteText: "The bell is lying tonight." });
+  ok(pin.data.ok, "a page with custom text can be pinned to a house wall");
+  const pinnedState = await d.state(writer);
+  ok(pinnedState.notes?.some((n) => n.text === "The bell is lying tonight." && n.kind === "wall"), "the pinned page is in the snapshot with its real text and wall kind");
+  ok((await d.send(writer, { action: "pin_note", noteText: "   " })).status === 400, "empty pages are rejected");
+  ok((await d.send(writer, { action: "pin_note", noteText: "x".repeat(250) })).status === 400, "overlong pages are rejected (200 char limit)");
+  const range2 = await takeTimepiece(d, writer);
+  await travel(d, writer, range2.earliest);
+  await walk(d, writer, 2370); // a foreground tree trunk (treeX(20))
+  ok((await d.send(writer, { action: "pin_note", noteText: "I pinned this in the past." })).data.ok, "a traveller can pin a page to a tree in the past");
+  await d.send(writer, { action: "time_return" });
+  const backState = await d.state(writer);
+  ok(backState.notes?.some((n) => n.text === "I pinned this in the past."), "a page pinned in the past exists in the present after return");
   console.log(`\n${checks} TIME TRAVEL CHECKS PASSED`);
 } catch (error) {
   console.error("TIME TRAVEL SMOKE FAILED", error);

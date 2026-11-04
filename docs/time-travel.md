@@ -1,5 +1,7 @@
 # Timepiece: command-replay implementation
 
+(See [notes.md](./notes.md) for pinned pages on walls/trees — they travel through time with the world.)
+
 A living, uncaged player can find a timepiece on the road, pick it up with **E**, and press **M** (or the HUD button) to choose a recorded moment. Confirming consumes that item. A visit lasts at most 60 seconds; **M** returns early, and a meeting, the end of the night, leaving, or a lost connection also returns the traveler. After the first two pieces are spent, another single-use timepiece appears, so a later traveler can change an earlier traveler's present. Only one visit is active at a time.
 
 ## Many timepieces, and time travel in time travel

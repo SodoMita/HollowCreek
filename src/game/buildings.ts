@@ -33,6 +33,24 @@ export interface DoorState {
 }
 
 export const doorX = (b: Building) => b.x + b.side * (b.width / 2 - 18);
+
+// Foreground trees are world-anchored (render.ts draws the same line), so a
+// page can be snapped to a trunk deterministically.
+export const TREE_COUNT = 50;
+export const treeX = (i: number) => WORLD_MIN + i * 190 + ((i * 71) % 90);
+
+export interface SnapAnchor { x: number; kind: "wall" | "tree"; ref: string }
+/** Nearest pinnable anchor to x: a building's wall face or a tree trunk. */
+export const snapAnchor = (x: number): SnapAnchor | null => {
+  let best: SnapAnchor | null = null;
+  const consider = (a: SnapAnchor) => { if (!best || Math.abs(a.x - x) < Math.abs(best.x - x)) best = a; };
+  for (const b of BUILDINGS) {
+    const wx = Math.max(b.x + 12, Math.min(b.x + b.width - 12, x));
+    consider({ x: wx, kind: "wall", ref: b.id });
+  }
+  for (let i = 0; i < TREE_COUNT; i++) consider({ x: treeX(i), kind: "tree", ref: `tree:${i}` });
+  return best;
+};
 export const clampWorld = (x: number, inset = 30) => Math.max(WORLD_MIN + inset, Math.min(WORLD_MAX - inset, x));
 export const newDoors = (): DoorState[] => BUILDINGS.map((b) => ({ id: b.id, locked: true, open: false, keyX: b.keySpawn, holder: null }));
 

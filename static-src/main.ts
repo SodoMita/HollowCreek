@@ -393,6 +393,11 @@ function renderHud(s: Snapshot) {
   $("copycode").textContent = s.code;
   $("soulcount").textContent = `${s.playerCount} souls${s.self.hasSupply ? " · kit carried" : ""}`;
   $("supplydrop").style.display = s.phase === "playing" && s.self.hasSupply ? "inline-block" : "none";
+  const meX = me ? me.x : 0;
+  const nearNote = (s.notes ?? []).filter((n) => Math.abs(n.x - meX) <= 150).sort((a, b) => Math.abs(a.x - meX) - Math.abs(b.x - meX))[0];
+  $("readnote").style.display = nearNote && s.phase === "playing" ? "inline-block" : "none";
+  $("readnote").dataset.noteId = nearNote ? nearNote.id : "";
+  $("pinbtn").style.display = s.phase === "playing" && s.self.alive && !(me && me.inside) ? "inline-block" : "none";
   $("pushbtn").style.display = s.phase === "playing" && s.self.alive && !s.self.caged && !s.self.hasSupply ? "block" : "none";
   $("pushbtn").textContent = `Hold Push + ◀▶${s.cartPushers > 0 ? ` · ${s.cartPushers}` : ""}`;
   $("ruinbtn").style.display = s.phase === "playing" && s.self.alive && s.self.role === "hollow" ? "block" : "none";
@@ -619,6 +624,25 @@ $("snuffbtn").addEventListener("click", () => send({ action: "blackout" }));
 $("talkbtn").addEventListener("click", openChat);
 $("leave").addEventListener("click", leaveToMenu);
 $("supplydrop").addEventListener("click", () => void send({ action: "drop_supply" }));
+let noteFocusX: number | null = null;
+$("pinbtn").addEventListener("click", () => { $("pinpanel").style.display = "flex"; ($("pintextarea") as HTMLTextAreaElement).focus(); });
+$("pincancel").addEventListener("click", () => { $("pinpanel").style.display = "none"; ($("pintextarea") as HTMLTextAreaElement).value = ""; });
+$("pinsubmit").addEventListener("click", () => {
+  const text = ($("pintextarea") as HTMLTextAreaElement).value.trim();
+  if (!text) return;
+  void send({ action: "pin_note", noteText: text });
+  ($("pintextarea") as HTMLTextAreaElement).value = "";
+  $("pinpanel").style.display = "none";
+});
+$("readnote").addEventListener("click", () => {
+  const note = (snap?.notes ?? []).find((n) => n.id === ($("readnote").dataset.noteId ?? ""));
+  if (!note) return;
+  $("notetext").textContent = note.text;
+  $("noteauthor").textContent = `— pinned by ${note.author}`;
+  $("noteoverlay").style.display = "flex";
+  noteFocusX = note.x; // zoom the world onto the page
+});
+$("noteclose").addEventListener("click", () => { $("noteoverlay").style.display = "none"; noteFocusX = null; });
 $("ruinbtn").addEventListener("click", () => void send({ action: "sabotage" }));
 $("settings").addEventListener("click", () => settingsDialog.open());
 $("menusettings").addEventListener("click", () => settingsDialog.open());
@@ -688,6 +712,7 @@ function loop(nowMs: number) {
       displayX.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 16));
     }
   }
+  renderer.setFocus(noteFocusX);
   renderer.render(ctx, vw(), vh(), snap, displayX, nowMs / 1000, dt);
 }
 requestAnimationFrame(loop);

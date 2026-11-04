@@ -61,6 +61,40 @@ try {
   console.log("PASS React multiplayer slider, countdown and return");
   await page.close();
 
+  // Pinned pages: pin beside a wall, read through the zoom-in button.
+  const noteRoom = await setup("NoteUI"); rooms.push(noteRoom);
+  for (let attempt = 0; attempt < 300; attempt++) {
+    const s = await noteRoom.state(noteRoom.id), x = s.players.find((p) => p.id === noteRoom.id).x;
+    if (Math.abs(x + 185) < 20) { await noteRoom.send(noteRoom.id, { dir: 0 }); break; }
+    await noteRoom.send(noteRoom.id, { dir: x < -185 ? 1 : -1 }); await sleep(110);
+  }
+  assert.ok((await noteRoom.send(noteRoom.id, { action: "pin_note", noteText: "Read me at dusk." })).ok, "API pin beside the tollhouse wall works");
+  const notePage = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  const noteErrors = []; notePage.on("pageerror", (e) => noteErrors.push(e.message));
+  await notePage.addInitScript(({ id, name }) => { localStorage.setItem("hc_pid", id); localStorage.setItem("hc_name", name); }, { id: noteRoom.id, name: noteRoom.name });
+  await notePage.goto(`${base}/room/${noteRoom.code}`, { waitUntil: "domcontentloaded" });
+  const readBtn = notePage.getByTestId("read-note");
+  await readBtn.waitFor({ timeout: 15000 });
+  await readBtn.click();
+  const reader = notePage.getByTestId("note-reader");
+  await reader.waitFor();
+  const readerText = await reader.textContent();
+  assert.ok(readerText.includes("Read me at dusk."), "zoom-in reader shows the real note text");
+  assert.ok(readerText.includes(noteRoom.name), "the reader names the page's author");
+  await reader.getByRole("button", { name: "Close page" }).click();
+  await reader.waitFor({ state: "hidden", timeout: 8000 });
+  await notePage.getByRole("button", { name: "Pin page" }).click();
+  const panel = notePage.getByTestId("pin-note-panel");
+  await panel.waitFor();
+  await panel.locator("textarea").fill("Pinned from the UI.");
+  await panel.getByTestId("pin-note-submit").click();
+  await sleep(800);
+  const noteState = await noteRoom.state(noteRoom.id);
+  assert.ok((noteState.notes ?? []).some((n) => n.text === "Pinned from the UI."), "the UI pin panel creates a real note on the wall");
+  assert.deepEqual(noteErrors, []);
+  console.log("PASS pinned-page pin panel and zoom-in reader (React client)");
+  await notePage.close();
+
   const staticRoom = await setup("TimeST"); rooms.push(staticRoom);
   const standalone = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const staticErrors = []; standalone.on("pageerror", (error) => staticErrors.push(error.message));
@@ -78,6 +112,22 @@ try {
   assert.equal((await staticRoom.state(staticRoom.id)).time.mode, "present");
   assert.deepEqual(staticErrors, []);
   console.log("PASS standalone multiplayer slider, countdown and return");
+
+  // Standalone client: pin beside a wall via API, read via the zoom-in button.
+  for (let attempt = 0; attempt < 300; attempt++) {
+    const s = await staticRoom.state(staticRoom.id), x = s.players.find((p) => p.id === staticRoom.id).x;
+    if (Math.abs(x + 185) < 20) { await staticRoom.send(staticRoom.id, { dir: 0 }); break; }
+    await staticRoom.send(staticRoom.id, { dir: x < -185 ? 1 : -1 }); await sleep(110);
+  }
+  assert.ok((await staticRoom.send(staticRoom.id, { action: "pin_note", noteText: "Standalone page." })).ok, "API pin beside the wall works (standalone room)");
+  await standalone.locator("#readnote").waitFor({ state: "visible", timeout: 15000 });
+  await standalone.locator("#readnote").click();
+  await standalone.getByTestId("note-reader").waitFor();
+  assert.ok((await standalone.getByTestId("note-reader").textContent()).includes("Standalone page."), "standalone zoom-in reader shows the real note text");
+  await standalone.locator("#noteclose").click();
+  await standalone.getByTestId("note-reader").waitFor({ state: "hidden", timeout: 8000 });
+  assert.deepEqual(staticErrors, []);
+  console.log("PASS standalone pinned-page zoom-in reader");
   await standalone.close();
 
   const mobileRoom = await setup("TimeMB"); rooms.push(mobileRoom);

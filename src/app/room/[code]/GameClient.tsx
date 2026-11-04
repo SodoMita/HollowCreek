@@ -44,6 +44,12 @@ export default function GameClient({ code }: { code: string }) {
     error: null,
   });
   const [tasksOpen, setTasksOpen] = useState(false);
+  const [pinOpen, setPinOpen] = useState(false);
+  const [pinText, setPinText] = useState("");
+  const [noteFocus, setNoteFocus] = useState<{ id: string; x: number; author: string; text: string } | null>(null);
+  const focusRef = useRef<number | null>(null);
+  const rendererRef = useRef<Renderer | null>(null);
+  useEffect(() => { focusRef.current = noteFocus ? noteFocus.x : null; }, [noteFocus]);
   const [leaving, setLeaving] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(createDefaultSettings);
 
@@ -281,6 +287,7 @@ export default function GameClient({ code }: { code: string }) {
       else if (bound("right")) { keys.current.add("right"); computeDir(); e.preventDefault(); }
       else if (e.code === "KeyM" && !e.repeat) { activateTimepiece(); e.preventDefault(); }
       else if (e.code === "KeyL" && !e.repeat) { void send({ action: "door_lock" }); e.preventDefault(); }
+      else if (e.code === "KeyN" && !e.repeat) { setPinOpen((v) => !v); e.preventDefault(); }
       else if (bound("interact") && !e.repeat) { interactDown(); e.preventDefault(); }
       else if (bound("ability") && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
       else if (bound("blackout") && !e.repeat) { void send({ action: "blackout" }); e.preventDefault(); }
@@ -319,6 +326,7 @@ export default function GameClient({ code }: { code: string }) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     const renderer = new Renderer();
+    rendererRef.current = renderer;
     const store = getSettingsStore();
     renderer.setSettings(store.value);
     let raf = 0;
@@ -359,6 +367,7 @@ export default function GameClient({ code }: { code: string }) {
           displayX.current.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 16));
         }
       }
+      renderer.setFocus(focusRef.current);
       renderer.render(ctx, vw(), vh(), s, displayX.current, nowMs / 1000, dt);
     };
     raf = requestAnimationFrame(loop);
@@ -404,6 +413,15 @@ export default function GameClient({ code }: { code: string }) {
   }
 
   const me = snap?.players.find((p) => p.id === snap.self.id);
+  const nearestNote = snap && me ? (snap.notes ?? [])
+    .filter((n) => Math.abs(n.x - me.x) <= 150)
+    .sort((a, b) => Math.abs(a.x - me.x) - Math.abs(b.x - me.x))[0] : undefined;
+  const pinNote = async () => {
+    const text = pinText.trim();
+    if (!text) return;
+    await send({ action: "pin_note", noteText: text });
+    setPinText(""); setPinOpen(false);
+  };
   const s = snap;
   const nearbyKeyedDoor = me && s ? BUILDINGS.find((b) => Math.abs(doorX(b) - me.x) <= DOOR_REACH && s.self.doorKeys?.includes(b.id)) : undefined;
   const nearbyDoorLocked = s?.doors?.find((d) => d.id === nearbyKeyedDoor?.id)?.locked;
@@ -438,6 +456,20 @@ export default function GameClient({ code }: { code: string }) {
               <span className="ml-2 hidden text-[#9c8b7a] sm:inline">{s.playerCount} souls</span>
               {me?.inside && <span className="ml-2 text-[#e2be83]">Inside {BUILDINGS.find((b) => b.id === me.inside)?.name}</span>}
               {(s.self.hasTimepiece || s.time?.mode === "past") && <button onClick={activateTimepiece} className="ml-2 rounded border border-[#7ba9a6] bg-[#243b3c]/90 px-2 py-1 text-xs text-[#cbeae1]">{s.time?.mode === "past" ? "Return · M" : "Timepiece · M"}</button>}
+              {s.phase === "playing" && s.self.alive && !me?.inside && (
+                <button title="Pin a handwritten page to a wall or tree" aria-label="Pin page"
+                  onClick={() => setPinOpen((v) => !v)}
+                  className="ml-2 rounded bg-[#4a3323] px-1.5 py-0.5 text-xs text-[#f2cf91] hover:bg-[#684327]">
+                  ✎<span className="hidden sm:inline"> Pin page</span>
+                </button>
+              )}
+              {nearestNote && s.phase === "playing" && (
+                <button title={`Read the page pinned by ${nearestNote.author}`} aria-label="Read page" data-testid="read-note"
+                  onClick={() => setNoteFocus(nearestNote)}
+                  className="ml-2 rounded border border-[#d99a3d]/60 bg-[#243b3c]/90 px-1.5 py-0.5 text-xs text-[#cbeae1] hover:bg-[#2f4a4b]">
+                  📖<span className="hidden sm:inline"> Read page</span>
+                </button>
+              )}
               {s.phase === "playing" && s.self.alive && s.self.hasSupply && (
                 <button title="Drop repair kit for another player" aria-label="Drop repair kit"
                   onClick={() => void send({ action: "drop_supply" })}
@@ -665,6 +697,44 @@ export default function GameClient({ code }: { code: string }) {
           </div>
 
           {/* ---- chat ---- */}
+          {pinOpen && s.phase === "playing" && (
+            <div className="hc-hud-item absolute bottom-20 left-1/2 w-[min(92vw,420px)] -translate-x-1/2 rounded-lg border border-[#8a6f4d]/60 bg-[#140d18]/95 p-3 sm:bottom-24" data-testid="pin-note-panel">
+              <div className="mb-1.5 text-xs uppercase tracking-widest text-[#9c8b7a]">Pin a page to a wall or tree (stand close)</div>
+              <textarea
+                value={pinText}
+                onChange={(e) => setPinText(e.target.value.slice(0, 200))}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void pinNote(); } e.stopPropagation(); }}
+                maxLength={200}
+                rows={4}
+                placeholder="Write your note… (max 200 characters)"
+                className="w-full resize-none rounded border border-[#d99a3d]/40 bg-[#1d1420] px-3 py-2 text-sm text-[#e9dfcf] outline-none placeholder:text-[#6b5a55]"
+              />
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-[11px] text-[#6b5a55]">{pinText.trim().length}/200</span>
+                <div className="flex gap-2">
+                  <button onClick={() => { setPinOpen(false); setPinText(""); }} className="rounded border border-[#3a2733] px-3 py-1.5 text-xs text-[#9c8b7a] hover:text-[#e9dfcf]">Cancel</button>
+                  <button onClick={() => void pinNote()} disabled={!pinText.trim()} data-testid="pin-note-submit"
+                    className="rounded bg-[#8f3b1f] px-3 py-1.5 text-xs text-[#f3e6d0] hover:bg-[#a84a26] disabled:opacity-50">Pin page</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {noteFocus && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0b0710]/60 backdrop-blur-[2px]" onClick={() => setNoteFocus(null)}>
+              <div data-testid="note-reader" onClick={(e) => e.stopPropagation()}
+                className="hc-rise w-[min(92vw,460px)] -rotate-1 rounded-sm border border-[#8a6f4d] bg-[#f4ead2] p-5 text-[#2c2118] shadow-2xl sm:p-7">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-xs uppercase tracking-[0.25em] text-[#8a6f4d]">Pinned page</span>
+                  <button onClick={() => setNoteFocus(null)} aria-label="Close page" className="rounded px-2 py-0.5 text-[#8a6f4d] hover:bg-[#e0d2b2]">✕</button>
+                </div>
+                <p className="whitespace-pre-wrap break-words font-display text-lg leading-relaxed sm:text-xl">{noteFocus.text}</p>
+                <p className="mt-3 text-right text-xs italic text-[#8a6f4d]">— pinned by {noteFocus.author}</p>
+                <p className="mt-2 text-center text-[11px] text-[#8a6f4d]">zoomed in · click anywhere to put it back</p>
+              </div>
+            </div>
+          )}
+
           {chatOpen && (
             <div className="hc-hud-item absolute bottom-20 left-1/2 w-[min(92vw,420px)] sm:bottom-24 -translate-x-1/2">
               <input

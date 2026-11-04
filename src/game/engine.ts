@@ -12,12 +12,13 @@ import {
   STAMINA_BLACKOUT_COST, STAMINA_IDLE_REGEN, STAMINA_KILL_COST,
   STAMINA_UNLOCK_COST, STATIONS, SUPPLY_CART_START, TICK_MS,
   VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW, WORLD_W, TIMEPIECE_X, TIME_VISIT_MS, HISTORY_SAMPLE_MS, ix,
+  NOTE_REACH, NOTE_TEXT_MAX,
 } from "./types";
-import { BUILDINGS, buildingHint, clampWorld, doorX, dropBuildingKeys, newDoors, interactWithBuilding, walkThroughBuildings, type DoorState } from "./buildings";
+import { BUILDINGS, buildingHint, clampWorld, doorX, dropBuildingKeys, newDoors, interactWithBuilding, snapAnchor, walkThroughBuildings, type DoorState } from "./buildings";
 import { bumpStats } from "./stats";
 import { shuffle } from "./rng";
 import { applyWardMove, createWardPuzzle, validWardMove, wardProgress, wardSolved, wardView, type WardPuzzle } from "./wards";
-import type { FeedItem, InputBody, MatchStats, Phase, Role, RoomListing, Snapshot } from "./types";
+import type { FeedItem, InputBody, MatchStats, Note, Phase, Role, RoomListing, Snapshot } from "./types";
 
 // ---------------------------------------------------------------------------
 // Internal state
@@ -29,7 +30,7 @@ interface HistoryEvent { at: number; actorId: string; name: string; x: number; i
 type JournalEntry = { seq: number; at: number; kind: "input" | "tick" | "presence" | "leave" | "depart" | "return" | "respawn"; seed: number; playerId?: string; visitorId?: string; cursor?: number; lastSeen?: number; pieceId?: string; body?: InputBody };
 export interface TimepieceState { id: string; x: number; holder: string | null; consumed: boolean }
 interface HistoryFrame {
-  at: number; seq: number; players: P[]; pool: TaskState[]; doors: DoorState[]; keyX: number | null;
+  at: number; seq: number; players: P[]; pool: TaskState[]; doors: DoorState[]; keyX: number | null; notes: Note[];
   phase: Phase; meeting: { endsAt: number; reason: string } | null; winner: Role | null; winReason: string | null;
   nextFlicker: number; blackoutReadyAt: number; timepieces: TimepieceState[]; timepiecePending: boolean; endedAt: number;
   supplyDrops: SupplyDrop[]; cartX: number; cartPushers: number;
@@ -100,6 +101,7 @@ interface Room {
   doors: DoorState[];
   keyX: number | null;
   supplyDrops: SupplyDrop[];
+  notes: Note[];
   cartX: number;
   cartPushers: number;
   cages: { x: number; occupant: string | null }[];
@@ -154,18 +156,19 @@ g.__hollowRoomLoads = roomLoads;
 // ---------------------------------------------------------------------------
 
 const roomNow = (room: Room) => room.replaying ? (room.replayNow ?? 0) : Math.max(Date.now(), room.journal.at(-1)?.at ?? 0);
-const observedTypes = ["pickup_key", "supply_taken", "supply_recovered", "supply_delivered", "task_complete", "ward_ruined", "kill", "door_action", "unlock_cage", "chat", "timepiece_taken"];
+const observedTypes = ["pickup_key", "supply_taken", "supply_recovered", "supply_delivered", "task_complete", "ward_ruined", "kill", "door_action", "unlock_cage", "chat", "timepiece_taken", "pin_note"];
 function canonicalInput(body: InputBody): InputBody {
   const result: InputBody = { playerId: body.playerId };
   if (typeof body.dir === "number" && Number.isFinite(body.dir)) result.dir = body.dir;
   if (typeof body.interactHeld === "boolean") result.interactHeld = body.interactHeld;
   if (typeof body.cartHeld === "boolean") result.cartHeld = body.cartHeld;
-  if (typeof body.action === "string" && ["interact", "ability", "blackout", "vote", "start", "restart", "leave", "drop_supply", "sabotage", "ward_move", "ward_cancel", "door_lock", "time_travel", "time_return"].includes(body.action)) result.action = body.action;
+  if (typeof body.action === "string" && ["interact", "ability", "blackout", "vote", "start", "restart", "leave", "drop_supply", "sabotage", "ward_move", "ward_cancel", "door_lock", "time_travel", "time_return", "pin_note"].includes(body.action)) result.action = body.action;
   if (typeof body.wardId === "string") result.wardId = body.wardId.slice(0, 128);
   if (typeof body.move === "number" && Number.isFinite(body.move)) result.move = body.move;
   if (typeof body.chat === "string") result.chat = body.chat.trim().slice(0, 120);
   if (typeof body.vote === "string") result.vote = body.vote; // preserve exact legacy player IDs during replay
   if (typeof body.targetAt === "number" && Number.isFinite(body.targetAt)) result.targetAt = body.targetAt;
+  if (typeof body.noteText === "string") result.noteText = body.noteText.slice(0, NOTE_TEXT_MAX + 60); // server rejects overlong text
   return result;
 }
 function journal(room: Room, kind: JournalEntry["kind"], at: number, playerId?: string, body?: InputBody): JournalEntry {
@@ -186,7 +189,7 @@ function kitId(room: Room, p: P): string {
 
 function record(room: Room, p: P | null, type: string, data: Record<string, unknown> = {}) {
   if (p) {
-    const actions: Record<string, string> = { pickup_key: "took the iron key", supply_taken: "took a repair kit", supply_recovered: "picked up a repair kit", timepiece_taken: "took the timepiece" };
+    const actions: Record<string, string> = { pickup_key: "took the iron key", supply_taken: "took a repair kit", supply_recovered: "picked up a repair kit", timepiece_taken: "took the timepiece", pin_note: "pinned a page" };
     const doorPickup = type === "door_action" && typeof data.message === "string" && data.message.includes("found") ? data.message.replace(/^You found /, "took ") : null;
     const text = actions[type] ?? doorPickup;
     if (text) { p.actionText = text; p.actionUntil = roomNow(room) + 3500; }
@@ -305,6 +308,7 @@ async function hydrateRoom(code: string): Promise<Room | undefined> {
     doors: newDoors(),
     keyX: null,
     supplyDrops: [],
+    notes: [],
     cartX: SUPPLY_CART_START,
     cartPushers: 0,
     cages: CAGE_XS.map((x) => ({ x, occupant: null })),
@@ -401,6 +405,7 @@ export function createRoom(playerId: string, name: string) {
     doors: newDoors(),
     keyX: null,
     supplyDrops: [],
+    notes: [],
     cartX: SUPPLY_CART_START,
     cartPushers: 0,
     cages: CAGE_XS.map((x) => ({ x, occupant: null })),
@@ -580,6 +585,7 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
   room.doors = newDoors();
   for (const p of ps) p.inside = null;
   room.supplyDrops = [];
+  room.notes = [];
   room.cartX = SUPPLY_CART_START;
   room.cartPushers = 0;
   for (const p of ps) { p.stamina = 1; p.exhausted = false; p.hasSupply = false; p.supplyId = null; p.cartHeld = false; p.sabotageAt = 0; p.activeWard = null; p.match = newMatchStats(); }
@@ -737,6 +743,7 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
   room.doors = newDoors();
   room.keyX = null;
   room.supplyDrops = [];
+  room.notes = [];
   room.cartX = SUPPLY_CART_START;
   room.cartPushers = 0;
   for (const c of room.cages) c.occupant = null;
@@ -1017,7 +1024,7 @@ function captureHistory(room: Room, now: number, force = false) {
     nextFlicker: room.nextFlicker, blackoutReadyAt: room.blackoutReadyAt, timepieces: structuredClone(room.timepieces), timepiecePending: room.timepiecePending, endedAt: room.endedAt,
     players: structuredClone([...room.players.values()].filter((p) => p.id !== room.timeVisit?.playerId)),
     pool: structuredClone(room.pool), doors: structuredClone(room.doors), keyX: room.keyX,
-    supplyDrops: structuredClone(room.supplyDrops), cartX: room.cartX, cartPushers: room.cartPushers,
+    supplyDrops: structuredClone(room.supplyDrops), notes: structuredClone(room.notes), cartX: room.cartX, cartPushers: room.cartPushers,
     cages: structuredClone(room.cages), bodies: structuredClone(room.bodies), feed: structuredClone(room.feed), events: structuredClone(room.historyEvents.slice(-32)),
     bellAt: room.bellAt, flickerAt: room.flickerAt, blackoutUntil: room.blackoutUntil,
   });
@@ -1048,7 +1055,7 @@ function restoreFrame(room: Room, frame: HistoryFrame): Room {
     timepieces: structuredClone(frame.timepieces), timepiecePending: frame.timepiecePending,
     players: new Map(frame.players.map((player) => [player.id, structuredClone(player)])),
     pool: structuredClone(frame.pool), doors: structuredClone(frame.doors), keyX: frame.keyX,
-    supplyDrops: structuredClone(frame.supplyDrops), cartX: frame.cartX, cartPushers: frame.cartPushers,
+    supplyDrops: structuredClone(frame.supplyDrops), notes: structuredClone(frame.notes), cartX: frame.cartX, cartPushers: frame.cartPushers,
     cages: structuredClone(frame.cages), bodies: structuredClone(frame.bodies), feed: structuredClone(frame.feed),
     bellAt: frame.bellAt, flickerAt: frame.flickerAt, blackoutUntil: frame.blackoutUntil,
   };
@@ -1120,6 +1127,9 @@ function applyJournalEntry(room: Room, entry: JournalEntry): { ok: boolean; erro
   else if (entry.kind === "input" && entry.body) return handleInput(room, entry.body);
   return undefined;
 }
+
+/** Test hook: nearest pinnable wall/tree anchor to a world x. */
+export const snapAnchorForTest = (x: number) => snapAnchor(x);
 
 /** Test hook: the shadow past-world a live visit currently sees at `until`. */
 export function simulatePastForTest(room: Room, until: number): Room | null {
@@ -1288,6 +1298,8 @@ function reconcileFuture(room: Room, visit: TimeVisit, now: number, past?: Room)
     room.pool = structuredClone(future.pool);
     room.doors = structuredClone(future.doors).map((door) => ({ ...door, holder: door.holder === visit.visitorId ? visit.playerId : door.holder }));
     room.keyX = future.keyX; room.supplyDrops = structuredClone(future.supplyDrops); room.cartX = future.cartX; room.cartPushers = future.cartPushers;
+    room.notes = structuredClone(future.notes).map((note) => note.authorId === visit.visitorId && room.players.get(visit.playerId)
+      ? { ...note, authorId: visit.playerId, authorName: room.players.get(visit.playerId)!.name } : note);
     room.cages = structuredClone(future.cages); room.bodies = structuredClone(future.bodies).map((body) => ({ ...body, id: body.id === visit.visitorId ? visit.playerId : body.id }));
     room.feed = structuredClone(future.feed);
     room.blackoutUntil = future.blackoutUntil; room.blackoutReadyAt = future.blackoutReadyAt; room.bellAt = future.bellAt; room.flickerAt = future.flickerAt; room.nextFlicker = future.nextFlicker;
@@ -1402,7 +1414,7 @@ function pastSnapshot(room: Room, p: P, visit: TimeVisit, now: number): Snapshot
   view.doors = view.doors?.map((door) => ({ ...door, holder: door.holder ? (door.holder === visit.visitorId ? p.id : `echo:${door.holder}`) : null }));
   view.bodies = view.bodies.map((body) => ({ ...body, at: body.at ? body.at + shift : 0 }));
   view.feed = view.feed.map((item) => ({ ...item, at: item.at + shift }));
-  const labels: Record<string, string> = { pickup_key: "picked up the iron key", supply_taken: "took a repair kit", supply_recovered: "recovered a repair kit", supply_delivered: "delivered a kit", task_complete: "completed a ward", ward_ruined: "ruined a ward", kill: "struck someone", unlock_cage: "opened a cage", timepiece_taken: "took the timepiece" };
+  const labels: Record<string, string> = { pickup_key: "picked up the iron key", supply_taken: "took a repair kit", supply_recovered: "recovered a repair kit", supply_delivered: "delivered a kit", task_complete: "completed a ward", ward_ruined: "ruined a ward", kill: "struck someone", unlock_cage: "opened a cage", timepiece_taken: "took the timepiece", pin_note: "pinned a page" };
   const label = (event: HistoryEvent) => event.type === "door_action" && typeof event.data.message === "string" && event.data.message.includes("found")
     ? event.data.message.replace(/^You found /, "took ").replace(/\.$/, "") : labels[event.type];
   const witnessed = shadow.historyEvents.filter((event) => event.at <= cursor && event.at >= cursor - 8000 && event.actorId !== visit.visitorId && event.inside === p.inside && dist(event.x, p.x) <= view.visionRadius && label(event)).slice(-4)
@@ -1471,6 +1483,22 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
     if (body.action === "door_lock") return { ok: false, error: "Stand beside a door with its key." };
   }
 
+  if (body.action === "pin_note") {
+    if (!p.alive) return { ok: false, error: "The dead cannot pin pages." };
+    if (room.phase !== "playing") return { ok: false, error: "The night has not begun." };
+    if (p.inside) return { ok: false, error: "Step outside to pin a page." };
+    if (p.caged) return { ok: false, error: "A caged soul cannot pin a page." };
+    const text = typeof body.noteText === "string" ? body.noteText.replace(/\s+/g, " ").trim() : "";
+    if (!text) return { ok: false, error: "Write something on the page first." };
+    if (text.length > NOTE_TEXT_MAX) return { ok: false, error: `Keep the page under ${NOTE_TEXT_MAX} characters.` };
+    const anchor = snapAnchor(p.x);
+    if (!anchor || Math.abs(anchor.x - p.x) > NOTE_REACH) return { ok: false, error: "Stand beside a house wall or a tree to pin a page." };
+    const note: Note = { id: `note:${room.code}:${room.round}:${room.notes.length}:${room.activeEventId || randomUUID()}`, authorId: p.id, authorName: p.name, text, x: ix(anchor.x), kind: anchor.kind, at: roomNow(room) };
+    room.notes.push(note);
+    feed(room, `${p.name} pins a page to the ${anchor.kind === "wall" ? (BUILDINGS.find((b) => b.id === anchor.ref)?.name ?? "wall").toLowerCase() : "tree"}.`);
+    record(room, p, "pin_note", { x: note.x, kind: note.kind });
+    return { ok: true };
+  }
   if (body.action === "drop_supply" && p.alive && !p.inside && room.phase === "playing" && p.hasSupply) {
     dropSupply(room, p);
     record(room, p, "supply_drop", {});
@@ -2007,6 +2035,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
         holder: d.holder === me.id || (owner && canSee(owner.x)) ? d.holder : null };
     }),
     keyX: room.keyX !== null && canSee(room.keyX) ? room.keyX : null,
+    notes: room.notes.filter((n) => canSee(n.x)).map((n) => ({ id: n.id, x: n.x, kind: n.kind, author: n.authorName, text: n.text })),
     timepieces: loosePieces(room).filter((tp) => canSee(tp.x)).map((tp) => tp.x),
     timepieceX: (() => { const tp = loosePieces(room).find((t2) => canSee(t2.x)); return tp ? tp.x : null; })(),
     time: room.temporalShadow ? undefined : { mode: "present", earliest: room.history[0]?.at ?? room.startedAt, latest: room.history.at(-1)?.at ?? room.startedAt },
