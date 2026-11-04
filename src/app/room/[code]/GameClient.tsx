@@ -73,18 +73,21 @@ export default function GameClient({ code }: { code: string }) {
   }, [chatOpen]);
 
   const send = useCallback(async (payload: Record<string, unknown>) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2500); // hung POSTs must not pile up; next poll resyncs
     try {
       const res = await fetch("/api/game/input", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ code, playerId: getPid(), ...payload }),
+        signal: controller.signal,
       });
       const data = await res.json();
       if (!data.ok && data.error) {
         setToast(data.error);
         setTimeout(() => setToast(null), 2200);
       }
-    } catch { /* network hiccup — next poll resyncs */ }
+    } catch { /* network hiccup — next poll resyncs */ } finally { clearTimeout(timeout); }
   }, [code]);
 
   const getSettingsStore = useCallback(() => {
@@ -221,24 +224,48 @@ export default function GameClient({ code }: { code: string }) {
       if (!res.ok || !data.ok) { setJoinError(data.error ?? "Could not enter the town."); return; }
       // the server may re-adopt a stale seat under our name — use its canonical id
       if (data.playerId && data.playerId !== getPid()) localStorage.setItem("hc_pid", data.playerId);
-      timer = setInterval(async () => {
+      let inflight = false;
+      let failures = 0;
+      let delay = 100;
+      let lastFp = "";
+      let lastShownNow = 0;
+      const tick = async () => {
+        if (inflight) return; // never stack overlapping state fetches
+        inflight = true;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3000);
         try {
-          const r = await fetch(`/api/game/state?code=${code}&playerId=${getPid()}`);
-          if (!r.ok) return;
+          const r = await fetch(`/api/game/state?code=${code}&playerId=${getPid()}`, { signal: controller.signal });
+          if (!r.ok) { failures++; return; }
           const s: Snapshot = await r.json();
           if (!alive) return;
+          failures = 0;
           snapRef.current = s;
           if (timePanelRef.current?.isOpen && (!s.self.hasTimepiece || s.phase !== "playing")) timePanelRef.current.close();
           wardPanelRef.current?.update(s.minigame, s.self.stamina, s.self.exhausted);
-          setSnap(s);
+          // Skip the React re-render when nothing but the clock changed (idle players cost ~nothing then).
+          const fp = JSON.stringify({ ...s, now: 0 });
+          if (fp !== lastFp || s.now - lastShownNow >= 900) {
+            lastFp = fp; lastShownNow = s.now;
+            setSnap(s);
+          }
           audioRef.current?.update(s);
           if (lastPhase.current === "lobby" && s.phase === "playing") {
             setRoleBanner(s.self.role === "hollow" ? "hollow" : "crew");
             setTimeout(() => setRoleBanner(null), 4500);
           }
           lastPhase.current = s.phase;
-        } catch { /* retry next tick */ }
+        } catch { failures++; } // retry with backoff below
+        finally { clearTimeout(timeout); inflight = false; }
+      };
+      timer = setInterval(() => {
+        // adaptive: 100ms while healthy, up to 1s after repeated failures or when the tab is hidden
+        const hidden = typeof document !== "undefined" && document.hidden;
+        const want = failures >= 3 || hidden ? 1000 : 100;
+        if (want !== delay) { delay = want; if (timer) clearInterval(timer); timer = setInterval(tick, delay); }
+        void tick();
       }, 100);
+      void tick();
     })();
     const bye = () => {
       if (leavingRef.current) return; // explicit leave already freed the seat
