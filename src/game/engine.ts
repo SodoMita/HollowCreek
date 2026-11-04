@@ -18,6 +18,7 @@ import { BUILDINGS, buildingHint, clampWorld, doorX, dropBuildingKeys, newDoors,
 import { bumpStats } from "./stats";
 import { shuffle } from "./rng";
 import { canonicalInput } from "./input";
+import { captureHistory, frameAt, restoreFrame } from "./history";
 import { snapshotEtag } from "./fingerprint";
 import { applyWardMove, createWardPuzzle, validWardMove, wardProgress, wardSolved, wardView, type WardPuzzle } from "./wards";
 import type { FeedItem, InputBody, MatchStats, Note, Phase, Role, RoomListing, Snapshot } from "./types";
@@ -31,7 +32,7 @@ interface SupplyDrop { id: string; x: number }
 interface HistoryEvent { at: number; actorId: string; name: string; x: number; inside: string | null; type: string; data: Record<string, unknown> }
 type JournalEntry = { seq: number; at: number; kind: "input" | "tick" | "presence" | "leave" | "depart" | "return" | "respawn"; seed: number; playerId?: string; visitorId?: string; cursor?: number; lastSeen?: number; pieceId?: string; body?: InputBody };
 export interface TimepieceState { id: string; x: number; holder: string | null; consumed: boolean }
-interface HistoryFrame {
+export interface HistoryFrame {
   at: number; seq: number; players: P[]; pool: TaskState[]; doors: DoorState[]; keyX: number | null; notes: Note[];
   phase: Phase; meeting: { endsAt: number; reason: string } | null; winner: Role | null; winReason: string | null;
   nextFlicker: number; blackoutReadyAt: number; timepieces: TimepieceState[]; timepiecePending: boolean; endedAt: number;
@@ -97,7 +98,7 @@ interface P {
   temporalVisitor?: boolean;
 }
 
-interface Room {
+export interface Room {
   code: string;
   phase: Phase;
   players: Map<string, P>;
@@ -1052,51 +1053,6 @@ function resolveMeeting(room: Room) {
 // History is sampled rather than trusting a client-provided world state.
 // ---------------------------------------------------------------------------
 
-function captureHistory(room: Room, now: number, force = false) {
-  if (room.temporalShadow || (room.phase !== "playing" && room.phase !== "meeting")) return;
-  if (!force && now - room.lastHistoryAt < HISTORY_SAMPLE_MS) return;
-  room.lastHistoryAt = now;
-  room.history.push({
-    at: now, seq: room.journalSeq, phase: room.phase, meeting: structuredClone(room.meeting), winner: room.winner, winReason: room.winReason,
-    nextFlicker: room.nextFlicker, blackoutReadyAt: room.blackoutReadyAt, timepieces: structuredClone(room.timepieces), timepiecePending: room.timepiecePending, endedAt: room.endedAt,
-    players: structuredClone([...room.players.values()].filter((p) => p.id !== room.timeVisit?.playerId)),
-    pool: structuredClone(room.pool), doors: structuredClone(room.doors), keyX: room.keyX,
-    supplyDrops: structuredClone(room.supplyDrops), notes: structuredClone(room.notes), cartX: room.cartX, cartPushers: room.cartPushers,
-    cages: structuredClone(room.cages), bodies: structuredClone(room.bodies), feed: structuredClone(room.feed), events: structuredClone(room.historyEvents.slice(-32)),
-    bellAt: room.bellAt, flickerAt: room.flickerAt, blackoutUntil: room.blackoutUntil,
-  });
-  // Keep the whole night selectable while progressively thinning older samples.
-  if (room.history.length > 7200) {
-    const older = room.history.slice(0, 3600).filter((_, index) => index % 2 === 0);
-    room.history = older.concat(room.history.slice(3600));
-  }
-}
-
-function frameAt(room: Room, at: number): HistoryFrame | null {
-  if (!room.history.length) return null;
-  let lo = 0, hi = room.history.length - 1;
-  while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2);
-    if (room.history[mid].at <= at) lo = mid; else hi = mid - 1;
-  }
-  return room.history[lo];
-}
-
-/** Restore a checkpoint without sharing mutable objects or performing I/O. */
-function restoreFrame(room: Room, frame: HistoryFrame): Room {
-  return {
-    ...room, replaying: true, temporalShadow: true, replayNow: frame.at, replayVisitorId: undefined,
-    timeVisit: null, history: [], historyEvents: structuredClone(frame.events), journal: [], journalSeq: frame.seq,
-    phase: frame.phase, meeting: structuredClone(frame.meeting), winner: frame.winner, winReason: frame.winReason,
-    nextFlicker: frame.nextFlicker, blackoutReadyAt: frame.blackoutReadyAt, endedAt: frame.endedAt,
-    timepieces: structuredClone(frame.timepieces), timepiecePending: frame.timepiecePending,
-    players: new Map(frame.players.map((player) => [player.id, structuredClone(player)])),
-    pool: structuredClone(frame.pool), doors: structuredClone(frame.doors), keyX: frame.keyX,
-    supplyDrops: structuredClone(frame.supplyDrops), notes: structuredClone(frame.notes), cartX: frame.cartX, cartPushers: frame.cartPushers,
-    cages: structuredClone(frame.cages), bodies: structuredClone(frame.bodies), feed: structuredClone(frame.feed),
-    bellAt: frame.bellAt, flickerAt: frame.flickerAt, blackoutUntil: frame.blackoutUntil,
-  };
-}
 
 function replayDeparture(room: Room, playerId: string, pieceId?: string) {
   const player = room.players.get(playerId);

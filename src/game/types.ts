@@ -66,6 +66,7 @@ export const TIMEPIECE_X = 1260;
 export const TIME_VISIT_MS = 60_000;
 export const HISTORY_SAMPLE_MS = 500;
 
+
 export interface Station {
   id: string;
   name: string;
