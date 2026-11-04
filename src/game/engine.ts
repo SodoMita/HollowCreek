@@ -172,3 +172,19 @@ const g = globalThis as typeof globalThis & {
 // Chronicle — every player action is persisted
 
 bindEngineHooks({ snapshot, tickRoom });
+
+// Full barrel: the modules split out of this file stay reachable from
+// "@/game/engine" for routes, tests and the static client.
+export * from "./timepieces";
+export * from "./proximity";
+export * from "./history";
+export * from "./input";
+export * from "./chronicle";
+export * from "./time-travel";
+export * from "./rules";
+export * from "./actions";
+export * from "./tick";
+export * from "./persistence";
+export * from "./registry";
+export * from "./snapshot";
+export * from "./hooks";
