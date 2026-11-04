@@ -8,8 +8,8 @@ import { Renderer } from "@/game/render";
 import { BUILDINGS, DOOR_REACH, doorX } from "@/game/buildings";
 import { WardPanel } from "@/game/ward-ui";
 import { TimePanel } from "@/game/time-ui";
-import { AudioDirector } from "@/game/audio";
-import { VoiceChat, type VoiceStatus } from "@/game/voice";
+import type { AudioDirector } from "@/game/audio";
+import type { VoiceChat, VoiceStatus } from "@/game/voice";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
 import { BELL_X, CARRY_SPEED, GHOST_SPEED, SPEED } from "@/game/types";
@@ -62,6 +62,8 @@ export default function GameClient({ code }: { code: string }) {
   const lastDir = useRef(0);
   const audioRef = useRef<AudioDirector | null>(null);
   const voiceRef = useRef<VoiceChat | null>(null);
+  const audioInitRef = useRef<Promise<typeof import("@/game/audio")> | null>(null);
+  const voiceInitRef = useRef<Promise<VoiceChat> | null>(null);
   const wardPanelRef = useRef<WardPanel | null>(null);
   const timePanelRef = useRef<TimePanel | null>(null);
   const settingsStoreRef = useRef<SettingsStore | null>(null);
@@ -181,8 +183,12 @@ export default function GameClient({ code }: { code: string }) {
     };
   }, [getSettingsStore, releaseInputs]);
 
-  const ensureAudio = useCallback(() => {
-    if (!audioRef.current) audioRef.current = new AudioDirector(getSettingsStore());
+  const ensureAudio = useCallback(async () => {
+    if (!audioRef.current) {
+      audioInitRef.current ??= import("@/game/audio");
+      const mod = await audioInitRef.current;
+      if (!audioRef.current) audioRef.current = new mod.AudioDirector(getSettingsStore());
+    }
     audioRef.current.start();
   }, [getSettingsStore]);
 
@@ -203,15 +209,26 @@ export default function GameClient({ code }: { code: string }) {
     return () => { panel.destroy(); timePanelRef.current = null; };
   }, [releaseInputs, send]);
 
-  // Voice is off by default. Only the Voice button calls getUserMedia().
-  useEffect(() => {
-    const voice = new VoiceChat({ baseUrl: () => "", roomCode: () => code,
-      playerId: getPid, getSettings: () => getSettingsStore().value, onStatus: setVoiceStatus });
-    voiceRef.current = voice;
-    const goodbye = () => voice.stop();
-    window.addEventListener("pagehide", goodbye);
-    return () => { window.removeEventListener("pagehide", goodbye); voice.destroy(); voiceRef.current = null; };
+  // Voice is off by default and its module loads only on first use — the page
+  // stays light until the player actually joins voice. Only then getUserMedia().
+  const getVoice = useCallback((): Promise<VoiceChat> => {
+    voiceInitRef.current ??= import("@/game/voice").then((mod) => {
+      const v = new mod.VoiceChat({ baseUrl: () => "", roomCode: () => code,
+        playerId: getPid, getSettings: () => getSettingsStore().value, onStatus: setVoiceStatus });
+      voiceRef.current = v;
+      return v;
+    });
+    return voiceInitRef.current;
   }, [code, getSettingsStore]);
+  useEffect(() => {
+    const goodbye = () => { void voiceRef.current?.stop(); };
+    window.addEventListener("pagehide", goodbye);
+    return () => {
+      window.removeEventListener("pagehide", goodbye);
+      voiceInitRef.current?.then((v) => { v.destroy(); }).catch(() => {});
+      voiceRef.current = null;
+    };
+  }, []);
 
   // ---- join + poll ----
   useEffect(() => {
@@ -349,8 +366,7 @@ export default function GameClient({ code }: { code: string }) {
       else if (bound("ruin") && !e.repeat) { void send({ action: "sabotage" }); e.preventDefault(); }
       else if (bound("chat") && !e.repeat) { openChat(); e.preventDefault(); }
       else if (bound("talk") && !e.repeat) {
-        const voice = voiceRef.current;
-        if (voice) { if (voice.current.active) voice.stop(); else void voice.start(); }
+        void getVoice().then((voice) => { if (voice.current.active) voice.stop(); else void voice.start(); });
         e.preventDefault();
       }
     };
@@ -370,7 +386,7 @@ export default function GameClient({ code }: { code: string }) {
       window.removeEventListener("keydown", down); window.removeEventListener("keyup", up);
       window.removeEventListener("pointerdown", unlockAudio); window.removeEventListener("blur", releaseInputs);
     };
-  }, [computeDir, send, ensureAudio, getSettingsStore, interactDown, interactUp, openChat, releaseInputs, activateTimepiece]);
+  }, [computeDir, send, ensureAudio, getSettingsStore, getVoice, interactDown, interactUp, openChat, releaseInputs, activateTimepiece]);
 
   // ---- render loop ----
   useEffect(() => {
@@ -451,12 +467,13 @@ export default function GameClient({ code }: { code: string }) {
   };
 
   const toggleVoice = () => {
-    const voice = voiceRef.current;
-    if (!voice || voiceStatus.starting) return;
-    if (voiceStatus.active) voice.stop();
-    else void voice.start();
+    if (voiceStatus.starting) return;
+    void getVoice().then((voice) => {
+      if (voiceStatus.active) voice.stop();
+      else void voice.start();
+    });
   };
-  const toggleMic = () => voiceRef.current?.setMuted(!voiceStatus.muted);
+  const toggleMic = () => { void getVoice().then((v) => v.setMuted(!voiceStatus.muted)); };
 
   // ------------------------------------------------------------------ UI ---
 
