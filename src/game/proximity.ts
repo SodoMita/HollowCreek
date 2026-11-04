@@ -1,5 +1,6 @@
 // Proximity queries — pure helpers over room state (no I/O).
 import { CAGE_UNLOCK_RANGE, INTERACT_RANGE, KILL_RANGE, MEETING_FROM, MEETING_TO } from "./types";
+import { STATIONS } from "./buildings";
 import type { P, Room } from "./engine";
 
 const dist = (a: number, b: number) => Math.abs(a - b);
@@ -33,3 +34,7 @@ export function killTarget(room: Room, p: P): P | null {
 }
 
 export function stationNear(p: P, id: string, range = INTERACT_RANGE): boolean {
+  // Matching x alone is not enough: a house job belongs to its indoor layer.
+  const station = STATIONS.find((st) => st.id === id);
+  return !!station && (station.inside ?? null) === p.inside && dist(station.x, p.x) < range;
+}

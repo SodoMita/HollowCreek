@@ -779,10 +779,6 @@ function dropSupply(room: Room, p: P) {
   if (room.supplyDrops.length > 24) room.supplyDrops.shift();
 }
 
-/** Matching x alone is not enough: a house job belongs to its indoor layer. */
-  const station = STATIONS.find((st) => st.id === id);
-  return !!station && (station.inside ?? null) === p.inside && dist(station.x, p.x) < range;
-}
 
 /** When carrying a kit, the ward directly beside you wins over loose items. */
 function tryDeliverSupply(room: Room, p: P): boolean {
