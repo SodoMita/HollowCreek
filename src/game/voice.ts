@@ -150,21 +150,28 @@ export class VoiceChat {
   }
 
   private async post(action: string, more: Record<string, unknown> = {}, keepalive = false) {
-    const res = await fetch(this.url(), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      keepalive,
-      body: JSON.stringify({
-        code: this.options.roomCode(),
-        playerId: this.options.playerId(),
-        session: this.session,
-        action,
-        ...more,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error ?? "Town voice is not answering.");
-    return data;
+    const controller = keepalive ? null : new AbortController();
+    const timeout = controller ? setTimeout(() => controller.abort(), 5000) : null;
+    try {
+      const res = await fetch(this.url(), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        keepalive,
+        signal: controller?.signal,
+        body: JSON.stringify({
+          code: this.options.roomCode(),
+          playerId: this.options.playerId(),
+          session: this.session,
+          action,
+          ...more,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Town voice is not answering.");
+      return data;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   }
 
   async start() {
@@ -424,7 +431,14 @@ export class VoiceChat {
         session: this.session,
         sinceAudio: String(this.lastAudioSeq),
       });
-      const res = await fetch(this.url("?" + query), { cache: "no-store" });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000); // polls run every 300ms — a hung one must not stack
+      let res: Response;
+      try {
+        res = await fetch(this.url("?" + query), { cache: "no-store", signal: controller.signal });
+      } finally {
+        clearTimeout(timeout);
+      }
       if (generation !== this.generation) return;
       if (!res.ok) {
         if (res.status === 403) {

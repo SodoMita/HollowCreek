@@ -230,14 +230,19 @@ export default function GameClient({ code }: { code: string }) {
       let delay = 100;
       let lastFp = "";
       let lastShownNow = 0;
+      let lastRev = ""; // server fingerprint of the last state we hold
       const tick = async () => {
         if (inflight) return; // never stack overlapping state fetches
         inflight = true;
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 3000);
         try {
-          const r = await fetch(`/api/game/state?code=${code}&playerId=${getPid()}`, { signal: controller.signal });
+          const revParam = lastRev ? `&rev=${encodeURIComponent(lastRev)}` : "";
+          const r = await fetch(`/api/game/state?code=${code}&playerId=${getPid()}${revParam}`, { signal: controller.signal });
+          if (r.status === 304) { failures = 0; return; } // unchanged — skip the payload entirely
           if (!r.ok) { failures++; return; }
+          const etag = r.headers.get("etag");
+          if (etag) lastRev = etag;
           const s: Snapshot = await r.json();
           if (!alive) return;
           failures = 0;
