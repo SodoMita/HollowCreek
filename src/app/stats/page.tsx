@@ -17,11 +17,17 @@ function fmtTime(sec: number): string {
 }
 
 export default async function StatsPage() {
-  const rows = await db
-    .select()
-    .from(playerStats)
-    .orderBy(desc(playerStats.wins), desc(playerStats.games))
-    .limit(200);
+  let rows: (typeof playerStats.$inferSelect)[] = [];
+  let dbDown = false;
+  try {
+    rows = await db
+      .select()
+      .from(playerStats)
+      .orderBy(desc(playerStats.wins), desc(playerStats.games))
+      .limit(200);
+  } catch {
+    dbDown = true; // no database (dev sandbox) — show the page with an empty ledger
+  }
 
   const totals = rows.reduce(
     (a, r) => ({
@@ -58,6 +64,7 @@ export default async function StatsPage() {
           <ArrowLeft className="h-4 w-4" /> back to the crossroads
         </Link>
         <h1 className="mt-3 font-display text-6xl text-[#e9dfcf] drop-shadow-[0_4px_24px_rgba(200,90,40,0.3)]">Hall of Records</h1>
+      {dbDown && <p role="status" className="mt-3 rounded border border-[#6e3433] bg-[#1c1216] px-3 py-2 text-sm text-[#e29a84]">The clerk\u2019s ledger is unreachable right now (no database) — stats will appear once the town server is connected.</p>}
         <p className="mt-2 max-w-xl italic text-[#9c8b7a]">
           The town clerk writes down everything — every night endured, every blade,
           every cage, every letter spoken into the fog. He does not judge. He only counts.

@@ -52,19 +52,26 @@ export default async function ChroniclePage({ params }: { params: Promise<{ code
       </main>
     );
   }
-  const rows = await db
-    .select()
-    .from(gameEvents)
-    .where(eq(gameEvents.roomCode, code.toUpperCase()))
-    .orderBy(desc(gameEvents.id))
-    .limit(800);
-  const events = rows.reverse();
+  let events: (typeof gameEvents.$inferSelect)[] = [];
+  let dbDown = false;
+  try {
+    const rows = await db
+      .select()
+      .from(gameEvents)
+      .where(eq(gameEvents.roomCode, code.toUpperCase()))
+      .orderBy(desc(gameEvents.id))
+      .limit(800);
+    events = rows.reverse();
+  } catch {
+    dbDown = true;
+  }
 
   return (
     <main className="min-h-screen bg-[#0b0710] px-4 py-10">
       <div className="mx-auto max-w-3xl">
         <Link href="/" className="text-sm text-[#9c8b7a] hover:text-[#d99a3d]">← back to the crossroads</Link>
         <h1 className="mt-2 font-display text-5xl text-[#e9dfcf]">The Chronicle of {code.toUpperCase()}</h1>
+        {dbDown && <p role="status" className="mt-2 text-sm text-[#e29a84]">The ledger is unreachable right now (no database) — entries will appear once the town server is connected.</p>}
         <p className="mt-2 italic text-[#9c8b7a]">
           Every step, word, vote and kill — written down by the town clerk, who saw more than he said.
         </p>
