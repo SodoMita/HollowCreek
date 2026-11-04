@@ -20,6 +20,7 @@ import { shuffle } from "./rng";
 import { canonicalInput } from "./input";
 import { captureHistory, frameAt, restoreFrame } from "./history";
 import { feed, journal, kitId, record, roomNow, seeded } from "./chronicle";
+import { heldPiece, loosePieces, nearTimepiece, nearestTimepiece, usedPieces } from "./timepieces";
 import { snapshotEtag } from "./fingerprint";
 import { applyWardMove, createWardPuzzle, validWardMove, wardProgress, wardSolved, wardView, type WardPuzzle } from "./wards";
 import type { FeedItem, InputBody, MatchStats, Note, Phase, Role, RoomListing, Snapshot } from "./types";
@@ -753,22 +754,6 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
 
 const dist = (a: number, b: number) => Math.abs(a - b);
 /** Unused, unheld timepieces still lying on the road. */
-export const loosePieces = (room: Room) => room.timepieces.filter((tp) => !tp.consumed && tp.holder === null);
-/** The unconsumed timepiece a soul is carrying, if any. */
-export const heldPiece = (room: Room, playerId: string) => room.timepieces.find((tp) => tp.holder === playerId && !tp.consumed);
-export const usedPieces = (room: Room) => room.timepieces.filter((tp) => tp.consumed).length;
-function nearestTimepiece(room: Room, p: P): TimepieceState | null {
-  let best: TimepieceState | null = null;
-  for (const tp of loosePieces(room)) {
-    const distance = dist(tp.x, p.x);
-    if (distance >= 55) continue;
-    if (room.keyX !== null && dist(room.keyX, p.x) < INTERACT_RANGE && dist(room.keyX, p.x) < distance) continue;
-    if (room.doors.some((door) => door.keyX !== null && dist(door.keyX, p.x) <= 44 && dist(door.keyX, p.x) < distance)) continue;
-    if (!best || distance < dist(best.x, p.x)) best = tp;
-  }
-  return best;
-}
-function nearTimepiece(room: Room, p: P): boolean { return nearestTimepiece(room, p) !== null; }
 const inMeetingArea = (p: P) => p.caged || (p.x >= MEETING_FROM && p.x <= MEETING_TO);
 
 /** A key always targets the closest occupied lock within arm's reach. */
