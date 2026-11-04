@@ -2,8 +2,8 @@
 // beyond the original 0–4200 town; their thresholds never move a player.
 import { ix } from "./types";
 
-export const WORLD_MIN = -1500;
-export const WORLD_MAX = 5750;
+export const WORLD_MIN = -2800;
+export const WORLD_MAX = 7400;
 export const DOOR_REACH = 58;
 const KEY_REACH = 44;
 
@@ -36,8 +36,12 @@ export const doorX = (b: Building) => b.x + b.side * (b.width / 2 - 18);
 
 // Foreground trees are world-anchored (render.ts draws the same line), so a
 // page can be snapped to a trunk deterministically.
-export const TREE_COUNT = 50;
-export const treeX = (i: number) => WORLD_MIN + i * 190 + ((i * 71) % 90);
+// Foreground trees keep their historic positions: the line is anchored at
+// TREE_BASE (the original WORLD_MIN), and the map grew outward from there.
+export const TREE_BASE = -1500;
+export const TREE_MIN = -8;
+export const TREE_MAX = 72;
+export const treeX = (i: number) => TREE_BASE + i * 190 + ((((i * 71) % 90) + 90) % 90);
 
 export interface SnapAnchor { x: number; kind: "wall" | "tree"; ref: string }
 /** Nearest pinnable anchor to x: a building's wall face or a tree trunk. */
@@ -48,7 +52,7 @@ export const snapAnchor = (x: number): SnapAnchor | null => {
     const wx = Math.max(b.x + 12, Math.min(b.x + b.width - 12, x));
     consider({ x: wx, kind: "wall", ref: b.id });
   }
-  for (let i = 0; i < TREE_COUNT; i++) consider({ x: treeX(i), kind: "tree", ref: `tree:${i}` });
+  for (let i = TREE_MIN; i <= TREE_MAX; i++) consider({ x: treeX(i), kind: "tree", ref: `tree:${i}` });
   return best;
 };
 export const clampWorld = (x: number, inset = 30) => Math.max(WORLD_MIN + inset, Math.min(WORLD_MAX - inset, x));

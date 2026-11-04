@@ -68,6 +68,18 @@ export function drawHouseExterior(
   }
   ctx.restore();
 
+  // Warm window light spilling onto the road in front of the house.
+  if (!occupied) {
+    for (const wxs of [61, 197]) {
+      const cx = left + (wxs + 13.5) * scaleX;
+      const g = ctx.createRadialGradient(cx, ground + 4, 2, cx, ground + 4, 46 * scaleX + 18);
+      g.addColorStop(0, "rgba(255,178,92,0.20)");
+      g.addColorStop(1, "rgba(255,178,92,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.ellipse(cx, ground + 6, 46 * scaleX + 18, 12, 0, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
   ctx.save();
   ctx.globalAlpha = occupied ? 0.78 : 1;
   if (!drawSvg(ctx, "house/windows.svg", left, ground - ROOF_HEIGHT, b.width, ROOF_HEIGHT)) {

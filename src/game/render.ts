@@ -5,7 +5,7 @@ import {
 import type { Snapshot, Station } from "./types";
 import { createDefaultSettings, type GameSettings } from "./settings";
 import { drawBrokenWard, drawKit, drawSupplyCart } from "./ward-art";
-import { BUILDINGS, doorX, WORLD_MIN, WORLD_MAX } from "./buildings";
+import { BUILDINGS, doorX, TREE_MAX, TREE_MIN, treeX, WORLD_MIN, WORLD_MAX } from "./buildings";
 import { drawHouseExterior, drawHouseInterior } from "./house-art";
 import { drawSvg, drawTraveler } from "./svg-assets";
 
@@ -154,7 +154,7 @@ export class Renderer {
     }
     ctx.lineTo(w, ground); ctx.fill();
 
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 78; i++) {
       const wx = WORLD_MIN + i * 155 + ((i * 97) % 60);
       const sx = wx - cam * 0.45;
       if (sx < -90 || sx > w + 90) continue;
@@ -164,7 +164,7 @@ export class Renderer {
 
     // --- Malye Korely street dressing: fences, door lanterns, woodpiles, windmill ---
     // Purely decorative world-anchored props; they never change gameplay coordinates.
-    const FENCE_XS = [-1460, -1250, -700, -120, 420, 760, 1560, 1860, 2560, 2960, 3320, 3780, 4180, 4420, 5100, 5260];
+    const FENCE_XS = [-2760, -2180, -1460, -1250, -700, -120, 420, 760, 1560, 1860, 2560, 2960, 3320, 3780, 4180, 4420, 5100, 5260, 5980, 6280, 6900, 7180];
     for (const fx of FENCE_XS) {
       const sx = fx - cam;
       if (sx < -160 || sx > w + 160) continue;
@@ -178,8 +178,8 @@ export class Renderer {
       const sx = wx - cam;
       if (sx > -80 && sx < w + 80) drawSvg(ctx, "props/woodpile.svg", sx - 32, ground - 44, 64, 44);
     }
-    {
-      const sx = 4350 - cam; // Pomor windmill past the silo, before the foreman's office
+    for (const mx of [4350, 6620]) { // Pomor windmills: past the silo and at the far east end
+      const sx = mx - cam;
       if (sx > -150 && sx < w + 150) drawSvg(ctx, "props/windmill.svg", sx - 65, ground - 160, 130, 160);
     }
     for (const gx of [3110, 3265, 3345]) { // grave markers around the graves ward (x=3200)
@@ -209,8 +209,8 @@ export class Renderer {
       }
       ctx.stroke();
     }
-    for (let i = 0; i < 50; i++) {
-      const sx = WORLD_MIN + i * 190 + ((i * 71) % 90) - cam;
+    for (let i = TREE_MIN; i <= TREE_MAX; i++) {
+      const sx = treeX(i) - cam;
       if (sx < -60 || sx > w + 60) continue;
       ctx.fillStyle = "rgba(160,90,40,0.28)";
       ctx.beginPath(); ctx.ellipse(sx, ground + 8, 30, 6, 0, 0, Math.PI * 2); ctx.fill();
@@ -221,7 +221,7 @@ export class Renderer {
     }
     if (graphics.quality !== "low") {
       ctx.strokeStyle = "rgba(107,75,50,.55)"; ctx.lineWidth = 4;
-      for (let i = 0; i < 24; i++) {
+      for (let i = 0; i < 34; i++) {
         const fx = WORLD_MIN + i * 320 - cam;
         if (fx < -80 || fx > w + 80) continue;
         const fy = ground + 48 + (i % 3) * 3;
@@ -229,11 +229,17 @@ export class Renderer {
         ctx.moveTo(fx - 5, fy - 23); ctx.lineTo(fx + 78, fy - 17); ctx.moveTo(fx - 4, fy - 9); ctx.lineTo(fx + 77, fy - 5); ctx.stroke();
       }
       ctx.fillStyle = "rgba(93,103,111,.18)";
-      for (let i = 0; i < 30; i++) {
+      for (let i = 0; i < 42; i++) {
         const sx = WORLD_MIN + i * 260 + 60 - cam;
         if (sx < 0 || sx > w) continue;
         ctx.beginPath(); ctx.ellipse(sx, ground + 27, 4 + i % 5, 2, 0, 0, Math.PI * 2); ctx.fill();
       }
+    }
+
+    { // Hollow Creek crosses the road's west end; drawn after the ground so the water
+      // and plank bridge sit in the foreground, in front of the road surface
+      const sx = -2660 - cam;
+      if (sx > -300 && sx < w + 300) drawSvg(ctx, "props/creek-bridge.svg", sx, ground - 6, 260, 64);
     }
 
     // meeting square highlight
@@ -453,6 +459,8 @@ export class Renderer {
         const previous = this.doorOpenAmount.get(b.id) ?? target;
         const amount = graphics.reducedMotion ? target : previous + (target - previous) * Math.min(1, dt * 10);
         this.doorOpenAmount.set(b.id, amount);
+        drawSvg(ctx, "furniture/barrel.svg", sx - b.width / 2 - 30, ground - 34, 26, 34);
+        drawSvg(ctx, "furniture/crate.svg", sx + b.width / 2 + 8, ground - 26, 30, 26);
         drawHouseExterior(ctx, b, sx, ground, t, door, occupied, amount);
       }
     }
