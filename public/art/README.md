@@ -18,6 +18,22 @@ These are the actual SVG files used by the game, not reference images. Open `/ar
 - House facades carry carved bargeboard fretwork along both gable slopes; `house/door-frame.svg` gained porch steps; `house/interior.svg` gained a dark ceiling beam and a hanging lantern glow (the warm glow ellipses at cx 74/210 are unchanged). The renderer also spills warm window light onto the road and places a barrel and crate beside each house.
 - `rooms.json` — furniture placement. Each room item has an asset path, `x` relative to the house center, `y` relative to the ground (negative is upward), `width`, `height`, and optional `when: "done"` or `"unfinished"` for task state. Change these numbers to move or resize objects; reload to see changes.
 
+## Reference houses (Malye Korely)
+
+- `reference/houses.json` — the list of real houses of the Malye Korely open-air
+  museum used as the art reference (Pukhov 1812, Kirillov, Tretyakov, Popov,
+  Klokotov 1879, Limonnikov 1920), each with origin village, sector, source URLs
+  and downloaded photos (`/home/user/malye-korely/photos`, see SOURCES.md there).
+- `reference/<slug>-exterior.svg` / `reference/<slug>-interior.svg` — one
+  individually hand-authored SVG per real house (exterior and interior), each
+  tagged `data-ref="<slug>"` with a hand-authored marker comment. They are
+  reference/library assets, not wired into gameplay coordinates.
+- `scripts/test-house-assets.mjs` verifies: assets exist per house; no asset
+  repeats (hash + normalized content + unique titles); no script generates the
+  assets procedurally; every file under `public/art` is < 50 Kb; and the number
+  of real reference houses (6) is less than the game's house visual assets
+  (4 facades + 6 reference exteriors = 10).
+
 ## Alignment and editing
 
 Keep each SVG's `viewBox` unless intentionally changing its game alignment. House facades use a 300 × 158 world-unit core; windows align at x=61 and x=197. Door files use a 64 × 112 viewBox, with the world threshold anchored at x=20 and the bottom at ground level. The renderer mirrors the same side-profile door for left and right gables. The aperture geometry itself is in `src/game/house-art.ts` if the frame opening is deliberately moved.
