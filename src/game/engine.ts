@@ -21,7 +21,7 @@ import { canonicalInput } from "./input";
 import { captureHistory, frameAt, restoreFrame } from "./history";
 import { feed, journal, kitId, record, roomNow, seeded } from "./chronicle";
 import { heldPiece, loosePieces, nearTimepiece, nearestTimepiece, usedPieces } from "./timepieces";
-import { inMeetingArea, nearestBody, nearestOccupiedCage } from "./proximity";
+import { inMeetingArea, killTarget, nearestBody, nearestOccupiedCage, stationNear } from "./proximity";
 import { snapshotEtag } from "./fingerprint";
 import { applyWardMove, createWardPuzzle, validWardMove, wardProgress, wardSolved, wardView, type WardPuzzle } from "./wards";
 import type { FeedItem, InputBody, MatchStats, Note, Phase, Role, RoomListing, Snapshot } from "./types";
@@ -756,14 +756,6 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
 const dist = (a: number, b: number) => Math.abs(a - b);
 /** Unused, unheld timepieces still lying on the road. */
 
-function killTarget(room: Room, p: P): P | null {
-  let best: P | null = null;
-  for (const t of room.players.values()) {
-    if (t.id === p.id || t.temporalAbsent || t.id === room.timeVisit?.playerId || !t.alive || t.role === "hollow" || t.inside !== p.inside) continue;
-    if (dist(t.x, p.x) <= KILL_RANGE && (!best || dist(t.x, p.x) < dist(best.x, p.x))) best = t;
-  }
-  return best;
-}
 
 function dropKey(room: Room, p: P) {
   if (p.hasKey) {
@@ -788,7 +780,6 @@ function dropSupply(room: Room, p: P) {
 }
 
 /** Matching x alone is not enough: a house job belongs to its indoor layer. */
-function stationNear(p: P, id: string, range = INTERACT_RANGE): boolean {
   const station = STATIONS.find((st) => st.id === id);
   return !!station && (station.inside ?? null) === p.inside && dist(station.x, p.x) < range;
 }
