@@ -3,18 +3,55 @@ import type { WardGameView, WardKind } from "./wards";
 import type { DoorState } from "./buildings";
 
 export const WORLD_W = 4200;
+
+// Balance knobs live in ./balance (grouped & commented); re-exported here for compatibility.
+export {
+  SPEED,
+  GHOST_SPEED,
+  TICK_MS,
+  KILL_RANGE,
+  KILL_COOLDOWN_MS,
+  INTERACT_RANGE,
+  NOTE_REACH,
+  NOTE_TEXT_MAX,
+  MEETING_MS,
+  NIGHT_LENGTH_MS,
+  CELL_HALF,
+  CAGE_UNLOCK_RANGE,
+  MEETING_FROM,
+  MEETING_TO,
+  BELL_X,
+  BUBBLE_MS,
+  TASKS_PER_CREW,
+  VISION_CREW,
+  VISION_HOLLOW,
+  VISION_BLACKOUT,
+  BLACKOUT_MS,
+  BLACKOUT_CD_MS,
+  STAMINA_WORK_DRAIN,
+  STAMINA_IDLE_REGEN,
+  STAMINA_SLOW_THRESHOLD,
+  STAMINA_KILL_COST,
+  STAMINA_BLACKOUT_COST,
+  STAMINA_BELL_COST,
+  STAMINA_UNLOCK_COST,
+  SUPPLY_CART_START,
+  CART_PUSH_RANGE,
+  CART_SOLO_SPEED,
+  CART_HELPER_BONUS,
+  CART_MAX_SPEED,
+  CARRY_SPEED,
+  CARRY_VIGOR_DRAIN,
+  SABOTAGE_COOLDOWN_MS,
+  SABOTAGE_VIGOR_COST,
+  TIMEPIECE_X,
+  TIME_VISIT_MS,
+  HISTORY_SAMPLE_MS,
+} from "./balance";
 // Game state uses NO floats for positions: every world coordinate (player x,
 // cart, drops, keys, bodies, doors, cages) is an integer, so replays and
 // snapshots compare exactly. Rendering may still interpolate on the client.
 export const ix = (v: number) => Math.round(v);
-export const SPEED = 190; // px per second
-export const GHOST_SPEED = 260;
-export const TICK_MS = 50;
-export const KILL_RANGE = 75;
-export const KILL_COOLDOWN_MS = 18000;
-export const INTERACT_RANGE = 80;
-export const NOTE_REACH = 90; // stand this close to a wall/tree to pin or read a page
-export const NOTE_TEXT_MAX = 200;
 /** A handwritten page pinned to a building wall or a tree trunk. */
 export interface Note {
   id: string;
@@ -28,45 +65,6 @@ export interface Note {
   house: string | null;
   at: number;
 }
-export const MEETING_MS = 45000;
-/** A full night lasts about this long; drives the day-night sky cycle (0=dusk, 1=deep night). */
-export const NIGHT_LENGTH_MS = 40 * 60_000;
-export const CELL_HALF = 30;
-export const CAGE_UNLOCK_RANGE = 125;
-export const MEETING_FROM = 1880;
-export const MEETING_TO = 2520;
-export const BELL_X = 2200;
-export const BUBBLE_MS = 6000;
-export const TASKS_PER_CREW = 4;
-export const VISION_CREW = 420;
-export const VISION_HOLLOW = 620;
-export const VISION_BLACKOUT = 190;
-export const BLACKOUT_MS = 9000;
-export const BLACKOUT_CD_MS = 30000;
-// Vigor (stamina): work and deeds drain it; idling restores it.
-export const STAMINA_WORK_DRAIN = 0.10; // per second while working a ward
-export const STAMINA_IDLE_REGEN = 0.09; // per second while idle
-export const STAMINA_SLOW_THRESHOLD = 0.3; // below this, work slows linearly
-export const STAMINA_KILL_COST = 0.35;
-export const STAMINA_BLACKOUT_COST = 0.3;
-export const STAMINA_BELL_COST = 0.15;
-export const STAMINA_UNLOCK_COST = 0.1;
-
-// One cart, pushed together; sizes and speeds are world units per second.
-export const SUPPLY_CART_START = 900;
-export const CART_PUSH_RANGE = 105;
-export const CART_SOLO_SPEED = 38;
-export const CART_HELPER_BONUS = 26;
-export const CART_MAX_SPEED = 116;
-export const CARRY_SPEED = 122;
-export const CARRY_VIGOR_DRAIN = 0.045;
-export const SABOTAGE_COOLDOWN_MS = 26000;
-export const SABOTAGE_VIGOR_COST = 0.22;
-export const TIMEPIECE_X = 1260;
-export const TIME_VISIT_MS = 60_000;
-export const HISTORY_SAMPLE_MS = 500;
-
-
 export interface Station {
   id: string;
   name: string;
