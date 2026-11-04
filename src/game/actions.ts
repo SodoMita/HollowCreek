@@ -12,7 +12,7 @@ import { captureHistory } from "./history";
 import { applyWardMove, validWardMove, wardProgress, wardSolved } from "./wards";
 import { inMeetingArea, killTarget, nearestBody, nearestOccupiedCage, stationNear } from "./proximity";
 import { dropKey, dropSupply, dropTimepiece, beginMeeting, beginRepair, canRepair, checkWin, doKill, freePlayer, resolveMeeting, tryDeliverSupply } from "./rules";
-import { handlePastInput, startTimeVisit, endTimeVisit } from "./hooks";
+import { endTimeVisit, handlePastInput, startTimeVisit } from "./time-travel";
 import { rooms, listRoomsSync, makeCode } from "./registry";
 import { shuffle } from "./rng";
 import { heldPiece, nearTimepiece, nearestTimepiece } from "./timepieces";

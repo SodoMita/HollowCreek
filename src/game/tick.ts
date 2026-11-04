@@ -1,14 +1,13 @@
 // Authoritative tick loop: advances every live room, emits change events for
 // SSE, and GCs dead rooms. Time-travel reconciliation is injected via hooks.
 import { emitRoom, feed, journal, markDirty, roomNow, seeded } from "./chronicle";
-import { endTimeVisit, pastRoom, reconcileFuture } from "./hooks";
+import { endTimeVisit, pastRoom, reconcileFuture, spawnNextTimepiece } from "./time-travel";
 import { dropKey, dropSupply, dropTimepiece, resolveMeeting } from "./rules";
 import { leaveRoom } from "./actions";
 import { rooms } from "./registry";
 import { captureHistory } from "./history";
 import { heldPiece, nearTimepiece, usedPieces } from "./timepieces";
 import { inMeetingArea, nearestBody } from "./proximity";
-import { spawnNextTimepiece } from "./hooks";
 import { clampWorld, dropBuildingKeys, walkThroughBuildings } from "./buildings";
 import { stationNear } from "./proximity";
 import {

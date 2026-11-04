@@ -14,7 +14,7 @@ import {
 } from "./types";
 import type { P, Room, TaskState } from "./engine";
 
-import { endTimeVisit, spawnNextTimepiece } from "./hooks";
+import { endTimeVisit, spawnNextTimepiece } from "./time-travel";
 
 // ---------------------------------------------------------------------------
 // Helpers
