@@ -3,6 +3,9 @@
 // DATABASE_URL and belong to CI.
 import { spawnSync } from "node:child_process";
 const SUITES = ["test-rng", "test-fingerprint", "test-wards", "test-house-wards", "test-ward-ui", "test-voice", "test-voice-client", "test-input", "test-history", "test-proximity", "test-focus-trap"];
+// DB-backed suites run too when a database is reachable (DATABASE_URL set).
+const DB_SUITES = ["test-notes", "test-time-engine", "test-time-multi", "test-time-nested", "test-time-seeing", "test-command-replay", "test-replay-determinism"];
+if (process.env.DATABASE_URL) SUITES.push(...DB_SUITES);
 let failed = 0;
 for (const t of SUITES) {
   const r = spawnSync(process.execPath, [`scripts/${t}.mjs`], { stdio: "pipe", encoding: "utf8" });
