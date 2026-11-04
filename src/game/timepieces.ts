@@ -1,5 +1,6 @@
 // Timepiece helpers — pure queries over room state (no I/O).
-import { dist, INTERACT_RANGE } from "./types";
+import { INTERACT_RANGE } from "./types";
+import { dist } from "./engine";
 import type { P, Room, TimepieceState } from "./engine";
 
 export const loosePieces = (room: Room) => room.timepieces.filter((tp) => !tp.consumed && tp.holder === null);
