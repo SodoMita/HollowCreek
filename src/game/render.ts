@@ -6,6 +6,7 @@ import type { Snapshot, Station } from "./types";
 import { createDefaultSettings, type GameSettings } from "./settings";
 import { drawBrokenWard, drawKit, drawSupplyCart } from "./ward-art";
 import { BUILDINGS, doorX, TREE_MAX, TREE_MIN, treeX, WORLD_MIN, WORLD_MAX } from "./buildings";
+import { TOWN_HOUSES } from "./town";
 import { drawHouseExterior, drawHouseInterior } from "./house-art";
 import { drawSvg, drawTraveler } from "./svg-assets";
 
@@ -15,6 +16,19 @@ const LEAF_COLORS = ["#b4552a", "#c9762f", "#8f3b1f", "#d99a3d", "#7a4a21"];
 
 export class Renderer {
   private leaves: Leaf[] = [];
+  private grads = new Map<string, CanvasGradient>();
+  private bubbleWrap = new Map<string, { lines: string[]; bw: number }>();
+
+  /** Canvas gradients are immutable once built; cache them by the dims that define them. */
+  private grad(key: string, make: () => CanvasGradient): CanvasGradient {
+    let g = this.grads.get(key);
+    if (!g) {
+      if (this.grads.size > 256) this.grads.clear();
+      g = make();
+      this.grads.set(key, g);
+    }
+    return g;
+  }
   private settings: GameSettings = createDefaultSettings();
   cameraX = 0;
   /** When set, the camera centers on this world x and zooms in to read a page. */
@@ -77,12 +91,15 @@ export class Renderer {
     const now = snap.now;
 
     // --- layered dusk sky ---
-    const sky = ctx.createLinearGradient(0, 0, 0, ground);
-    sky.addColorStop(0, "#090b1b");
-    sky.addColorStop(0.38, "#211329");
-    sky.addColorStop(0.72, "#512534");
-    sky.addColorStop(0.9, "#9a4c2c");
-    sky.addColorStop(1, "#c0743c");
+    const sky = this.grad(`sky:${ground}`, () => {
+      const g = ctx.createLinearGradient(0, 0, 0, ground);
+      g.addColorStop(0, "#090b1b");
+      g.addColorStop(0.38, "#211329");
+      g.addColorStop(0.72, "#512534");
+      g.addColorStop(0.9, "#9a4c2c");
+      g.addColorStop(1, "#c0743c");
+      return g;
+    });
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, w, ground);
 
@@ -162,6 +179,22 @@ export class Renderer {
       this.drawTree(ctx, sx, ground, th, i);
     }
 
+    // --- background village: 100+ distinct houses along the whole world (visual only) ---
+    {
+      const s = 0.66, par = 0.62;
+      for (const th of TOWN_HOUSES) {
+        if (th.x < WORLD_MIN + 40 || th.x > WORLD_MAX - 40) continue;
+        const sx = th.x - cam * par;
+        const hw = th.w * s, hh = th.h * s;
+        if (sx < -hw || sx > w + hw) continue;
+        ctx.save();
+        ctx.globalAlpha = 0.82;
+        if (th.flip) { ctx.translate(sx + hw / 2, 0); ctx.scale(-1, 1); ctx.translate(-(sx + hw / 2), 0); }
+        drawSvg(ctx, th.asset, sx - hw / 2, ground - hh + 6, hw, hh);
+        ctx.restore();
+      }
+    }
+
     // --- Malye Korely street dressing: fences, door lanterns, woodpiles, windmill ---
     // Purely decorative world-anchored props; they never change gameplay coordinates.
     const FENCE_XS = [-2760, -2180, -1460, -1250, -700, -120, 420, 760, 1560, 1860, 2560, 2960, 3320, 3780, 4180, 4420, 5100, 5260, 5980, 6280, 6900, 7180];
@@ -192,10 +225,13 @@ export class Renderer {
     }
 
     // --- ground ---
-    const gg = ctx.createLinearGradient(0, ground, 0, h);
-    gg.addColorStop(0, "#2b1a12");
-    gg.addColorStop(0.12, "#1d120c");
-    gg.addColorStop(1, "#0d0806");
+    const gg = this.grad(`ground:${ground}:${h}`, () => {
+      const g = ctx.createLinearGradient(0, ground, 0, h);
+      g.addColorStop(0, "#2b1a12");
+      g.addColorStop(0.12, "#1d120c");
+      g.addColorStop(1, "#0d0806");
+      return g;
+    });
     ctx.fillStyle = gg;
     ctx.fillRect(0, ground, w, h - ground);
     // Rutted road, scattered stones, leaf piles, and a broken fence rhythm.
@@ -497,10 +533,13 @@ export class Renderer {
       for (let i = 0; i < layers; i++) {
         const fy = ground - 24 - i * 25;
         const drift = Math.sin(t * 0.24 + i * 2) * 70;
-        const fog = ctx.createLinearGradient(0, fy - 25, 0, fy + 25);
-        fog.addColorStop(0, "rgba(120,110,130,0)");
-        fog.addColorStop(0.5, `rgba(145,132,151,${0.075 + i * 0.018})`);
-        fog.addColorStop(1, "rgba(120,110,130,0)");
+        const fog = this.grad(`fog:${ground}:${i}`, () => {
+          const g = ctx.createLinearGradient(0, fy - 25, 0, fy + 25);
+          g.addColorStop(0, "rgba(120,110,130,0)");
+          g.addColorStop(0.5, `rgba(145,132,151,${0.075 + i * 0.018})`);
+          g.addColorStop(1, "rgba(120,110,130,0)");
+          return g;
+        });
         ctx.fillStyle = fog;
         ctx.fillRect(drift - 90, fy - 25, w + 180, 50);
       }
@@ -530,9 +569,12 @@ export class Renderer {
 
     // --- vignette ---
     if (graphics.vignette) {
-      const vg = ctx.createRadialGradient(w / 2, h / 2, h * 0.35, w / 2, h / 2, h * 0.95);
-      vg.addColorStop(0, "rgba(0,0,0,0)");
-      vg.addColorStop(1, "rgba(5,2,8,0.72)");
+      const vg = this.grad(`vg:${w}:${h}`, () => {
+        const g = ctx.createRadialGradient(w / 2, h / 2, h * 0.35, w / 2, h / 2, h * 0.95);
+        g.addColorStop(0, "rgba(0,0,0,0)");
+        g.addColorStop(1, "rgba(5,2,8,0.72)");
+        return g;
+      });
       ctx.fillStyle = vg;
       ctx.fillRect(0, 0, w, h);
     }
@@ -683,17 +725,28 @@ export class Renderer {
     ctx.save();
     ctx.globalAlpha = Math.max(0.15, alpha);
     ctx.font = "12px system-ui, sans-serif";
-    const words = text.split(" ");
-    const lines: string[] = [];
-    let line = "";
-    for (const wd of words) {
-      const test = line ? line + " " + wd : wd;
-      if (ctx.measureText(test).width > 150 && line) { lines.push(line); line = wd; }
-      else line = test;
-      if (lines.length >= 3) break;
+    if (!text) return; // empty bubble: Math.max(...[]) would be -Infinity
+    let wrapped = this.bubbleWrap.get(text);
+    if (!wrapped) {
+      if (this.bubbleWrap.size > 512) this.bubbleWrap.clear();
+      const words = text.split(" ");
+      const lines: string[] = [];
+      let line = "";
+      let truncated = false;
+      for (const wd of words) {
+        const test = line ? line + " " + wd : wd;
+        if (ctx.measureText(test).width > 150 && line) { lines.push(line); line = wd; }
+        else line = test;
+        if (lines.length >= 4) { truncated = true; break; } // keep wrapping visible, mark with ellipsis below
+      }
+      if (line && lines.length < 4) lines.push(line);
+      else if (line) truncated = true;
+      if (truncated && lines.length > 0) lines[lines.length - 1] = lines[lines.length - 1].slice(0, -1) + "…";
+      const bw = (lines.length ? Math.max(...lines.map((l) => ctx.measureText(l).width)) : 0) + 16;
+      wrapped = { lines, bw };
+      this.bubbleWrap.set(text, wrapped);
     }
-    if (line && lines.length < 4) lines.push(line);
-    const bw = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 16;
+    const { lines, bw } = wrapped;
     const bh = lines.length * 15 + 10;
     const bx = x - bw / 2, by = topY - bh;
     ctx.fillStyle = "rgba(245,240,228,0.95)";
