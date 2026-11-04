@@ -56,7 +56,7 @@ function recordedHouseRun(prefix) {
   assert.equal(room.pool.find((task) => task.id === "tollhouse-hearth").done, true);
   advance(room, 11);
   assert.ok(input(room, traveler, { action: "interact" }).ok);
-  assert.equal(room.timepieceHolder, traveler.id);
+  assert.equal(game.heldPiece(room, traveler.id)?.holder, traveler.id);
   assert.ok(input(room, traveler, { action: "time_travel", targetAt: origin }).ok);
   return { ...test, traveler, actor, origin, pickupAt };
 }
@@ -90,7 +90,7 @@ try {
   // A later traveler can change a previous traveler's already-returned present.
   const second = changed.crew[2];
   assert.equal(changed.room.revisions.length, 1);
-  assert.equal(changed.room.timepieceX, 1260, "a second single-use timepiece is available");
+  assert.ok(game.loosePieces(changed.room).some((tp) => tp.x === 1260), "a second single-use timepiece is available");
   function walkPresent(player, target) {
     for (let i = 0; i < 1200 && Math.abs(player.x - target) > 18; i++) {
       const dir = player.x < target ? 1 : -1;
@@ -108,7 +108,7 @@ try {
   assert.equal(changed.room.pool.find((task) => task.id === "tollhouse-hearth").done, true);
   walkPresent(second, 1260);
   assert.ok(input(changed.room, second, { action: "interact" }).ok);
-  assert.equal(changed.room.timepieceHolder, second.id);
+  assert.equal(game.heldPiece(changed.room, second.id)?.holder, second.id);
   walkPresent(second, 900); // this visitor reaches the key earlier in the past
   changed.room.history = changed.room.history.filter((frame) => frame.at >= changed.origin);
   assert.ok(input(changed.room, second, { action: "time_travel", targetAt: changed.origin }).ok);
@@ -225,7 +225,7 @@ try {
   assert.equal(meeting.room.timepiecePending, true);
   clock += 45001; game.advanceRoomForTest(meeting.room, clock);
   assert.equal(meeting.room.phase, "playing");
-  assert.equal(meeting.room.timepieceX, 1260, "the next item appears after the meeting");
+  assert.ok(game.loosePieces(meeting.room).some((tp) => tp.x === 1260), "the next item appears after the meeting");
   console.log("PASS meetings return the traveler and defer the next timepiece");
   Date.now = realNow; process.exit(0);
 } catch (error) { Date.now = realNow; console.error("COMMAND REPLAY TEST FAILED", error); process.exit(1); }

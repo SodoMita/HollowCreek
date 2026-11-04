@@ -35,7 +35,7 @@ try {
   assert.deepEqual(replay.doors, final.doors);
   assert.deepEqual(replay.supplyDrops, final.supplyDrops);
   assert.equal(replay.keyX, final.keyX); assert.equal(replay.cartX, final.cartX);
-  assert.equal(replay.timepieceX, final.timepieceX); assert.equal(replay.timepieceHolder, final.timepieceHolder);
+  assert.deepEqual(replay.timepieces, final.timepieces);
   assert.deepEqual(replay.feed, final.feed);
   console.log("PASS recorded inputs, movement ticks, kit identities and puzzle seed replay identically");
   Date.now = realNow; process.exit(0);

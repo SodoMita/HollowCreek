@@ -264,9 +264,11 @@ export class Renderer {
       ctx.restore();
     }
 
-    // The timepiece is a single collectible for this night.
-    if (typeof snap.timepieceX === "number") {
-      const tx = snap.timepieceX - cam, bob = Math.sin(t * 2.4) * 3;
+    // Timepieces are collectibles; several can rest on the road at once.
+    const pieceXs = Array.isArray(snap.timepieces) && snap.timepieces.length ? snap.timepieces
+      : (typeof snap.timepieceX === "number" ? [snap.timepieceX] : []);
+    for (const px of pieceXs) {
+      const tx = px - cam, bob = Math.sin(t * 2.4 + px) * 3;
       if (tx > -50 && tx < w + 50) {
         ctx.save(); ctx.shadowColor = "#9cdad3"; this.glow(ctx, 20);
         if (!drawSvg(ctx, "props/timepiece.svg", tx - 18, ground - 48 + bob, 36, 48)) {

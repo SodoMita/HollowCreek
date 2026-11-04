@@ -26,11 +26,12 @@ import type { FeedItem, InputBody, MatchStats, Phase, Role, RoomListing, Snapsho
 interface TaskState { id: string; done: boolean; delivered: boolean; sabotaged: boolean; progress: number; puzzle: WardPuzzle | null; previewUntil: number; supplyId?: string | null }
 interface SupplyDrop { id: string; x: number }
 interface HistoryEvent { at: number; actorId: string; name: string; x: number; inside: string | null; type: string; data: Record<string, unknown> }
-type JournalEntry = { seq: number; at: number; kind: "input" | "tick" | "presence" | "leave" | "depart" | "return" | "respawn"; seed: number; playerId?: string; visitorId?: string; cursor?: number; lastSeen?: number; body?: InputBody };
+type JournalEntry = { seq: number; at: number; kind: "input" | "tick" | "presence" | "leave" | "depart" | "return" | "respawn"; seed: number; playerId?: string; visitorId?: string; cursor?: number; lastSeen?: number; pieceId?: string; body?: InputBody };
+export interface TimepieceState { id: string; x: number; holder: string | null; consumed: boolean }
 interface HistoryFrame {
   at: number; seq: number; players: P[]; pool: TaskState[]; doors: DoorState[]; keyX: number | null;
   phase: Phase; meeting: { endsAt: number; reason: string } | null; winner: Role | null; winReason: string | null;
-  nextFlicker: number; blackoutReadyAt: number; timepieceX: number | null; timepieceHolder: string | null; timepieceConsumed: boolean; timepieceUses: number; timepiecePending: boolean; endedAt: number;
+  nextFlicker: number; blackoutReadyAt: number; timepieces: TimepieceState[]; timepiecePending: boolean; endedAt: number;
   supplyDrops: SupplyDrop[]; cartX: number; cartPushers: number;
   cages: { x: number; occupant: string | null }[];
   bodies: { x: number; color: string; name: string; id: string; at: number; inside: string | null }[];
@@ -38,7 +39,7 @@ interface HistoryFrame {
 }
 interface ReplayAction { at: number; order: number; seed: number; body: InputBody }
 interface TimeVisit {
-  playerId: string; visitorId: string; originAt: number; startedAt: number; endsAt: number;
+  playerId: string; visitorId: string; pieceId: string; originAt: number; startedAt: number; endsAt: number;
   base: HistoryFrame; initial: P; actions: ReplayAction[]; lastReconcileAt: number; reconciling: boolean;
 }
 interface TimeRevision {
@@ -117,10 +118,7 @@ interface Room {
   blackoutUntil: number;
   blackoutReadyAt: number;
   round: number;
-  timepieceX: number | null;
-  timepieceHolder: string | null;
-  timepieceConsumed: boolean;
-  timepieceUses: number;
+  timepieces: TimepieceState[];
   timepiecePending: boolean;
   revisions: TimeRevision[];
   history: HistoryFrame[];
@@ -300,7 +298,7 @@ async function hydrateRoom(code: string): Promise<Room | undefined> {
     // a night interrupted by a restart is over; the same people simply gather again
     phase: "lobby",
     round,
-    timepieceX: null, timepieceHolder: null, timepieceConsumed: false, timepieceUses: 0, timepiecePending: false, revisions: [],
+    timepieces: [], timepiecePending: false, revisions: [],
     history: [], historyEvents: [], journal: [], journalSeq: 0, activeSeed: 1, activeEventId: "", lastHistoryAt: 0, timeVisit: null,
     players: new Map(),
     bodies: [],
@@ -396,7 +394,7 @@ export function createRoom(playerId: string, name: string) {
   const room: Room = {
     code: makeCode(),
     phase: "lobby",
-    timepieceX: null, timepieceHolder: null, timepieceConsumed: false, timepieceUses: 0, timepiecePending: false, revisions: [],
+    timepieces: [], timepiecePending: false, revisions: [],
     history: [], historyEvents: [], journal: [], journalSeq: 0, activeSeed: 1, activeEventId: "", lastHistoryAt: 0, timeVisit: null,
     players: new Map(),
     bodies: [],
@@ -577,7 +575,7 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
   // Every ward is visibly broken at dusk. The shared pool has a task for every
   // structure, so nothing magically repairs itself when the night begins.
   room.pool = STATIONS.map(({ id, initialSupplied }) => ({ id, done: false, delivered: !!initialSupplied, sabotaged: false, progress: 0, puzzle: null, previewUntil: 0, supplyId: null }));
-  room.timepieceX = TIMEPIECE_X; room.timepieceHolder = null; room.timepieceConsumed = false; room.timepieceUses = 0; room.timepiecePending = false; room.revisions = [];
+  room.timepieces = [{ id: "tp0", x: TIMEPIECE_X, holder: null, consumed: false }]; room.timepiecePending = false; room.revisions = [];
   room.history = []; room.historyEvents = []; room.journal = []; room.journalSeq = 0; room.activeSeed = 1; room.activeEventId = ""; room.lastHistoryAt = 0; room.timeVisit = null;
   room.doors = newDoors();
   for (const p of ps) p.inside = null;
@@ -734,7 +732,7 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
     q.vote = null;
   }
   room.bodies = [];
-  room.timepieceX = null; room.timepieceHolder = null; room.timepieceConsumed = false; room.timepieceUses = 0; room.timepiecePending = false; room.revisions = [];
+  room.timepieces = [{ id: "tp0", x: TIMEPIECE_X, holder: null, consumed: false }]; room.timepiecePending = false; room.revisions = [];
   room.history = []; room.historyEvents = []; room.journal = []; room.journalSeq = 0; room.activeSeed = 1; room.activeEventId = ""; room.lastHistoryAt = 0; room.timeVisit = null;
   room.doors = newDoors();
   room.keyX = null;
@@ -760,14 +758,23 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
 // ---------------------------------------------------------------------------
 
 const dist = (a: number, b: number) => Math.abs(a - b);
-function nearTimepiece(room: Room, p: P): boolean {
-  if (room.timepieceConsumed || room.timepieceX === null) return false;
-  const distance = dist(room.timepieceX, p.x);
-  if (distance >= 55) return false;
-  if (room.keyX !== null && dist(room.keyX, p.x) < INTERACT_RANGE && dist(room.keyX, p.x) < distance) return false;
-  if (room.doors.some((door) => door.keyX !== null && dist(door.keyX, p.x) <= 44 && dist(door.keyX, p.x) < distance)) return false;
-  return true;
+/** Unused, unheld timepieces still lying on the road. */
+export const loosePieces = (room: Room) => room.timepieces.filter((tp) => !tp.consumed && tp.holder === null);
+/** The unconsumed timepiece a soul is carrying, if any. */
+export const heldPiece = (room: Room, playerId: string) => room.timepieces.find((tp) => tp.holder === playerId && !tp.consumed);
+export const usedPieces = (room: Room) => room.timepieces.filter((tp) => tp.consumed).length;
+function nearestTimepiece(room: Room, p: P): TimepieceState | null {
+  let best: TimepieceState | null = null;
+  for (const tp of loosePieces(room)) {
+    const distance = dist(tp.x, p.x);
+    if (distance >= 55) continue;
+    if (room.keyX !== null && dist(room.keyX, p.x) < INTERACT_RANGE && dist(room.keyX, p.x) < distance) continue;
+    if (room.doors.some((door) => door.keyX !== null && dist(door.keyX, p.x) <= 44 && dist(door.keyX, p.x) < distance)) continue;
+    if (!best || distance < dist(best.x, p.x)) best = tp;
+  }
+  return best;
 }
+function nearTimepiece(room: Room, p: P): boolean { return nearestTimepiece(room, p) !== null; }
 const inMeetingArea = (p: P) => p.caged || (p.x >= MEETING_FROM && p.x <= MEETING_TO);
 
 /** A key always targets the closest occupied lock within arm's reach. */
@@ -804,9 +811,8 @@ function dropKey(room: Room, p: P) {
 }
 
 function dropTimepiece(room: Room, p: P) {
-  if (!room.timepieceConsumed && room.timepieceHolder === p.id) {
-    room.timepieceHolder = null; room.timepieceX = clampWorld(p.x);
-  }
+  const tp = heldPiece(room, p.id);
+  if (tp) { tp.holder = null; tp.x = clampWorld(p.x); }
 }
 
 function dropSupply(room: Room, p: P) {
@@ -1008,7 +1014,7 @@ function captureHistory(room: Room, now: number, force = false) {
   room.lastHistoryAt = now;
   room.history.push({
     at: now, seq: room.journalSeq, phase: room.phase, meeting: structuredClone(room.meeting), winner: room.winner, winReason: room.winReason,
-    nextFlicker: room.nextFlicker, blackoutReadyAt: room.blackoutReadyAt, timepieceX: room.timepieceX, timepieceHolder: room.timepieceHolder, timepieceConsumed: room.timepieceConsumed, timepieceUses: room.timepieceUses, timepiecePending: room.timepiecePending, endedAt: room.endedAt,
+    nextFlicker: room.nextFlicker, blackoutReadyAt: room.blackoutReadyAt, timepieces: structuredClone(room.timepieces), timepiecePending: room.timepiecePending, endedAt: room.endedAt,
     players: structuredClone([...room.players.values()].filter((p) => p.id !== room.timeVisit?.playerId)),
     pool: structuredClone(room.pool), doors: structuredClone(room.doors), keyX: room.keyX,
     supplyDrops: structuredClone(room.supplyDrops), cartX: room.cartX, cartPushers: room.cartPushers,
@@ -1039,7 +1045,7 @@ function restoreFrame(room: Room, frame: HistoryFrame): Room {
     timeVisit: null, history: [], historyEvents: structuredClone(frame.events), journal: [], journalSeq: frame.seq,
     phase: frame.phase, meeting: structuredClone(frame.meeting), winner: frame.winner, winReason: frame.winReason,
     nextFlicker: frame.nextFlicker, blackoutReadyAt: frame.blackoutReadyAt, endedAt: frame.endedAt,
-    timepieceX: frame.timepieceX, timepieceHolder: frame.timepieceHolder, timepieceConsumed: frame.timepieceConsumed, timepieceUses: frame.timepieceUses, timepiecePending: frame.timepiecePending,
+    timepieces: structuredClone(frame.timepieces), timepiecePending: frame.timepiecePending,
     players: new Map(frame.players.map((player) => [player.id, structuredClone(player)])),
     pool: structuredClone(frame.pool), doors: structuredClone(frame.doors), keyX: frame.keyX,
     supplyDrops: structuredClone(frame.supplyDrops), cartX: frame.cartX, cartPushers: frame.cartPushers,
@@ -1048,11 +1054,13 @@ function restoreFrame(room: Room, frame: HistoryFrame): Room {
   };
 }
 
-function replayDeparture(room: Room, playerId: string) {
+function replayDeparture(room: Room, playerId: string, pieceId?: string) {
   const player = room.players.get(playerId);
   if (!player) return;
   dropKey(room, player); dropSupply(room, player); dropBuildingKeys(room.doors, player.id, player.x, player.inside);
-  room.timepieceX = null; room.timepieceHolder = null; room.timepieceConsumed = true; room.timepieceUses++;
+  const spent = pieceId ? room.timepieces.find((tp) => tp.id === pieceId) : undefined;
+  if (spent && !spent.consumed) { spent.consumed = true; spent.holder = null; }
+  for (const tp of room.timepieces) if (tp.holder === playerId) { tp.consumed = true; tp.holder = null; }
   player.temporalAbsent = true; player.dir = 0; player.cartHeld = false; player.interactHeld = false; player.activeWard = null;
   feed(room, "The timepiece breaks. A soul slips out of the present.");
 }
@@ -1106,11 +1114,16 @@ function applyJournalEntry(room: Room, entry: JournalEntry): { ok: boolean; erro
   if (entry.kind === "tick") tickRoom(room, entry.at);
   else if (entry.kind === "presence" && entry.playerId) { const player = room.players.get(entry.playerId); if (player) player.lastSeen = entry.at; }
   else if (entry.kind === "leave" && entry.playerId) replayLeave(room, entry.playerId);
-  else if (entry.kind === "depart" && entry.playerId) replayDeparture(room, entry.playerId);
+  else if (entry.kind === "depart" && entry.playerId) replayDeparture(room, entry.playerId, entry.pieceId);
   else if (entry.kind === "return" && entry.playerId && entry.visitorId) replayReturn(room, entry.playerId, entry.visitorId, entry.cursor ?? entry.at, entry.at, entry.lastSeen ?? entry.at);
-  else if (entry.kind === "respawn") { room.timepieceX = TIMEPIECE_X; room.timepieceHolder = null; room.timepieceConsumed = false; room.timepiecePending = false; }
+  else if (entry.kind === "respawn") { room.timepieces.push({ id: `tp${room.timepieces.length}`, x: TIMEPIECE_X, holder: null, consumed: false }); room.timepiecePending = false; }
   else if (entry.kind === "input" && entry.body) return handleInput(room, entry.body);
   return undefined;
+}
+
+/** Test hook: the shadow past-world a live visit currently sees at `until`. */
+export function simulatePastForTest(room: Room, until: number): Room | null {
+  return room.timeVisit ? simulatePast(room, room.timeVisit, until).room : null;
 }
 
 /** Internal replay entry point, also used by deterministic regression tests. */
@@ -1126,7 +1139,7 @@ function visitCursor(visit: TimeVisit, now: number) {
   return Math.min(now, visit.originAt + Math.max(0, now - visit.startedAt));
 }
 
-type ReplayTimelineItem = { at: number; rank: number; order: number; original?: JournalEntry; arrival?: { id: string; initial: P }; action?: { id: string; entry: ReplayAction }; suspend?: string };
+type ReplayTimelineItem = { at: number; rank: number; order: number; original?: JournalEntry; arrival?: { id: string; initial: P }; action?: { id: string; entry: ReplayAction }; consume?: { id: string; entry: ReplayAction }; suspend?: string };
 
 function timelineItems(room: Room, visit: TimeVisit, until: number): ReplayTimelineItem[] {
   // Sequence numbers are contiguous, so skip the unchanged prefix instead of
@@ -1139,11 +1152,17 @@ function timelineItems(room: Room, visit: TimeVisit, until: number): ReplayTimel
   }
   for (const revision of room.revisions) {
     if (revision.originAt >= visit.base.at && revision.originAt <= until) items.push({ at: revision.originAt, rank: 1, order: 0, arrival: { id: revision.visitorId, initial: revision.initial } });
-    for (const entry of revision.actions) if (entry.at >= visit.base.at && entry.at <= until) items.push({ at: entry.at, rank: 2, order: entry.order, action: { id: revision.visitorId, entry } });
+    for (const entry of revision.actions) if (entry.at >= visit.base.at && entry.at <= until) {
+      if (entry.body.action === "time_travel") items.push({ at: entry.at, rank: 2, order: entry.order, consume: { id: revision.visitorId, entry } });
+      else items.push({ at: entry.at, rank: 2, order: entry.order, action: { id: revision.visitorId, entry } });
+    }
     if (revision.endCursor >= visit.base.at && revision.endCursor <= until) items.push({ at: revision.endCursor, rank: 3, order: 0, suspend: revision.visitorId });
   }
   if (visit.originAt <= until) items.push({ at: visit.originAt, rank: 1, order: 1, arrival: { id: visit.visitorId, initial: visit.initial } });
-  for (const entry of visit.actions) if (entry.at <= until) items.push({ at: entry.at, rank: 2, order: entry.order, action: { id: visit.visitorId, entry } });
+  for (const entry of visit.actions) if (entry.at <= until) {
+    if (entry.body.action === "time_travel") items.push({ at: entry.at, rank: 2, order: entry.order, consume: { id: visit.visitorId, entry } });
+    else items.push({ at: entry.at, rank: 2, order: entry.order, action: { id: visit.visitorId, entry } });
+  }
   return items.sort((a, b) => a.at - b.at || a.rank - b.rank || a.order - b.order);
 }
 
@@ -1157,6 +1176,12 @@ function applyTimelineItem(sim: Room, item: ReplayTimelineItem): { ok: boolean; 
   } else if (item.suspend) {
     const visitor = sim.players.get(item.suspend);
     if (visitor) { visitor.temporalAbsent = true; visitor.dir = 0; visitor.moving = false; visitor.cartHeld = false; }
+  } else if (item.consume) {
+    // A timepiece used inside the past: the held piece is spent at this moment.
+    const tp = sim.timepieces.find((t2) => t2.holder === item.consume!.id && !t2.consumed);
+    if (tp) { tp.consumed = true; tp.holder = null; }
+    sim.replayNow = item.at;
+    return { ok: true };
   } else if (item.action) {
     sim.activeSeed = item.action.entry.seed; sim.activeEventId = `visit:${item.action.id}:${item.action.entry.order}`;
     return handleInput(sim, { ...item.action.entry.body, playerId: item.action.id });
@@ -1166,10 +1191,23 @@ function applyTimelineItem(sim: Room, item: ReplayTimelineItem): { ok: boolean; 
 
 /** Replay real commands and every earlier visit in chronological order. */
 function simulatePast(room: Room, visit: TimeVisit, until: number, resultOrder?: number): { room: Room; result?: { ok: boolean; error?: string } } {
-  const sim = restoreFrame(room, visit.base);
+  // Nested time travel: using a timepiece inside the past re-bases the whole
+  // visit at that earlier recorded moment, and every recorded action (including
+  // the earlier ones) replays forward from there. The visit itself — the causal
+  // anchor — is never removed.
+  let base = visit.base, originAt = visit.originAt;
+  for (const a of visit.actions) {
+    if (a.at > until) break;
+    if (a.body.action === "time_travel" && typeof a.body.targetAt === "number" && Number.isFinite(a.body.targetAt)) {
+      const frame = room.revisions.length ? room.history[0] : frameAt(room, a.body.targetAt);
+      if (frame) { base = structuredClone(frame); originAt = a.body.targetAt; }
+    }
+  }
+  const eff: TimeVisit = { ...visit, base, originAt };
+  const sim = restoreFrame(room, base);
   sim.replayVisitorId = visit.visitorId;
   let result: { ok: boolean; error?: string } | undefined;
-  for (const item of timelineItems(room, visit, until)) {
+  for (const item of timelineItems(room, eff, until)) {
     const applied = applyTimelineItem(sim, item);
     if (item.action?.id === visit.visitorId && item.action.entry.order === resultOrder) result = applied;
   }
@@ -1254,7 +1292,10 @@ function reconcileFuture(room: Room, visit: TimeVisit, now: number, past?: Room)
     room.feed = structuredClone(future.feed);
     room.blackoutUntil = future.blackoutUntil; room.blackoutReadyAt = future.blackoutReadyAt; room.bellAt = future.bellAt; room.flickerAt = future.flickerAt; room.nextFlicker = future.nextFlicker;
     room.phase = future.phase; room.meeting = structuredClone(future.meeting); room.winner = future.winner; room.winReason = future.winReason; room.endedAt = future.endedAt;
-    room.timepieceX = null; room.timepieceHolder = null; room.timepieceConsumed = true; room.timepieceUses = future.timepieceUses;
+    room.timepieces = structuredClone(future.timepieces);
+    // The piece spent at departure predates the visit's base frame, so force it.
+    const spent = room.timepieces.find((tp) => tp.id === visit.pieceId);
+    if (spent && !spent.consumed) { spent.consumed = true; spent.holder = null; }
     const changed = JSON.stringify([room.pool.map((task) => [task.done, task.delivered, task.sabotaged]), room.keyX, room.doors.map((door) => [door.locked, door.open, door.holder, door.keyX]), [...room.players.values()].map((player) => [player.id, player.alive, player.caged, player.hasKey, player.supplyId])]);
     if (changed !== priorFingerprint) { feed(room, "The past changes; the night reshapes around it."); record(room, room.players.get(visit.playerId) ?? null, "time_replay", { pastAt: cursor }); }
     if (priorPhase !== "ended" && room.phase === "ended" && room.winner) {
@@ -1266,8 +1307,10 @@ function reconcileFuture(room: Room, visit: TimeVisit, now: number, past?: Room)
 }
 
 function spawnNextTimepiece(room: Room, now: number) {
-  if (room.replaying || room.timepieceUses >= 2 || room.phase !== "playing") return;
-  room.timepieceX = TIMEPIECE_X; room.timepieceHolder = null; room.timepieceConsumed = false; room.timepiecePending = false;
+  if (room.replaying || usedPieces(room) >= 2 || room.phase !== "playing") return;
+  if (loosePieces(room).length) { room.timepiecePending = false; return; } // pieces already on the road
+  room.timepieces.push({ id: `tp${room.timepieces.length}`, x: TIMEPIECE_X, holder: null, consumed: false });
+  room.timepiecePending = false;
   journal(room, "respawn", now);
   feed(room, "Another timepiece settles onto the road.");
 }
@@ -1283,29 +1326,30 @@ function endTimeVisit(room: Room, p: P, reason: string) {
   p.dir = 0; p.cartHeld = false; p.interactHeld = false; p.activeWard = null;
   feed(room, `${p.name} returns as the timepiece falls silent.`);
   record(room, p, "time_return", { reason, pastAt: cursor });
-  if (room.timepieceUses < 2) {
+  if (usedPieces(room) < 2) {
     if (room.phase === "playing") spawnNextTimepiece(room, now);
     else if (room.phase === "meeting") room.timepiecePending = true;
   }
 }
 
 function startTimeVisit(room: Room, p: P, target: unknown): { ok: boolean; error?: string } {
-  if (room.phase !== "playing" || !p.alive || p.caged || room.timeVisit || room.timepieceConsumed || room.timepieceHolder !== p.id)
-    return { ok: false, error: "You need the unused timepiece and a free living soul." };
+  if (room.phase !== "playing" || !p.alive || p.caged || room.timeVisit || !heldPiece(room, p.id))
+    return { ok: false, error: "You need an unused timepiece and a free living soul." };
   const first = room.history[0], last = room.history.at(-1);
   if (!first || !last || typeof target !== "number" || !Number.isFinite(target) || target < first.at || target > last.at)
     return { ok: false, error: "Choose a recorded moment from this night." };
   const frame = room.revisions.length ? room.history[0] : frameAt(room, target);
   if (!frame) return { ok: false, error: "That moment is not recorded." };
   const now = roomNow(room), killCooldown = Math.max(0, p.killAt - now), sabotageCooldown = Math.max(0, p.sabotageAt - now);
-  journal(room, "depart", now, p.id);
+  const piece = heldPiece(room, p.id)!;
+  const depart = journal(room, "depart", now, p.id); depart.pieceId = piece.id;
   dropKey(room, p); dropSupply(room, p); dropBuildingKeys(room.doors, p.id, p.x, p.inside);
-  room.timepieceHolder = null; room.timepieceX = null; room.timepieceConsumed = true; room.timepieceUses++;
-  const visitorId = `visit:${p.id}:${room.timepieceUses}:${now}`;
+  piece.consumed = true; piece.holder = null;
+  const visitorId = `visit:${p.id}:${usedPieces(room)}:${now}`;
   const initial = structuredClone(p);
   initial.id = visitorId; initial.temporalVisitor = true; initial.match = newMatchStats(); initial.dir = 0; initial.cartHeld = false; initial.interactHeld = false; initial.activeWard = null;
   initial.killAt = target + killCooldown; initial.sabotageAt = target + sabotageCooldown; initial.bubbleUntil = 0; initial.actionUntil = 0; initial.isHost = false;
-  room.timeVisit = { playerId: p.id, visitorId, originAt: target, startedAt: now, endsAt: now + TIME_VISIT_MS,
+  room.timeVisit = { playerId: p.id, visitorId, pieceId: piece.id, originAt: target, startedAt: now, endsAt: now + TIME_VISIT_MS,
     base: structuredClone(frame), initial, actions: [], lastReconcileAt: now, reconciling: false };
   p.dir = 0; p.cartHeld = false; p.interactHeld = false; p.activeWard = null;
   feed(room, "The timepiece breaks. A soul slips out of the present.");
@@ -1322,8 +1366,18 @@ function handlePastInput(room: Room, p: P, body: InputBody): { ok: boolean; erro
   if (!visit || visit.playerId !== p.id) return { ok: false, error: "The past has closed." };
   const now = roomNow(room);
   if (now >= visit.endsAt || body.action === "time_return") { endTimeVisit(room, p, now >= visit.endsAt ? "time expired" : "returned early"); return { ok: true }; }
-  if (body.action === "time_travel" || body.action === "start" || body.action === "restart") return { ok: false, error: "That action is unavailable while traveling." };
+  if (body.action === "start" || body.action === "restart") return { ok: false, error: "That action is unavailable while traveling." };
   const cursor = visitCursor(visit, now), order = visit.actions.length + 1;
+  if (body.action === "time_travel") {
+    // Time travel in time travel: allowed only with an unused timepiece that
+    // exists in the past (picked up there), targeting an earlier recorded moment.
+    const target = body.targetAt;
+    const first = room.history[0], last = room.history.at(-1);
+    if (!first || !last || typeof target !== "number" || !Number.isFinite(target) || target < first.at || target > Math.min(cursor, last.at))
+      return { ok: false, error: "Choose an earlier recorded moment from this night." };
+    const sim = simulatePast(room, visit, cursor).room;
+    if (!heldPiece(sim, visit.visitorId)) return { ok: false, error: "You need an unused timepiece in this moment." };
+  }
   const normalized = { ...canonicalInput(body), playerId: visit.visitorId };
   if (typeof normalized.vote === "string") normalized.vote = normalized.vote.replace(/^echo:/, "").replace(/^free:echo:/, "free:");
   visit.actions.push({ at: cursor, order, seed: randomInt(1, 0x7fffffff), body: normalized });
@@ -1354,7 +1408,7 @@ function pastSnapshot(room: Room, p: P, visit: TimeVisit, now: number): Snapshot
   const witnessed = shadow.historyEvents.filter((event) => event.at <= cursor && event.at >= cursor - 8000 && event.actorId !== visit.visitorId && event.inside === p.inside && dist(event.x, p.x) <= view.visionRadius && label(event)).slice(-4)
     .map((event) => ({ text: `Past echo: ${event.name} ${label(event)}.`, at: now - (cursor - event.at) }));
   view.feed = [...view.feed, ...witnessed].slice(-8);
-  view.self.id = p.id; view.self.hasTimepiece = false;
+  view.self.id = p.id; view.self.hasTimepiece = !!heldPiece(shadow, visit.visitorId);
   view.self.teammates = view.self.teammates.map((id) => id === visit.visitorId ? p.id : `echo:${id}`);
   view.now = now;
   view.bellAt = view.bellAt ? view.bellAt + shift : 0; view.flickerAt = view.flickerAt ? view.flickerAt + shift : 0; view.blackoutUntil = view.blackoutUntil ? view.blackoutUntil + shift : 0;
@@ -1397,11 +1451,11 @@ export function handleInput(room: Room, body: InputBody): { ok: boolean; error?:
   if (body.action === "start") return startGame(room, p.id);
   if (body.action === "restart") return restartGame(room, p.id);
 
-  if (body.action === "interact" && p.alive && !p.caged && !p.inside && room.phase === "playing" &&
-      !(room.replaying && p.temporalVisitor === true) && nearTimepiece(room, p)) {
-    room.timepieceHolder = p.id; room.timepieceX = null;
+  if (body.action === "interact" && p.alive && !p.caged && !p.inside && room.phase === "playing" && nearTimepiece(room, p)) {
+    const tp = nearestTimepiece(room, p)!;
+    tp.holder = p.id;
     feed(room, `${p.name} finds a strange timepiece. Press M to choose a moment.`);
-    record(room, p, "timepiece_taken", {});
+    record(room, p, "timepiece_taken", { piece: tp.id });
     return { ok: true };
   }
 
@@ -1845,8 +1899,8 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
   }
 
   if (me.alive && !me.caged && room.phase !== "lobby") hint = buildingHint(room.doors, me.id, me.x, me.inside) ?? hint;
-  if (me.alive && !me.caged && !me.inside && room.phase === "playing" && nearTimepiece(room, me)) hint = room.replaying && me.temporalVisitor === true ? "Recorded timepiece — already used" : "E — take the timepiece";
-  else if (me.alive && room.timepieceHolder === me.id && !room.temporalShadow && !hint) hint = "M — choose a moment in the past";
+  if (me.alive && !me.caged && !me.inside && room.phase === "playing" && nearTimepiece(room, me)) hint = "E — take the timepiece";
+  else if (me.alive && heldPiece(room, me.id) && !hint) hint = room.temporalShadow ? "M — travel deeper into the past" : "M — choose a moment in the past";
 
   const abilityLabel = me.role === "hollow" ? "Kill" : "Ring Bell";
   const abilityReady = me.alive && room.phase === "playing" && (
@@ -1902,7 +1956,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
       hasKey: me.hasKey,
       hasSupply: me.hasSupply,
       doorKeys: room.doors.filter((d) => d.holder === me.id).map((d) => d.id),
-      hasTimepiece: room.timepieceHolder === me.id && !room.timepieceConsumed,
+      hasTimepiece: !!heldPiece(room, me.id),
       bellUsed: me.bellUsed,
       killCooldownMs: killCd,
       canKill: !!target && killCd <= 0,
@@ -1932,7 +1986,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
           hasSupply: seen && p.hasSupply,
           inside: seen ? p.inside : null,
           echo: room.temporalShadow && p.id.startsWith("echo:"),
-          hasTimepiece: seen && room.timepieceHolder === p.id && !room.timepieceConsumed,
+          hasTimepiece: seen && !!heldPiece(room, p.id),
           doorKeys: seen ? room.doors.filter((door) => door.holder === p.id).map((door) => door.id) : [],
           action: seen && p.actionUntil > now ? { text: p.actionText, until: p.actionUntil } : null,
           voted: p.vote !== null,
@@ -1953,7 +2007,8 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
         holder: d.holder === me.id || (owner && canSee(owner.x)) ? d.holder : null };
     }),
     keyX: room.keyX !== null && canSee(room.keyX) ? room.keyX : null,
-    timepieceX: room.timepieceX !== null && canSee(room.timepieceX) ? room.timepieceX : null,
+    timepieces: loosePieces(room).filter((tp) => canSee(tp.x)).map((tp) => tp.x),
+    timepieceX: (() => { const tp = loosePieces(room).find((t2) => canSee(t2.x)); return tp ? tp.x : null; })(),
     time: room.temporalShadow ? undefined : { mode: "present", earliest: room.history[0]?.at ?? room.startedAt, latest: room.history.at(-1)?.at ?? room.startedAt },
     supplyDrops: room.supplyDrops.filter((item) => canSee(item.x)).map((item) => item.x),
     cartX: ix(room.cartX),

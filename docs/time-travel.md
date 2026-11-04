@@ -1,6 +1,10 @@
 # Timepiece: command-replay implementation
 
-A living, uncaged player can find a timepiece on the road at x=1260, pick it up with **E**, and press **M** (or the HUD button) to choose a recorded moment. Confirming consumes that item. A visit lasts at most 60 seconds; **M** returns early, and a meeting, the end of the night, leaving, or a lost connection also returns the traveler. A second single-use timepiece appears after the first visit ends, so a later traveler can change an earlier traveler's present. Only one visit is active at a time.
+A living, uncaged player can find a timepiece on the road, pick it up with **E**, and press **M** (or the HUD button) to choose a recorded moment. Confirming consumes that item. A visit lasts at most 60 seconds; **M** returns early, and a meeting, the end of the night, leaving, or a lost connection also returns the traveler. After the first two pieces are spent, another single-use timepiece appears, so a later traveler can change an earlier traveler's present. Only one visit is active at a time.
+
+## Many timepieces, and time travel in time travel
+
+A night can carry several timepieces at once (they rest at x=1260 and beyond, spaced apart); each is an individually tracked, single-use item — picking one up, carrying it, or spending it never affects the others. While traveling in the past, a visitor can also pick up a timepiece that lies loose in that moment and use it there: **M** in the shadow opens the same moment picker, restricted to recorded moments at or before the current past cursor. Using a piece inside the past re-bases the whole visit at that earlier recorded frame — every action the visitor already took in the past replays forward from the deeper moment — and the piece is spent. This nests: a visitor holding several pieces can travel deeper again and again, each hop consuming one piece. The visit itself stays the causal anchor, and on return the deepest reconciled past is written back into the present. Later travelers whose windows overlap an earlier visit see that visitor's echo, so several souls can meet each other across time in one night.
 
 ## How the replay works
 

@@ -52,7 +52,7 @@ function takeTimepiece(room, player) {
   for (const p of room.players.values()) p.lastSeen = clock;
   advance(room, 11);
   assert.ok(input(room, player, { action: "interact" }).ok, "timepiece picked up");
-  assert.equal(room.timepieceHolder, player.id);
+  assert.equal(game.heldPiece(room, player.id)?.holder, player.id);
 }
 function startVisit(room, player, targetAt) {
   assert.ok(input(room, player, { action: "time_travel", targetAt }).ok, "time travel starts");
@@ -66,7 +66,7 @@ function assertIntPositions(room, label) {
   for (const p of room.players.values()) assert.ok(Number.isInteger(p.x), `${label}: player ${p.name} x=${p.x} is int`);
   assert.ok(Number.isInteger(room.cartX), `${label}: cartX int`);
   if (room.keyX !== null) assert.ok(Number.isInteger(room.keyX), `${label}: keyX int`);
-  if (room.timepieceX !== null) assert.ok(Number.isInteger(room.timepieceX), `${label}: timepieceX int`);
+  for (const tp of game.loosePieces(room)) assert.ok(Number.isInteger(tp.x), `${label}: timepiece ${tp.id} x=${tp.x} int`);
   for (const d of room.supplyDrops) assert.ok(Number.isInteger(d.x), `${label}: drop x int`);
   for (const b of room.bodies) assert.ok(Number.isInteger(b.x), `${label}: body x int`);
   for (const c of room.cages) assert.ok(Number.isInteger(c.x), `${label}: cage x int`);
@@ -78,7 +78,7 @@ function assertIntPositions(room, label) {
 function fingerprint(room) {
   return JSON.stringify({
     players: [...room.players.values()].map((p) => [p.id, p.x, p.alive, p.caged, p.hasKey, p.hasSupply, p.supplyId, p.inside, p.dir]),
-    cartX: room.cartX, keyX: room.keyX, timepieceX: room.timepieceX,
+    cartX: room.cartX, keyX: room.keyX, timepieces: game.loosePieces(room).map((tp) => tp.x),
     drops: room.supplyDrops, bodies: room.bodies.map((b) => [b.id, b.x]),
     doors: room.doors, pool: room.pool.map((t) => [t.id, t.done, t.delivered, t.sabotaged, t.progress]),
     phase: room.phase, revisions: room.revisions.length,
@@ -147,8 +147,8 @@ try {
     assert.ok(drop, "the kit moved in the past exists in the present");
     assert.ok(Math.abs(drop.x - 1500) <= 40, `kit rests where the traveller left it (x=${drop.x})`);
     assert.ok(Number.isInteger(drop.x), "moved kit position is an integer");
-    assert.equal(room.timepieceUses, 1);
-    assert.equal(room.timepieceX, 1260, "a second timepiece respawns after the visit");
+    assert.equal(game.usedPieces(room), 1);
+    assert.ok(game.loosePieces(room).some((tp) => tp.x === 1260), "a second timepiece respawns after the visit");
     assertIntPositions(room, "move-items");
     replayTwice(room, "move-items");
     console.log("PASS traveller carried a kit through time; present world kept the moved item at an integer position");
@@ -194,8 +194,8 @@ try {
     assert.ok(echo2 && !echo2.alive, "the later traveller sees the earlier traveller's kill in the past");
     endVisit(room, second);
     assert.equal(room.revisions.length, 2, "both visits are retained");
-    assert.equal(room.timepieceUses, 2);
-    assert.equal(room.timepieceX, null, "only two timepieces exist per night");
+    assert.equal(game.usedPieces(room), 2);
+    assert.equal(game.loosePieces(room).length, 0, "only two timepieces exist per night");
     assertIntPositions(room, "kill-past");
     replayTwice(room, "kill-past");
     console.log("PASS kill in the past reshapes the present; a second traveller witnesses it; visits are serialized");

@@ -49,7 +49,7 @@ function takeTimepiece(room, player) {
   for (const p of room.players.values()) p.lastSeen = clock;
   advance(room, 11);
   assert.ok(input(room, player, { action: "interact" }).ok, "timepiece picked up");
-  assert.equal(room.timepieceHolder, player.id);
+  assert.equal(game.heldPiece(room, player.id)?.holder, player.id);
 }
 function startVisit(room, player, targetAt) {
   assert.ok(input(room, player, { action: "time_travel", targetAt }).ok, "time travel starts");
@@ -148,13 +148,13 @@ try {
     advance(room, 80);
     const insideFirstVisit = room.timeVisit.originAt + 800;
     endVisit(room, A);
-    assert.equal(room.timepieceUses, 1);
-    assert.equal(room.timepieceX, 1260, "second timepiece respawned");
+    assert.equal(game.usedPieces(room), 1);
+    assert.ok(game.loosePieces(room).some((tp) => tp.x === 1260), "second timepiece respawned");
     const firstVisitorId = room.revisions[0].visitorId;
 
     advance(room, 20);
     takeTimepiece(room, A);        // same soul takes the respawned timepiece
-    assert.equal(room.timepieceHolder, A.id);
+    assert.equal(game.heldPiece(room, A.id)?.holder, A.id);
     startVisit(room, A, insideFirstVisit);
     walk(room, A, 1150);
     const past = game.snapshot(room, A.id);
@@ -165,7 +165,7 @@ try {
     assert.ok(ownEcho.id.includes(A.id), "the echo id ties back to A's own first visitor id");
     assert.ok(Math.abs(ownEcho.x - 1150) <= 40, `own past self stands where A walked then (x=${ownEcho.x})`);
     endVisit(room, A);
-    assert.equal(room.timepieceUses, 2);
+    assert.equal(game.usedPieces(room), 2);
     console.log("PASS a traveller can see their own incarnation from an earlier visit (self from another time)");
   }
 

@@ -196,6 +196,8 @@ export interface Snapshot {
   doors?: DoorState[];
   keyX: number | null;
   timepieceX?: number | null;
+  /** All loose, visible timepieces on the road (x positions). */
+  timepieces?: number[];
   time?: TimeView;
   /** Dropped kits can be recovered after a death, cage or voluntary drop. */
   supplyDrops: number[];
