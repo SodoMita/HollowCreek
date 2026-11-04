@@ -220,6 +220,8 @@ export class WardPanel {
     parent.appendChild(this.root);
   }
   get isOpen() { return !this.root.hidden; }
+  /** element that had focus before the puzzle opened — restored on close */
+  private previouslyFocused: HTMLElement | null = null;
 
   update(view: WardGameView | null, stamina: number, exhausted: boolean) {
     if (!view) {
@@ -227,6 +229,8 @@ export class WardPanel {
       this.current = null;
       this.signature = "";
       this.opening = false;
+      if (this.previouslyFocused?.isConnected) this.previouslyFocused.focus({ preventScroll: true });
+      this.previouslyFocused = null;
       return;
     }
     const wasOpen = this.isOpen;
@@ -240,6 +244,7 @@ export class WardPanel {
       this.render(view);
       if (!wasOpen) {
         this.opening = true;
+        this.previouslyFocused = document.activeElement as HTMLElement | null;
         this.callbacks.opened();
         (this.root.querySelector(view.kind === "scarecrow" && view.revealMs > 0 ? "[data-ward-close]" : "[data-ward-move]") as HTMLButtonElement | null)?.focus({ preventScroll: true });
         this.opening = false;

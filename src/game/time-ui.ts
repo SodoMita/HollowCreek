@@ -41,7 +41,10 @@ export class TimePanel {
     window.addEventListener("keydown", this.onKey, true);
   }
   get isOpen() { return !this.root.hidden; }
+  private previouslyFocused: HTMLElement | null = null;
+
   open(range: TimeView) {
+    this.previouslyFocused = document.activeElement as HTMLElement | null;
     if (range.mode !== "present" || !Number.isFinite(range.earliest) || !Number.isFinite(range.latest) || range.latest < range.earliest) return;
     this.range = range; this.root.hidden = false; this.callbacks.opened();
     const slider = this.root.querySelector<HTMLInputElement>("[data-time-slider]")!;
@@ -51,7 +54,11 @@ export class TimePanel {
     slider.value = "0";
     this.updateLabel(); slider.focus();
   }
-  close() { this.root.hidden = true; this.range = null; }
+  close() {
+    this.root.hidden = true; this.range = null;
+    if (this.previouslyFocused?.isConnected) this.previouslyFocused.focus({ preventScroll: true });
+    this.previouslyFocused = null;
+  }
   destroy() { window.removeEventListener("keydown", this.onKey, true); this.root.removeEventListener("click", this.click); this.root.removeEventListener("input", this.input); this.root.remove(); }
   private updateLabel() {
     if (!this.range) return;

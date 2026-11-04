@@ -187,7 +187,10 @@ export class SettingsDialog {
 
   get isOpen() { return this.openState; }
 
+  private previouslyFocused: HTMLElement | null = null;
+
   open() {
+    this.previouslyFocused = document.activeElement as HTMLElement | null;
     if (this.openState) return;
     this.openState = true;
     this.root.hidden = false;
@@ -201,6 +204,8 @@ export class SettingsDialog {
     this.openState = false;
     this.waiting = null;
     this.root.hidden = true;
+    if (this.previouslyFocused?.isConnected) this.previouslyFocused.focus({ preventScroll: true });
+    this.previouslyFocused = null;
     this.onClose?.();
   }
 
