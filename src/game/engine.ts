@@ -22,7 +22,8 @@ import { captureHistory, frameAt, restoreFrame } from "./history";
 import { dirtyRooms, emitRoom, feed, gPersist, journal, kitId, markDirty, record, roomNow, seeded } from "./chronicle";
 import { getRoom, listRoomsSync, makeCode, roomLoads, rooms } from "./registry";
 import { flushRooms, loadRoom, pruneChronicle } from "./persistence";
-import { beginMeeting, beginRepair, cagePlayer, canRepair, checkWin, doKill, dropKey, dropSupply, dropTimepiece, freePlayer, resolveMeeting, tryDeliverSupply, bindEngineHooks } from "./rules";
+import { beginMeeting, beginRepair, cagePlayer, canRepair, checkWin, doKill, dropKey, dropSupply, dropTimepiece, freePlayer, resolveMeeting, tryDeliverSupply } from "./rules";
+import { bindEngineHooks } from "./hooks";
 
 const dist = (a: number, b: number) => Math.abs(a - b);
 export { loadRoom } from "./persistence";

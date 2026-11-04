@@ -14,17 +14,7 @@ import {
 } from "./types";
 import type { P, Room, TaskState } from "./engine";
 
-interface EngineHooks {
-  endTimeVisit: (room: Room, p: P, reason: string) => void;
-  spawnNextTimepiece: (room: Room, now: number) => void;
-}
-let hooks: EngineHooks = {
-  endTimeVisit: () => { throw new Error("engine hooks not bound"); },
-  spawnNextTimepiece: () => { throw new Error("engine hooks not bound"); },
-};
-export function bindEngineHooks(h: EngineHooks) { hooks = h; }
-const endTimeVisit = (room: Room, p: P, reason: string) => hooks.endTimeVisit(room, p, reason);
-const spawnNextTimepiece = (room: Room, now: number) => hooks.spawnNextTimepiece(room, now);
+import { endTimeVisit, spawnNextTimepiece } from "./hooks";
 
 // ---------------------------------------------------------------------------
 // Helpers
