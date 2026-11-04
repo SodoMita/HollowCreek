@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="34" height="46" viewBox="0 0 34 46"><title>Weathered grave marker</title>
+<path d="M6 44V16Q6 5 17 5q11 0 11 11v28Z" fill="#5a5560" stroke="#26222c" stroke-width="1.5"/>
+<path d="M10 20h14M10 26h14M12 32h10" stroke="#8d8694" stroke-opacity=".6"/>
+<path d="M17 5v39" stroke="#26222c" stroke-opacity=".4"/>
+<path d="M4 44h26" stroke="#241f28" stroke-width="2.5"/>
+<path d="M8 12q9-6 18 0" stroke="#6d6875" stroke-opacity=".7" fill="none"/>
+</svg>

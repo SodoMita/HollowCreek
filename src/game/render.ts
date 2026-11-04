@@ -182,6 +182,14 @@ export class Renderer {
       const sx = 4350 - cam; // Pomor windmill past the silo, before the foreman's office
       if (sx > -150 && sx < w + 150) drawSvg(ctx, "props/windmill.svg", sx - 65, ground - 160, 130, 160);
     }
+    for (const gx of [3110, 3265, 3345]) { // grave markers around the graves ward (x=3200)
+      const sx = gx - cam;
+      if (sx > -50 && sx < w + 50) drawSvg(ctx, "props/gravestone.svg", sx - 17, ground - 46, 34, 46);
+    }
+    for (const hx of [195, 352]) { // haystacks by the harvest shed (x=280)
+      const sx = hx - cam;
+      if (sx > -90 && sx < w + 90) drawSvg(ctx, "props/haystack.svg", sx - 35, ground - 52, 70, 52);
+    }
 
     // --- ground ---
     const gg = ctx.createLinearGradient(0, ground, 0, h);
