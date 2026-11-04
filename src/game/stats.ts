@@ -1,6 +1,13 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { playerStats } from "@/db/schema";
+import type { MatchStats } from "./types";
+
+export const newMatchStats = (): MatchStats => ({
+  repairs: 0, kitsDelivered: 0, kills: 0, deaths: 0, timesCaged: 0,
+  cagesOpened: 0, votes: 0, reports: 0, ruins: 0, bells: 0,
+  blackouts: 0, distance: 0,
+});
 
 export type StatField =
   | "games" | "wins" | "losses" | "kills" | "deaths" | "tasksDone"
