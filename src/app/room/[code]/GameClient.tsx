@@ -12,7 +12,7 @@ import type { AudioDirector } from "@/game/audio";
 import type { VoiceChat, VoiceStatus } from "@/game/voice";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
-import { BottomControls, EndOverlay, LobbyOverlay, MidHud, NoteReader, RoleBanner, Toast, TopBar } from "./hud";
+import { BottomControls, ChatBox, EndOverlay, LobbyOverlay, MidHud, NoteReader, PinPanel, RoleBanner, Toast, TopBar } from "./hud";
 import { BELL_X, CARRY_SPEED, GHOST_SPEED, SPEED } from "@/game/types";
 import type { Snapshot } from "@/game/types";
 
@@ -543,47 +543,13 @@ export default function GameClient({ code }: { code: string }) {
 
           {/* ---- chat ---- */}
           {pinOpen && s.phase === "playing" && (
-            <div className="hc-hud-item absolute bottom-20 left-1/2 w-[min(92vw,420px)] -translate-x-1/2 rounded-lg border border-[#6e5638]/60 bg-[#140d18]/95 p-3 sm:bottom-24" data-testid="pin-note-panel">
-              <div className="mb-1.5 text-xs uppercase tracking-widest text-[#9c8b7a]">Pin a page to a wall or tree — inside a house it goes on the interior wall</div>
-              <textarea
-                value={pinText}
-                onChange={(e) => setPinText(e.target.value.slice(0, 200))}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void pinNote(); } e.stopPropagation(); }}
-                maxLength={200}
-                rows={4}
-                placeholder="Write your note… (max 200 characters)"
-                aria-label="Write the page to pin"
-                className="w-full resize-none rounded border border-[#d99a3d]/40 bg-[#1d1420] px-3 py-2 text-sm text-[#e9dfcf] placeholder:text-[#9a877f] focus-visible:outline-2 focus-visible:outline-[#d99a3d]"
-              />
-              <div className="mt-2 flex items-center justify-between">
-                <span className="text-[11px] text-[#9a877f]">{pinText.trim().length}/200</span>
-                <div className="flex gap-2">
-                  <button onClick={() => { setPinOpen(false); setPinText(""); }} className="rounded border border-[#3a2733] px-3 py-1.5 text-xs text-[#9c8b7a] hover:text-[#e9dfcf]">Cancel</button>
-                  <button onClick={() => void pinNote()} disabled={!pinText.trim()} data-testid="pin-note-submit"
-                    className="rounded bg-[#8f3b1f] px-3 py-1.5 text-xs text-[#f3e6d0] hover:bg-[#a84a26] disabled:opacity-50">Pin page</button>
-                </div>
-              </div>
-            </div>
+            <PinPanel text={pinText} onText={setPinText} onSubmit={() => void pinNote()} onCancel={() => { setPinOpen(false); setPinText(""); }} />
           )}
 
           {noteFocus && <NoteReader note={noteFocus} onClose={() => setNoteFocus(null)} />}
 
           {chatOpen && (
-            <div className="hc-hud-item absolute bottom-20 left-1/2 w-[min(92vw,420px)] sm:bottom-24 -translate-x-1/2">
-              <input
-                ref={chatInputRef}
-                value={chatText}
-                onChange={(e) => setChatText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") submitChat(); e.stopPropagation(); }}
-                onBlur={submitChat}
-                maxLength={120}
-                placeholder={s.self.alive ? "Say something… (it appears above your head)" : "Whisper to the dead…"}
-                aria-label="Chat message"
-                autoComplete="off"
-                spellCheck={false}
-                className="w-full rounded-full border border-[#d99a3d]/50 bg-[#140d18]/95 px-5 py-3 text-[#e9dfcf] placeholder:text-[#9a877f] focus-visible:outline-2 focus-visible:outline-[#d99a3d]"
-              />
-            </div>
+            <ChatBox alive={s.self.alive} text={chatText} onText={setChatText} onSubmit={submitChat} inputRef={chatInputRef} />
           )}
 
           {/* ---- lobby overlay ---- */}
