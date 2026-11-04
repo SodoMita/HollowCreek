@@ -143,6 +143,11 @@ export async function POST(req: NextRequest) {
   if (action === "audio") {
     const chunk = typeof body.chunk === "string" ? body.chunk : "";
     if (!chunk || chunk.length > 35000) return bad("Invalid audio chunk.", 400);
+    // relay audio is raw PCM — rate-limit it like signals so one client can't flood the queue
+    const arate = v.rates.get(playerId) ?? { start: Date.now(), count: 0 };
+    if (Date.now() - arate.start > 1000) { arate.start = Date.now(); arate.count = 0; }
+    if (++arate.count > 50) return bad("Too much audio.", 429);
+    v.rates.set(playerId, arate);
     const rate = Number(body.rate) || 12000;
     const packet: AudioPacket = {
       id: ++v.audioSeq,
