@@ -12,7 +12,7 @@ import type { AudioDirector } from "@/game/audio";
 import type { VoiceChat, VoiceStatus } from "@/game/voice";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
-import { EndOverlay, LobbyOverlay, NoteReader, RoleBanner, Toast } from "./hud";
+import { EndOverlay, LobbyOverlay, NoteReader, RoleBanner, Toast, TopBar } from "./hud";
 import { BELL_X, CARRY_SPEED, GHOST_SPEED, SPEED } from "@/game/types";
 import type { Snapshot } from "@/game/types";
 
@@ -523,81 +523,13 @@ export default function GameClient({ code }: { code: string }) {
 
       {s && (
         <>
-          {/* ---- top bar ---- */}
-          <div className="hc-hud-item hc-hud-fade absolute left-0 right-0 top-0 flex items-start justify-between gap-2 p-2 pt-[max(0.5rem,env(safe-area-inset-top))] text-xs sm:gap-3 sm:p-3 sm:text-sm">
-            <div className="min-w-0 rounded border border-[#3a2733]/70 bg-[#140d18]/80 px-2 py-1.5 backdrop-blur sm:px-3 sm:py-2">
-              <span className="hidden font-display text-lg text-[#d99a3d] md:inline">Hollow Creek</span>
-              <button
-                onClick={() => { void navigator.clipboard?.writeText(s.code); setToast("Town code copied"); setTimeout(() => setToast(null), 1500); }}
-                className="rounded bg-[#2a1a26] px-2 py-0.5 font-mono tracking-[0.3em] text-[#e9dfcf] hover:bg-[#3a2733] focus-visible:outline-2 focus-visible:outline-[#d99a3d] md:ml-3"
-                title="Copy town code"
-                aria-label={`Copy town code ${s.code}`}
-              >{s.code}</button>
-              <span className="ml-2 hidden text-[#9c8b7a] sm:inline">{s.playerCount} souls</span>
-              {me?.inside && <span className="ml-2 text-[#e2be83]">Inside {BUILDINGS.find((b) => b.id === me.inside)?.name}</span>}
-              {(s.self.hasTimepiece || s.time?.mode === "past") && <button onClick={activateTimepiece} className="ml-2 rounded border border-[#7ba9a6] bg-[#243b3c]/90 px-2 py-1 text-xs text-[#cbeae1]">{s.time?.mode === "past" ? "Return · M" : "Timepiece · M"}</button>}
-              {s.phase === "playing" && s.self.alive && (
-                <button title="Pin a handwritten page to a wall or tree (inside a house: its interior wall)" aria-label="Pin page"
-                  onClick={() => setPinOpen((v) => !v)}
-                  className="ml-2 rounded bg-[#4a3323] px-1.5 py-0.5 text-xs text-[#f2cf91] hover:bg-[#684327]">
-                  ✎<span className="hidden sm:inline"> Pin page</span>
-                </button>
-              )}
-              {nearestNote && s.phase === "playing" && (
-                <button title={`Read the page pinned by ${nearestNote.author}`} aria-label="Read page" data-testid="read-note"
-                  onClick={() => setNoteFocus(nearestNote)}
-                  className="ml-2 rounded border border-[#d99a3d]/60 bg-[#243b3c]/90 px-1.5 py-0.5 text-xs text-[#cbeae1] hover:bg-[#2f4a4b]">
-                  📖<span className="hidden sm:inline"> Read page</span>
-                </button>
-              )}
-              {s.phase === "playing" && s.self.alive && s.self.hasSupply && (
-                <button title="Drop repair kit for another player" aria-label="Drop repair kit"
-                  onClick={() => void send({ action: "drop_supply" })}
-                  className="ml-2 rounded bg-[#4a3323] px-1.5 py-0.5 text-xs text-[#f2cf91] hover:bg-[#684327]">
-                  ▣<span className="hidden sm:inline"> Drop kit · {keyLabel(settings.controls.drop)}</span>
-                </button>
-              )}
-            </div>
-            {s.phase !== "lobby" && (
-              <div className="mt-1 hidden w-72 sm:block">
-                <div className="mb-1 text-center text-xs uppercase tracking-widest text-[#9c8b7a]">Town wards restored</div>
-                <div className="h-3 overflow-hidden rounded-full border border-[#3a2733] bg-[#140d18]/80">
-                  <div className="h-full bg-gradient-to-r from-[#8f3b1f] to-[#d99a3d] transition-[width] duration-500" style={{ width: `${s.taskBar.total ? (100 * s.taskBar.done) / s.taskBar.total : 0}%` }} />
-                </div>
-              </div>
-            )}
-            <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-              <span className={`rounded px-1 py-1 font-display text-xs sm:px-3 sm:py-1.5 sm:text-lg ${!s.self.alive ? "bg-[#2a2a3a]/80 text-[#9aa]" : s.self.role === "hollow" ? "bg-[#4a1210]/90 text-[#ff6a5a]" : "bg-[#1d2a1a]/80 text-[#a8c98a]"}`}>
-                <span className="sm:hidden">{!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "Hollow" : "Crew"}</span>
-                <span className="hidden sm:inline">{!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "The Hollow" : "Townfolk"}</span>
-                {s.self.caged && s.self.alive ? " · Caged" : ""}
-              </span>
-              <button
-                onClick={() => { ensureAudio(); const m = !muted; getSettingsStore().update((draft) => { draft.audio.muted = m; }); audioRef.current?.setMuted(m); }}
-                title={muted ? "Unmute" : "Mute"}
-                aria-label={muted ? "Unmute sound" : "Mute sound"}
-                aria-pressed={muted}
-                className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] focus-visible:outline-2 focus-visible:outline-[#d99a3d] sm:py-1.5"
-              >{muted ? "🔇" : "🔊"}</button>
-              <button onClick={toggleVoice} disabled={voiceStatus.starting} aria-label={voiceStatus.active ? "Leave proximity voice" : "Join proximity voice"}
-                aria-pressed={voiceStatus.active} title={voiceStatus.active ? `Voice: ${voiceStatus.connected} connected (${voiceStatus.p2pCount} P2P, ${voiceStatus.relayCount} Relay) · ${voiceStatus.nearby} nearby · ${voiceStatus.speaking ? "Speaking" : "Listening"} · ${keyLabel(settings.controls.talk)} to leave` : `Join proximity voice (${keyLabel(settings.controls.talk)}) — asks for microphone permission`}
-                className={`rounded border px-1.5 py-1 sm:py-1.5 ${voiceStatus.active ? (voiceStatus.speaking ? "border-[#ffd98a] bg-[#3a2a16] text-[#ffd98a]" : "border-[#6b8e5a] bg-[#1d2a1a]/90 text-[#b8d8a4]") : "border-[#3a2733] bg-[#140d18]/80 text-[#c9b8a4]"}`}>
-                {voiceStatus.starting ? "…" : <Volume2 className={`h-4 w-4 ${voiceStatus.speaking ? "animate-pulse text-[#ffd98a]" : ""}`} />}
-              </button>
-              {voiceStatus.active && <button onClick={toggleMic} aria-label={voiceStatus.muted ? "Unmute microphone" : "Mute microphone"}
-                title={voiceStatus.muted ? "Unmute microphone" : "Mute microphone"}
-                className="rounded border border-[#3a2733] bg-[#140d18]/80 px-1.5 py-1 text-[#c9b8a4] sm:py-1.5">
-                {voiceStatus.muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-              </button>}
-              <button
-                onClick={() => settingsDialogRef.current?.open()}
-                title="Settings"
-                aria-label="Settings"
-                className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a] sm:py-1.5"
-              >⚙</button>
-              <button onClick={() => void leaveToTownList()} disabled={leaving} aria-label="Back to towns" className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#e06a5a] disabled:opacity-50 sm:px-3 sm:py-1.5"><span className="sm:hidden">←</span><span className="hidden sm:inline">Back</span></button>
-            </div>
-          </div>
+          <TopBar s={s} me={me} nearestNote={nearestNote} muted={muted} leaving={leaving} voiceStatus={voiceStatus} controls={settings.controls}
+            onCopyCode={() => { void navigator.clipboard?.writeText(s.code); setToast("Town code copied"); setTimeout(() => setToast(null), 1500); }}
+            onTimepiece={activateTimepiece} onPinToggle={() => setPinOpen((v) => !v)} onReadNote={setNoteFocus}
+            onDropKit={() => void send({ action: "drop_supply" })}
+            onMute={() => { ensureAudio(); const m = !muted; getSettingsStore().update((draft) => { draft.audio.muted = m; }); audioRef.current?.setMuted(m); }}
+            onToggleVoice={toggleVoice} onToggleMic={toggleMic}
+            onSettings={() => settingsDialogRef.current?.open()} onLeave={() => void leaveToTownList()} />
 
           {s.phase !== "lobby" && voiceStatus.error && (
             <p role="alert" className="absolute right-2 top-12 z-20 max-w-[min(70vw,250px)] rounded border border-[#6e3433] bg-[#1c1216]/95 px-3 py-2 text-xs text-[#e29a84]">
