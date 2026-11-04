@@ -16,7 +16,8 @@ import type { AudioDirector } from "@/game/audio";
 import type { VoiceChat, VoiceStatus } from "@/game/voice";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
-import { BottomControls, ChatBox, EndOverlay, LobbyOverlay, MidHud, NoteReader, PinPanel, RoleBanner, Toast, TopBar } from "./hud";
+import { BottomControls, ChatBox, MidHud, NoteReader, PinPanel, RoleBanner, Toast, TopBar } from "./hud";
+import { EndOverlay, LobbyOverlay } from "./overlays";
 import { BELL_X, CARRY_SPEED, GHOST_SPEED, SPEED } from "@/game/types";
 import type { Snapshot } from "@/game/types";
 
