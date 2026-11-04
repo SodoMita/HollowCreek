@@ -153,6 +153,8 @@ export function loadSettings(): GameSettings {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return normalizeSettings(JSON.parse(raw));
     const settings = createDefaultSettings();
+    // First visit with no stored prefs: honor the OS reduced-motion preference.
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) settings.graphics.reducedMotion = true;
     // Migrate the original mute toggle rather than silently ignoring it.
     settings.audio.muted = localStorage.getItem("hc_muted") === "1";
     // Reduced motion starts OFF. A saved choice above still takes precedence.
