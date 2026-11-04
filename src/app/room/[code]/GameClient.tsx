@@ -6,6 +6,7 @@ import Link from "next/link";
 import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
 import { Renderer } from "@/game/render";
 import { useGameStream } from "./useGameStream";
+import { useGameInput } from "./useGameInput";
 import { BUILDINGS, DOOR_REACH, doorX } from "@/game/buildings";
 import { WardPanel } from "@/game/ward-ui";
 import { TimePanel } from "@/game/time-ui";
@@ -245,59 +246,12 @@ export default function GameClient({ code }: { code: string }) {
     if (d !== lastDir.current) { lastDir.current = d; void send({ dir: d }); }
   }, [send]);
 
-  useEffect(() => {
-    const unlockAudio = () => ensureAudio();
-    const down = (e: KeyboardEvent) => {
-      unlockAudio();
-      if (settingsDialogRef.current?.isOpen || timePanelRef.current?.isOpen) return;
-      if (wardPanelRef.current?.isOpen) {
-        if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
-        return; // Tab, Enter and Space belong to the focused puzzle buttons.
-      }
-      if (chatOpenRef.current) {
-        if (e.key === "Escape") setChatOpen(false);
-        return;
-      }
-      const target = e.target as HTMLElement | null;
-      if (target && (["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName) || target.isContentEditable)) return;
-      const controls = getSettingsStore().value.controls;
-      const bound = (action: BindableAction) => matchesControl(controls, action, e.code);
-      if (bound("left")) { keys.current.add("left"); computeDir(); e.preventDefault(); }
-      else if (bound("right")) { keys.current.add("right"); computeDir(); e.preventDefault(); }
-      else if (e.code === "KeyM" && !e.repeat) { activateTimepiece(); e.preventDefault(); }
-      else if (e.code === "KeyL" && !e.repeat) { void send({ action: "door_lock" }); e.preventDefault(); }
-      else if (e.code === "KeyN" && !e.repeat) { setPinOpen((v) => !v); e.preventDefault(); }
-      else if (bound("interact") && !e.repeat) { interactDown(); e.preventDefault(); }
-      else if (bound("ability") && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
-      else if (bound("blackout") && !e.repeat) { void send({ action: "blackout" }); e.preventDefault(); }
-      else if (bound("push") && !e.repeat) { void send({ cartHeld: true }); e.preventDefault(); }
-      else if (bound("drop") && !e.repeat) { void send({ action: "drop_supply" }); e.preventDefault(); }
-      else if (bound("ruin") && !e.repeat) { void send({ action: "sabotage" }); e.preventDefault(); }
-      else if (bound("chat") && !e.repeat) { openChat(); e.preventDefault(); }
-      else if (bound("talk") && !e.repeat) {
-        void getVoice().then((voice) => { if (voice.current.active) voice.stop(); else void voice.start(); });
-        e.preventDefault();
-      }
-    };
-    const up = (e: KeyboardEvent) => {
-      if (settingsDialogRef.current?.isOpen || timePanelRef.current?.isOpen || wardPanelRef.current?.isOpen) return;
-      const controls = getSettingsStore().value.controls;
-      if (matchesControl(controls, "left", e.code)) { keys.current.delete("left"); computeDir(); }
-      else if (matchesControl(controls, "right", e.code)) { keys.current.delete("right"); computeDir(); }
-      else if (matchesControl(controls, "interact", e.code)) interactUp();
-      else if (matchesControl(controls, "push", e.code)) void send({ cartHeld: false });
-    };
-    window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
-    window.addEventListener("pointerdown", unlockAudio);
-    window.addEventListener("blur", releaseInputs);
-    return () => {
-      window.removeEventListener("keydown", down); window.removeEventListener("keyup", up);
-      window.removeEventListener("pointerdown", unlockAudio); window.removeEventListener("blur", releaseInputs);
-    };
-  }, [computeDir, send, ensureAudio, getSettingsStore, getVoice, interactDown, interactUp, openChat, releaseInputs, activateTimepiece]);
+  useGameInput({
+    send, keys, lastDir, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract,
+    wardPanelRef, timePanelRef, settingsDialogRef, chatOpen, pinOpen, setChatOpen, setPinOpen, setPinText, activateTimepiece,
+    chatOpenRef, getSettingsStore, getVoice,
+  });
 
-  // ---- render loop ----
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
