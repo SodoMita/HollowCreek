@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="140" height="46" viewBox="0 0 140 46"><title>Weathered wooden picket fence</title>
+<g fill="#5d4a3a" stroke="#241a14" stroke-width="1">
+<path d="M0 12h140v6H0Z"/><path d="M0 30h140v6H0Z"/>
+<g>
+<path d="M2 4l5-4 5 4v42H2Z"/><path d="M22 6l5-4 5 4v40H22Z"/><path d="M42 3l5-4 5 4v43H42Z"/><path d="M62 6l5-4 5 4v40H62Z"/><path d="M82 4l5-4 5 4v42H82Z"/><path d="M102 6l5-4 5 4v40h-10Z"/><path d="M122 3l5-4 5 4v43h-10Z"/>
+</g>
+<path d="M0 0h140v3H0Z" fill="#6d5847"/>
+</g>
+<path d="M6 8v34M26 10v32M46 7v35M66 10v32M86 8v34M106 10v32M126 7v35" stroke="#3a2c22" stroke-opacity=".7"/>
+<path d="M4 13h132M4 31h132" stroke="#8a6f58" stroke-opacity=".35"/>
+</svg>

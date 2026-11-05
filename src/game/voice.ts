@@ -18,6 +18,8 @@ export interface VoiceStatus {
   mode: "p2p" | "relay" | "hybrid" | "idle";
   speaking: boolean;
   error: string | null;
+  /** true while the poll loop is backing off after failures (server unreachable) */
+  reconnecting: boolean;
 }
 
 type PeerInfo = { id: string; name: string; gain: number; pan: number };
@@ -53,6 +55,7 @@ const INITIAL: VoiceStatus = {
   mode: "idle",
   speaking: false,
   error: null,
+  reconnecting: false,
 };
 
 export function downsample(input: Float32Array, inputRate: number, targetRate = 12000): Int16Array {
@@ -117,6 +120,8 @@ export class VoiceChat {
   private earlyCandidates = new Map<string, RTCIceCandidateInit[]>();
   private levels = new Map<string, { gain: number; pan: number }>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private pollDelay = 300;
+  private pollFailures = 0;
   private polling = false;
   private generation = 0;
   private destroyed = false;
@@ -150,21 +155,28 @@ export class VoiceChat {
   }
 
   private async post(action: string, more: Record<string, unknown> = {}, keepalive = false) {
-    const res = await fetch(this.url(), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      keepalive,
-      body: JSON.stringify({
-        code: this.options.roomCode(),
-        playerId: this.options.playerId(),
-        session: this.session,
-        action,
-        ...more,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error ?? "Town voice is not answering.");
-    return data;
+    const controller = keepalive ? null : new AbortController();
+    const timeout = controller ? setTimeout(() => controller.abort(), 5000) : null;
+    try {
+      const res = await fetch(this.url(), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        keepalive,
+        signal: controller?.signal,
+        body: JSON.stringify({
+          code: this.options.roomCode(),
+          playerId: this.options.playerId(),
+          session: this.session,
+          action,
+          ...more,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Town voice is not answering.");
+      return data;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   }
 
   async start() {
@@ -221,9 +233,11 @@ export class VoiceChat {
         return;
       }
 
-      this.emit({ active: true, starting: false, muted: false, error: null });
+      this.emit({ active: true, starting: false, muted: false, error: null, reconnecting: false });
       // Poll every 300ms so server-routed audio packets play with natural low latency
-      this.timer = setInterval(() => void this.poll(), 300);
+      this.pollDelay = 300;
+      this.pollFailures = 0;
+      this.schedulePoll(300);
       void this.poll();
     } catch (err) {
       captured?.getTracks().forEach((t) => t.stop());
@@ -413,6 +427,11 @@ export class VoiceChat {
     this.destroyed = true;
   }
 
+  private schedulePoll(delay: number) {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = setInterval(() => void this.poll(), delay);
+  }
+
   private async poll() {
     if (!this.stream || !this.session || this.polling || this.destroyed) return;
     this.polling = true;
@@ -424,12 +443,21 @@ export class VoiceChat {
         session: this.session,
         sinceAudio: String(this.lastAudioSeq),
       });
-      const res = await fetch(this.url("?" + query), { cache: "no-store" });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000); // polls run every 300ms — a hung one must not stack
+      let res: Response;
+      try {
+        res = await fetch(this.url("?" + query), { cache: "no-store", signal: controller.signal });
+      } finally {
+        clearTimeout(timeout);
+      }
       if (generation !== this.generation) return;
       if (!res.ok) {
         if (res.status === 403) {
           const joined = await this.post("join");
           this.session = joined.session;
+          this.pollFailures = 0;
+          this.emit({ reconnecting: false });
           try {
             sessionStorage.setItem(this.storageKey(), this.session);
           } catch {
@@ -501,7 +529,9 @@ export class VoiceChat {
           ? "hybrid"
           : "idle";
 
+      this.pollFailures = 0;
       this.emit({
+        reconnecting: false,
         nearby: state.peers.length,
         connected: state.peers.length,
         p2pCount,
@@ -511,10 +541,24 @@ export class VoiceChat {
       });
     } catch (error) {
       if (generation === this.generation) {
-        this.emit({ error: error instanceof Error ? error.message : "Voice is reconnecting." });
+        this.pollFailures += 1;
+        this.emit({ reconnecting: true });
+        const msg = error instanceof Error && error.name === "AbortError"
+          ? "Voice is reconnecting."
+          : error instanceof Error ? error.message : "Voice is reconnecting.";
+        this.emit({ error: `${msg} (attempt ${this.pollFailures})` });
       }
     } finally {
       this.polling = false;
+      // back off the 300ms poll up to 5s while the server is unreachable, with jitter
+      const want = this.pollFailures >= 3
+        ? Math.min(300 * 2 ** Math.min(this.pollFailures - 3, 4), 5000)
+        : 300;
+      const jittered = Math.round(want * (0.85 + Math.random() * 0.3));
+      if (jittered !== this.pollDelay) {
+        this.pollDelay = jittered;
+        this.schedulePoll(jittered);
+      }
     }
   }
 

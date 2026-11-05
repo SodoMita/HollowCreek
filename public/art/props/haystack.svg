@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="70" height="52" viewBox="0 0 70 52"><title>Haystack</title>
+<path d="M6 48Q4 26 22 12Q35 2 48 12q18 14 16 36Z" fill="#a8842f" stroke="#5d4517" stroke-width="1.5"/>
+<path d="M14 40q-2-16 10-26M28 44q-2-20 6-32M42 44q2-20-6-32M56 40q2-14-8-24" stroke="#c9a24a" stroke-opacity=".7" fill="none"/>
+<path d="M22 12Q35 2 48 12" stroke="#e0bc66" stroke-opacity=".8" fill="none"/>
+<path d="M4 48h62" stroke="#4a3512" stroke-width="2.5"/>
+</svg>

@@ -3,11 +3,13 @@
 // reuses the canvas Renderer and generative AudioDirector unchanged.
 import { Renderer } from "../src/game/render";
 import { WardPanel } from "../src/game/ward-ui";
+import { TimePanel } from "../src/game/time-ui";
 import { AudioDirector } from "../src/game/audio";
 import { VoiceChat, type VoiceStatus } from "../src/game/voice";
 import { SettingsStore, applyDocumentPreferences, keyLabel, matchesControl, type BindableAction } from "../src/game/settings";
 import { SettingsDialog } from "../src/game/settings-ui";
-import { BELL_X } from "../src/game/types";
+import { BELL_X, CARRY_SPEED, GHOST_SPEED, SPEED } from "../src/game/types";
+import { BUILDINGS, DOOR_REACH, doorX } from "../src/game/buildings";
 import type { RoomListing, Snapshot } from "../src/game/types";
 
 // Temporary author-built sandboxes run the same unified code (see SYNC.md).
@@ -117,6 +119,7 @@ const wardPanel = new WardPanel(document.body, {
   close: () => { void send({ action: "ward_cancel" }); },
   opened: releaseInputs,
 });
+const timePanel = new TimePanel(document.body, { travel: (targetAt) => { void send({ action: "time_travel", targetAt }); }, opened: releaseInputs });
 let interactToggled = false;
 let tasksOpen = window.innerWidth > 640;
 const settingsDialog = new SettingsDialog(settingsStore, document.body, { onOpen: releaseInputs });
@@ -323,6 +326,7 @@ async function poll() {
     pollFailures = 0;
     roomError = "";
     snap = s;
+    if (timePanel.isOpen && (!s.self.hasTimepiece || s.phase !== "playing")) timePanel.close();
     wardPanel.update(s.minigame, s.self.stamina, s.self.exhausted);
     audio.update(s);
     if (lastPhase === "lobby" && s.phase === "playing") reveal(s.self.role === "hollow");
@@ -389,6 +393,11 @@ function renderHud(s: Snapshot) {
   $("copycode").textContent = s.code;
   $("soulcount").textContent = `${s.playerCount} souls${s.self.hasSupply ? " · kit carried" : ""}`;
   $("supplydrop").style.display = s.phase === "playing" && s.self.hasSupply ? "inline-block" : "none";
+  const meX = me ? me.x : 0;
+  const nearNote = (s.notes ?? []).filter((n) => Math.abs(n.x - meX) <= 150).sort((a, b) => Math.abs(a.x - meX) - Math.abs(b.x - meX))[0];
+  $("readnote").style.display = nearNote && s.phase === "playing" ? "inline-block" : "none";
+  $("readnote").dataset.noteId = nearNote ? nearNote.id : "";
+  $("pinbtn").style.display = s.phase === "playing" && s.self.alive ? "inline-block" : "none";
   $("pushbtn").style.display = s.phase === "playing" && s.self.alive && !s.self.caged && !s.self.hasSupply ? "block" : "none";
   $("pushbtn").textContent = `Hold Push + ◀▶${s.cartPushers > 0 ? ` · ${s.cartPushers}` : ""}`;
   $("ruinbtn").style.display = s.phase === "playing" && s.self.alive && s.self.role === "hollow" ? "block" : "none";
@@ -403,7 +412,7 @@ function renderHud(s: Snapshot) {
   const tasks = $("tasks");
   if (s.phase !== "lobby" && s.self.alive && s.tasks.length) {
     tasks.style.display = "block";
-    tasks.innerHTML = `<div class="hd" id="tasktoggle">${s.self.role === "hollow" ? "Town wards (pretend)" : "Town wards · shared"} ${tasksOpen ? "▾" : "▸"}</div>` +
+    tasks.innerHTML = `<div class="hd" id="tasktoggle">${s.self.role === "hollow" && s.time?.mode !== "past" ? "Town wards (pretend)" : "Town wards · shared"} ${tasksOpen ? "▾" : "▸"}</div>` +
       (tasksOpen ? s.tasks.map((t) => `<div class="t ${t.done ? "done" : ""}">${t.done ? "✓" : t.delivered ? "▣" : "◇"} ${esc(t.name)}${!t.done ? ` <span style="color:${t.delivered ? "var(--moss)" : "var(--amber)"}">${t.delivered ? t.progress > 0 ? `${Math.round(t.progress * 100)}%` : "puzzle ready" : t.sabotaged ? "ruined" : "needs kit"}</span>` : ""}</div>`).join("") : "");
   } else tasks.style.display = "none";
 
@@ -434,7 +443,8 @@ function renderHud(s: Snapshot) {
 
   // status strip
   const status = $("status");
-  if (!s.self.alive && s.phase !== "ended") { status.style.display = "block"; status.textContent = "You are dead. Drift as a ghost — only the dead can see and hear you."; status.style.color = "#99aaaa"; }
+  if (s.time?.mode === "past") { status.style.display = "block"; status.textContent = `In the past · ${Math.max(0, Math.ceil(((s.time.endsAt ?? s.now) - s.now) / 1000))}s remaining · M to return`; status.style.color = "#b8e3de"; }
+  else if (!s.self.alive && s.phase !== "ended") { status.style.display = "block"; status.textContent = "You are dead. Drift as a ghost — only the dead can see and hear you."; status.style.color = "#99aaaa"; }
   else if (s.self.caged && s.self.alive) { status.style.display = "block"; status.textContent = "The iron is cold. You can still speak and vote — plead for the key."; status.style.color = "var(--amber)"; }
   else status.style.display = "none";
 
@@ -448,11 +458,16 @@ function renderHud(s: Snapshot) {
   $("vigorlbl").style.color = s.self.exhausted ? "#e06a5a" : "var(--dim)";
 
   // controls
+  $("timebtn").style.display = s.self.hasTimepiece || s.time?.mode === "past" ? "inline-block" : "none";
+  $("timebtn").textContent = s.time?.mode === "past" ? "Return · M" : "Timepiece · M";
   const hint = $("hint");
   hint.style.display = s.hint ? "block" : "none";
   if (s.hint) hint.textContent = s.hint;
   $("ebtn").textContent = keyLabel(settingsStore.value.controls.interact);
   $("ebtn").className = `rbtn ${s.hint ? "hot" : ""}`;
+  const nearbyKeyedDoor = me ? BUILDINGS.find((b) => Math.abs(doorX(b) - me.x) <= DOOR_REACH && s.self.doorKeys?.includes(b.id)) : undefined;
+  $("doorlock").style.display = nearbyKeyedDoor && s.self.alive && !s.self.caged ? "block" : "none";
+  $("doorlock").textContent = `${s.doors?.find((d) => d.id === nearbyKeyedDoor?.id)?.locked ? "Unlock" : "Lock"} · L`;
   const ab = $("ability");
   ab.textContent = s.abilityLabel;
   ab.className = `rbtn kill ${s.abilityReady ? "hot" : ""}`;
@@ -512,6 +527,10 @@ function releaseInputs() {
   interactToggled = false;
   if (roomCode) void send({ dir: 0, interactHeld: false, cartHeld: false });
 }
+function activateTimepiece() {
+  if (snap?.time?.mode === "past") { void send({ action: "time_return" }); return; }
+  if (snap?.self.hasTimepiece && snap.time) timePanel.open(snap.time);
+}
 function stopInteract() {
   interactToggled = false;
   if (roomCode) void send({ interactHeld: false });
@@ -547,7 +566,7 @@ function bound(action: BindableAction, e: KeyboardEvent) {
 }
 window.addEventListener("keydown", (e) => {
   audio.start();
-  if (settingsDialog.isOpen || !roomCode) return;
+  if (settingsDialog.isOpen || timePanel.isOpen || !roomCode) return;
   if (wardPanel.isOpen) {
     if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
     return; // Puzzle buttons own Tab, Enter and Space.
@@ -557,6 +576,8 @@ window.addEventListener("keydown", (e) => {
   if (target && (["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName) || target.isContentEditable)) return;
   if (bound("left", e)) { keys.add("left"); computeDir(); e.preventDefault(); }
   else if (bound("right", e)) { keys.add("right"); computeDir(); e.preventDefault(); }
+  else if (e.code === "KeyM" && !e.repeat) { activateTimepiece(); e.preventDefault(); }
+  else if (e.code === "KeyL" && !e.repeat) { void send({ action: "door_lock" }); e.preventDefault(); }
   else if (bound("interact", e) && !e.repeat) { interactDown(); e.preventDefault(); }
   else if (bound("ability", e) && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
   else if (bound("blackout", e) && !e.repeat) { void send({ action: "blackout" }); e.preventDefault(); }
@@ -567,7 +588,7 @@ window.addEventListener("keydown", (e) => {
   else if (bound("talk", e) && !e.repeat) { if (voice.current.active) voice.stop(); else void voice.start(); e.preventDefault(); }
 });
 window.addEventListener("keyup", (e) => {
-  if (settingsDialog.isOpen || wardPanel.isOpen || !roomCode) return;
+  if (settingsDialog.isOpen || timePanel.isOpen || wardPanel.isOpen || !roomCode) return;
   if (bound("left", e)) { keys.delete("left"); computeDir(); }
   else if (bound("right", e)) { keys.delete("right"); computeDir(); }
   else if (bound("interact", e)) interactUp();
@@ -603,11 +624,32 @@ $("snuffbtn").addEventListener("click", () => send({ action: "blackout" }));
 $("talkbtn").addEventListener("click", openChat);
 $("leave").addEventListener("click", leaveToMenu);
 $("supplydrop").addEventListener("click", () => void send({ action: "drop_supply" }));
+let noteFocusX: number | null = null;
+$("pinbtn").addEventListener("click", () => { $("pinpanel").style.display = "flex"; ($("pintextarea") as HTMLTextAreaElement).focus(); });
+$("pincancel").addEventListener("click", () => { $("pinpanel").style.display = "none"; ($("pintextarea") as HTMLTextAreaElement).value = ""; });
+$("pinsubmit").addEventListener("click", () => {
+  const text = ($("pintextarea") as HTMLTextAreaElement).value.trim();
+  if (!text) return;
+  void send({ action: "pin_note", noteText: text });
+  ($("pintextarea") as HTMLTextAreaElement).value = "";
+  $("pinpanel").style.display = "none";
+});
+$("readnote").addEventListener("click", () => {
+  const note = (snap?.notes ?? []).find((n) => n.id === ($("readnote").dataset.noteId ?? ""));
+  if (!note) return;
+  $("notetext").textContent = note.text;
+  $("noteauthor").textContent = `— pinned by ${note.author}`;
+  $("noteoverlay").style.display = "flex";
+  noteFocusX = note.x; // zoom the world onto the page
+});
+$("noteclose").addEventListener("click", () => { $("noteoverlay").style.display = "none"; noteFocusX = null; });
 $("ruinbtn").addEventListener("click", () => void send({ action: "sabotage" }));
 $("settings").addEventListener("click", () => settingsDialog.open());
 $("menusettings").addEventListener("click", () => settingsDialog.open());
 $("voicebtn").addEventListener("click", () => { if (voice.current.active) voice.stop(); else void voice.start(); });
 $("micmute").addEventListener("click", () => voice.setMuted(!voice.current.muted));
+$("doorlock").addEventListener("click", () => { void send({ action: "door_lock" }); });
+$("timebtn").addEventListener("click", activateTimepiece);
 $("mute").addEventListener("click", () => {
   audio.start();
   audio.setMuted(!audio.muted);
@@ -659,9 +701,18 @@ function loop(nowMs: number) {
   if (!snap || $("game").style.display === "none") return;
   for (const p of snap.players) {
     const cur = displayX.get(p.id);
-    if (cur === undefined || Math.abs(cur - p.x) > 300) displayX.set(p.id, p.x);
-    else displayX.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 10));
+    if (cur === undefined || Math.abs(cur - p.x) > 300) { displayX.set(p.id, p.x); continue; }
+    if (p.id === snap.self.id && snap.phase === "playing" && !snap.self.caged) {
+      // Local prediction at the authoritative speed; the server poll only
+      // corrects drift, so movement no longer lags behind the input.
+      const spd = !snap.self.alive ? GHOST_SPEED : snap.self.hasSupply ? CARRY_SPEED : SPEED;
+      const pred = cur + lastDir * spd * dt;
+      displayX.set(p.id, Math.abs(p.x - pred) > 90 ? p.x : pred + (p.x - pred) * Math.min(1, dt * 25));
+    } else {
+      displayX.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 16));
+    }
   }
+  renderer.setFocus(noteFocusX);
   renderer.render(ctx, vw(), vh(), snap, displayX, nowMs / 1000, dt);
 }
 requestAnimationFrame(loop);

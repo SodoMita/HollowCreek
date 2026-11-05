@@ -26,7 +26,9 @@ import {
   Zap,
 } from "lucide-react";
 import { Renderer } from "@/game/render";
-import { WardPanel } from "@/game/ward-ui";
+import { BUILDINGS, DOOR_REACH, buildingHint, clampWorld, doorX, dropBuildingKeys, newDoors, interactWithBuilding, walkThroughBuildings, type DoorState } from "@/game/buildings";
+import { WardPanel, renderWardJob } from "@/game/ward-ui";
+import { TimePanel } from "@/game/time-ui";
 import {
   WARD_JOBS,
   applyWardMove,
@@ -65,7 +67,11 @@ import {
   SPEED,
   STAMINA_IDLE_REGEN,
   STATIONS,
+  GHOST_SPEED,
   SUPPLY_CART_START,
+  TIMEPIECE_X,
+  TIME_VISIT_MS,
+  HISTORY_SAMPLE_MS,
   WORLD_W,
   type Snapshot,
   type TaskView,
@@ -94,7 +100,7 @@ const CHAPTERS: Chapter[] = [
     summary: "Cooperative Pushing & Hauling",
     instruction: "Walk to the heavy wooden cart at x=900. Hold Shift + A/D to push it. Then press E to take a repair kit.",
     guideNote:
-      "All nine wards start in ruins. The town shares one heavy cart of timber and iron. Hauling a kit slows you down and drains vigor. Press G to drop a kit if danger nears.",
+      "The nine street wards start in ruins; houses hold smaller ready-to-repair jobs. The town shares one heavy cart of timber and iron. Hauling a kit slows you down and drains vigor. Press G to drop a kit if danger nears.",
   },
   {
     id: 3,
@@ -128,7 +134,25 @@ const CHAPTERS: Chapter[] = [
     guideNote:
       "One or two among you wear human faces. When dread rises, find a lantern, stick together, and finish every ward before dawn.",
   },
+  {
+    id: 7, title: "Chapter VII: The Houses Beyond", summary: "Separate Keys & Side Doors",
+    instruction: "Walk west beyond the harvest shed. Find the tollhouse key, open its side door with E, and walk inside. Stand by the hearth and press E to repair it.",
+    guideNote: "Each house has its own key and an indoor job with supplies on site. E closes a door without locking it; L locks or unlocks with its matching key.",
+  },
+  {
+    id: 8, title: "Chapter VIII: A Minute Borrowed", summary: "The Timepiece",
+    instruction: "Find the timepiece east of the cart at x=1260. Take it with E, then press M and choose a recorded moment.",
+    guideNote: "Solo practice shows your own recorded movement. In multiplayer, recorded player commands are replayed against changes in the past.",
+  },
 ];
+
+type TutorialVisit = { originAt: number; startedAt: number; endsAt: number };
+type TutorialFrame = { at: number; snapshot: Snapshot };
+type TutorialFuture = {
+  tasks: TaskView[]; doors: DoorState[]; keyX: number | null; hasKey: boolean; hasSupply: boolean;
+  supplyDrops: number[]; cartX: number; cagedNeighbor: boolean; puzzles: Map<string, WardPuzzle>;
+  baselineTasks: TaskView[]; baselineDoors: DoorState[]; baselineCaged: boolean; baselineKeyX: number | null;
+};
 
 export default function TutorialClient() {
   const router = useRouter();
@@ -141,6 +165,7 @@ export default function TutorialClient() {
   const settingsDialogRef = useRef<SettingsDialog | null>(null);
   const audioRef = useRef<AudioDirector | null>(null);
   const wardPanelRef = useRef<WardPanel | null>(null);
+  const timePanelRef = useRef<TimePanel | null>(null);
 
   // Tutorial progression state
   const [currentChapter, setCurrentChapter] = useState(1);
@@ -149,9 +174,25 @@ export default function TutorialClient() {
   const [practiceModalOpen, setPracticeModalOpen] = useState(false);
   const [practiceKind, setPracticeKind] = useState<WardKind>("well");
   const [practicePuzzle, setPracticePuzzle] = useState<WardPuzzle | null>(null);
+  const [practicePreviewUntil, setPracticePreviewUntil] = useState(0);
+  const [practiceNow, setPracticeNow] = useState(0);
+  useEffect(() => {
+    if (!practiceModalOpen) return;
+    const timer = setInterval(() => setPracticeNow(Date.now()), 150);
+    return () => clearInterval(timer);
+  }, [practiceModalOpen]);
 
   // Simulated player state
   const [playerX, setPlayerX] = useState(480);
+  const [timepieceX, setTimepieceX] = useState<number | null>(TIMEPIECE_X);
+  const [hasTimepiece, setHasTimepiece] = useState(false);
+  const [actionNotice, setActionNotice] = useState<{ text: string; until: number } | null>(null);
+  const [timeVisit, setTimeVisit] = useState<TutorialVisit | null>(null);
+  const [timeNow, setTimeNow] = useState(0);
+  const tutorialHistory = useRef<TutorialFrame[]>([]);
+  const tutorialFuture = useRef<TutorialFuture | null>(null);
+  const [doors, setDoors] = useState(newDoors);
+  const [inside, setInside] = useState<string | null>(null);
   const [facing, setFacing] = useState(1);
   const [moving, setMoving] = useState(false);
   const [stamina, setStamina] = useState(1.0);
@@ -177,8 +218,9 @@ export default function TutorialClient() {
       id: s.id,
       name: s.name,
       x: s.x,
+      inside: s.inside,
       done: false,
-      delivered: false,
+      delivered: !!s.initialSupplied,
       sabotaged: false,
       progress: 0,
     }))
@@ -190,11 +232,15 @@ export default function TutorialClient() {
   const lastDir = useRef(0);
   const displayX = useRef(new Map<string, number>());
   const lastStepTime = useRef(0);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const showAction = useCallback((text: string) => setActionNotice({ text, until: Date.now() + 3500 }), []);
   const showToast = useCallback((msg: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast(msg);
-    setTimeout(() => setToast(null), 3200);
+    toastTimer.current = setTimeout(() => { setToast(null); toastTimer.current = null; }, 3200);
   }, []);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
   const getSettingsStore = useCallback(() => {
     if (!settingsStoreRef.current) settingsStoreRef.current = new SettingsStore();
@@ -216,6 +262,94 @@ export default function TutorialClient() {
     [currentChapter, showToast]
   );
 
+  // Hot values do not restart the timer, camera, audio or settings dialog.
+  const live = useRef({ playerX, cartX, cartHeld, hasSupply, currentChapter, stamina, exhausted, doors, inside, tasks, keyX, hasKey, supplyDrops, cagedNeighbor, timeVisit });
+  const advanceRef = useRef(advanceToChapter);
+  useEffect(() => {
+    live.current = { playerX, cartX, cartHeld, hasSupply, currentChapter, stamina, exhausted, doors, inside, tasks, keyX, hasKey, supplyDrops, cagedNeighbor, timeVisit };
+    advanceRef.current = advanceToChapter;
+  }, [playerX, cartX, cartHeld, hasSupply, currentChapter, stamina, exhausted, doors, inside, tasks, keyX, hasKey, supplyDrops, cagedNeighbor, timeVisit, advanceToChapter]);
+
+  const endTutorialVisit = useCallback(() => {
+    const future = tutorialFuture.current, current = live.current;
+    if (!future || !current.timeVisit) return;
+    const merged = future.tasks.map((task) => {
+      const past = current.tasks.find((item) => item.id === task.id);
+      const before = future.baselineTasks.find((item) => item.id === task.id);
+      if (!past || !before) return task;
+      if (past.sabotaged && !before.sabotaged) return { ...task, done: false, delivered: false, sabotaged: true, progress: 0 };
+      if (past.done && !before.done) return { ...task, done: true, delivered: true, progress: 1 };
+      if (past.delivered && !before.delivered && !task.done) return { ...task, delivered: true };
+      return task;
+    });
+    const mergedDoors = future.doors.map((door) => {
+      const past = current.doors.find((item) => item.id === door.id);
+      const before = future.baselineDoors.find((item) => item.id === door.id);
+      if (!past || !before) return door;
+      const next = { ...door };
+      if (past.open !== before.open || past.locked !== before.locked) { next.open = past.open; next.locked = past.locked; }
+      if (past.holder === "me" && before.holder !== "me") { next.holder = "me"; next.keyX = null; }
+      return next;
+    });
+    setTasks(merged); setDoors(mergedDoors); setCartX(future.cartX); setSupplyDrops(future.supplyDrops);
+    setHasKey(current.hasKey || future.hasKey);
+    setKeyX(current.hasKey ? null : current.keyX !== future.baselineKeyX ? current.keyX : future.keyX);
+    setHasSupply(current.hasSupply || future.hasSupply);
+    setCagedNeighbor(future.baselineCaged && !current.cagedNeighbor ? false : future.cagedNeighbor);
+    wardPuzzles.current = future.puzzles;
+    setActiveWardId(null); wardPanelRef.current?.update(null, 1, false);
+    keys.current.clear(); lastDir.current = 0; setMoving(false); setCartHeld(false);
+    tutorialFuture.current = null; current.timeVisit = null; setTimeVisit(null);
+    showToast("You return to the present. Past changes have carried forward.");
+  }, [showToast]);
+
+  const beginTutorialVisit = useCallback((targetAt: number) => {
+    const frame = [...tutorialHistory.current].reverse().find((item) => item.at <= targetAt) ?? tutorialHistory.current[0];
+    if (!frame || !hasTimepiece || timeVisit) return;
+    const futureDoors = structuredClone(doors);
+    dropBuildingKeys(futureDoors, "me", playerX, inside);
+    tutorialFuture.current = { tasks: structuredClone(tasks), doors: futureDoors,
+      keyX: hasKey ? playerX : keyX, hasKey: false, hasSupply: false,
+      supplyDrops: hasSupply ? [...supplyDrops, playerX] : [...supplyDrops], cartX, cagedNeighbor,
+      puzzles: structuredClone(wardPuzzles.current), baselineTasks: structuredClone(frame.snapshot.tasks),
+      baselineDoors: structuredClone(frame.snapshot.doors ?? newDoors()).map((door) => ({ ...door, holder: door.holder === "me" ? "echo:me" : door.holder })),
+      baselineCaged: !!frame.snapshot.cages[0]?.occupant, baselineKeyX: frame.snapshot.keyX };
+    setTasks(structuredClone(frame.snapshot.tasks));
+    setDoors(structuredClone(tutorialFuture.current.baselineDoors));
+    setKeyX(frame.snapshot.keyX); setCartX(frame.snapshot.cartX); setSupplyDrops([...frame.snapshot.supplyDrops]);
+    setCagedNeighbor(!!frame.snapshot.cages[0]?.occupant); setHasKey(false); setHasSupply(false);
+    wardPuzzles.current = new Map(); setActiveWardId(null);
+    const now = Date.now(), visit = { originAt: frame.at, startedAt: now, endsAt: now + TIME_VISIT_MS };
+    setHasTimepiece(false); setTimepieceX(null); live.current.timeVisit = visit; setTimeVisit(visit); setTimeNow(now);
+    keys.current.clear(); lastDir.current = 0; setMoving(false); setCartHeld(false);
+    showToast("The timepiece breaks. You are in the recorded past.");
+  }, [hasTimepiece, timeVisit, doors, playerX, inside, tasks, hasKey, keyX, hasSupply, supplyDrops, cartX, cagedNeighbor, showToast]);
+  const beginVisitRef = useRef(beginTutorialVisit);
+  const endVisitRef = useRef(endTutorialVisit);
+  useEffect(() => { beginVisitRef.current = beginTutorialVisit; endVisitRef.current = endTutorialVisit; }, [beginTutorialVisit, endTutorialVisit]);
+  useEffect(() => {
+    if (!timeVisit) return;
+    const timer = setInterval(() => { const now = Date.now(); setTimeNow(now); if (now >= timeVisit.endsAt) endVisitRef.current(); }, 250);
+    return () => clearInterval(timer);
+  }, [timeVisit]);
+  const activateTimepiece = useCallback(() => {
+    if (timeVisit) { endVisitRef.current(); return; }
+    const first = tutorialHistory.current[0], last = tutorialHistory.current.at(-1);
+    if (hasTimepiece && first && last) timePanelRef.current?.open({ mode: "present", earliest: first.at, latest: last.at });
+  }, [hasTimepiece, timeVisit]);
+  const handleBuilding = useCallback((action: "interact" | "lock") => {
+    const state = live.current;
+    const next = state.doors.map((d) => ({ ...d }));
+    const result = interactWithBuilding(next, "me", state.playerX, state.inside, action);
+    if (!result.handled) return false;
+    if (result.message) {
+      state.doors = next; setDoors(next); showToast(result.message);
+      if (result.message.startsWith("You found ")) showAction(result.message.replace(/^You found /, "took "));
+    }
+    if (result.error) showToast(result.error);
+    return true;
+  }, [showToast, showAction]);
+
   // Initialize settings, audio, and ward panel
   useEffect(() => {
     const store = getSettingsStore();
@@ -229,8 +363,11 @@ export default function TutorialClient() {
       applyDocumentPreferences(next);
     });
 
-    const dialog = new SettingsDialog(store);
+    const release = () => { keys.current.clear(); lastDir.current = 0; setMoving(false); setCartHeld(false); };
+    const dialog = new SettingsDialog(store, document.body, { onOpen: release });
     settingsDialogRef.current = dialog;
+    const timePanel = new TimePanel(document.body, { travel: (targetAt) => beginVisitRef.current(targetAt), opened: release, practice: true });
+    timePanelRef.current = timePanel;
 
     const panel = new WardPanel(document.body, {
       move: (stationId, index) => {
@@ -247,15 +384,16 @@ export default function TutorialClient() {
         );
 
         if (done) {
-          showToast(`${WARD_JOBS[stationId as WardKind]?.title ?? "Ward"} repaired! Light restored.`);
+          const station = STATIONS.find((s) => s.id === stationId);
+          showToast(`${station ? WARD_JOBS[station.kind].title : "Ward"} repaired!`);
           panel.update(null, 1, false);
           setActiveWardId(null);
-          if (currentChapter === 3) {
-            advanceToChapter(4);
+          if (live.current.currentChapter === 3) {
+            advanceRef.current(4);
           }
         } else {
           const st = STATIONS.find((s) => s.id === stationId);
-          if (st) panel.update(wardView(stationId, st.name, next), stamina, exhausted);
+          if (st) panel.update(wardView(stationId, st.name, next), live.current.stamina, live.current.exhausted);
         }
       },
       close: () => {
@@ -273,21 +411,27 @@ export default function TutorialClient() {
     return () => {
       unsub();
       dialog.destroy();
+      timePanel.destroy(); timePanelRef.current = null;
       panel.destroy();
       audioRef.current?.destroy();
       settingsDialogRef.current = null;
       wardPanelRef.current = null;
       audioRef.current = null;
     };
-  }, [currentChapter, advanceToChapter, getSettingsStore, showToast, stamina, exhausted]);
+  }, [getSettingsStore, showToast]);
 
   // Handle player actions in tutorial
   const handleInteract = useCallback(() => {
     ensureAudio();
+    if (!inside && timepieceX !== null && Math.abs(timepieceX - playerX) < 55) {
+      setTimepieceX(null); setHasTimepiece(true); showAction("took the timepiece"); showToast("You found the timepiece. Press M to choose a moment."); return;
+    }
+    if (handleBuilding("interact")) return;
+    const atTask = (t: TaskView) => (t.inside ?? null) === inside && Math.abs(t.x - playerX) < INTERACT_RANGE;
 
     // 1. Deliver kit to a broken ward
     if (hasSupply) {
-      const nearbyWard = tasks.find((t) => !t.done && !t.delivered && Math.abs(t.x - playerX) < INTERACT_RANGE);
+      const nearbyWard = tasks.find((t) => !t.done && !t.delivered && atTask(t));
       if (nearbyWard) {
         setHasSupply(false);
         setTasks((prev) =>
@@ -299,11 +443,12 @@ export default function TutorialClient() {
     }
 
     // 2. Open workbench at a supplied ward
-    const readyWard = tasks.find((t) => !t.done && t.delivered && Math.abs(t.x - playerX) < INTERACT_RANGE);
+    const readyWard = tasks.find((t) => !t.done && t.delivered && atTask(t));
     if (readyWard) {
       let puzzle = wardPuzzles.current.get(readyWard.id);
       if (!puzzle) {
-        puzzle = createWardPuzzle(readyWard.id, 42);
+        const station = STATIONS.find((s) => s.id === readyWard.id)!;
+        puzzle = createWardPuzzle(station.kind, 42);
         wardPuzzles.current.set(readyWard.id, puzzle);
       }
       setActiveWardId(readyWard.id);
@@ -312,8 +457,9 @@ export default function TutorialClient() {
     }
 
     // 3. Take kit from the cart
-    if (!hasSupply && Math.abs(cartX - playerX) < INTERACT_RANGE) {
+    if (!inside && !hasSupply && Math.abs(cartX - playerX) < INTERACT_RANGE) {
       setHasSupply(true);
+      showAction("took a repair kit");
       showToast("Took a repair kit! Notice your slower stride and vigor drain.");
       if (currentChapter === 2) {
         advanceToChapter(3);
@@ -322,18 +468,19 @@ export default function TutorialClient() {
     }
 
     // 4. Recover dropped kit from street
-    if (!hasSupply) {
+    if (!inside && !hasSupply) {
       const droppedIdx = supplyDrops.findIndex((x) => Math.abs(x - playerX) < INTERACT_RANGE);
       if (droppedIdx !== -1) {
         setSupplyDrops((prev) => prev.filter((_, i) => i !== droppedIdx));
         setHasSupply(true);
+        showAction("picked up a repair kit");
         showToast("Recovered dropped repair kit!");
         return;
       }
     }
 
     // 5. Unlock iron cage with key
-    if (hasKey && cagedNeighbor && Math.abs(1940 - playerX) < CAGE_UNLOCK_RANGE) {
+    if (!inside && hasKey && cagedNeighbor && Math.abs(1940 - playerX) < CAGE_UNLOCK_RANGE) {
       setHasKey(false);
       setCagedNeighbor(false);
       setKeyX(1980); // key falls by the open cage
@@ -345,15 +492,16 @@ export default function TutorialClient() {
     }
 
     // 6. Pick up iron key
-    if (keyX !== null && !hasKey && Math.abs(keyX - playerX) < INTERACT_RANGE) {
+    if (!inside && keyX !== null && !hasKey && Math.abs(keyX - playerX) < INTERACT_RANGE) {
       setHasKey(true);
       setKeyX(null);
+      showAction("took the iron key");
       showToast("Found the iron key! Walk to the cage in the square to unlock Nils.");
       return;
     }
 
     // 7. Ring the chapel bell
-    if (Math.abs(BELL_X - playerX) < INTERACT_RANGE) {
+    if (!inside && Math.abs(BELL_X - playerX) < INTERACT_RANGE) {
       setBellAt(Date.now());
       setMeetingActive(true);
       showToast("The chapel bell tolls! In multiplayer, everyone gathers in the square to vote.");
@@ -364,6 +512,10 @@ export default function TutorialClient() {
     }
   }, [
     ensureAudio,
+    handleBuilding,
+    showAction,
+    inside,
+    timepieceX,
     hasSupply,
     tasks,
     playerX,
@@ -381,14 +533,15 @@ export default function TutorialClient() {
 
   const handleDropSupply = useCallback(() => {
     if (!hasSupply) return;
+    if (inside) { showToast("Carry the kit outside to set it down."); return; }
     setHasSupply(false);
     setSupplyDrops((prev) => [...prev, playerX]);
     showToast("Dropped repair kit on the road.");
-  }, [hasSupply, playerX, showToast]);
+  }, [hasSupply, inside, playerX, showToast]);
 
   const handleHollowRuin = useCallback(() => {
     // Simulated sabotage
-    const suppliedOrDone = tasks.find((t) => (t.done || t.delivered) && Math.abs(t.x - playerX) < INTERACT_RANGE);
+    const suppliedOrDone = tasks.find((t) => (t.done || t.delivered) && (t.inside ?? null) === inside && Math.abs(t.x - playerX) < INTERACT_RANGE);
     if (suppliedOrDone) {
       setTasks((prev) =>
         prev.map((t) =>
@@ -400,13 +553,13 @@ export default function TutorialClient() {
     } else {
       showToast("Walk near a supplied or repaired ward to practice Hollow sabotage.");
     }
-  }, [tasks, playerX, showToast]);
+  }, [tasks, playerX, inside, showToast]);
 
   // Input listeners
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       ensureAudio();
-      if (settingsDialogRef.current?.isOpen || wardPanelRef.current?.isOpen) return;
+      if (practiceModalOpen || settingsDialogRef.current?.isOpen || timePanelRef.current?.isOpen || wardPanelRef.current?.isOpen) return;
 
       const target = e.target as HTMLElement | null;
       if (target && ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName)) return;
@@ -427,6 +580,12 @@ export default function TutorialClient() {
       } else if (matchesControl(controls, "ruin", e.code)) {
         handleHollowRuin();
         e.preventDefault();
+      } else if (e.code === "KeyM" && !e.repeat) {
+        activateTimepiece();
+        e.preventDefault();
+      } else if (e.code === "KeyL" && !e.repeat) {
+        handleBuilding("lock");
+        e.preventDefault();
       } else if (matchesControl(controls, "interact", e.code) && !e.repeat) {
         handleInteract();
         e.preventDefault();
@@ -434,96 +593,62 @@ export default function TutorialClient() {
     };
 
     const up = (e: KeyboardEvent) => {
-      if (settingsDialogRef.current?.isOpen || wardPanelRef.current?.isOpen) return;
+      if (practiceModalOpen || settingsDialogRef.current?.isOpen || timePanelRef.current?.isOpen || wardPanelRef.current?.isOpen) return;
       const controls = getSettingsStore().value.controls;
       if (matchesControl(controls, "left", e.code)) keys.current.delete("left");
       else if (matchesControl(controls, "right", e.code)) keys.current.delete("right");
       else if (matchesControl(controls, "push", e.code)) setCartHeld(false);
     };
 
+    const release = () => { keys.current.clear(); setCartHeld(false); };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
+    window.addEventListener("blur", release);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", release);
     };
-  }, [ensureAudio, getSettingsStore, handleDropSupply, handleHollowRuin, handleInteract]);
+  }, [ensureAudio, getSettingsStore, handleDropSupply, handleHollowRuin, handleInteract, handleBuilding, practiceModalOpen, activateTimepiece]);
 
-  // Simulated physics loop (movement, vigor, cart pushing)
+  // One stable timer repays late ticks instead of restarting on every render.
   useEffect(() => {
+    lastStepTime.current = performance.now();
     const interval = setInterval(() => {
       const now = performance.now();
-      const dt = Math.min(0.05, (now - lastStepTime.current) / 1000);
+      const dt = Math.min(0.12, (now - lastStepTime.current) / 1000);
       lastStepTime.current = now;
-
-      const k = keys.current;
-      const dir = (k.has("right") ? 1 : 0) - (k.has("left") ? 1 : 0);
+      const state = live.current;
+      const dir = (keys.current.has("right") ? 1 : 0) - (keys.current.has("left") ? 1 : 0);
       lastDir.current = dir;
-
+      setMoving(dir !== 0);
       if (dir !== 0) {
-        setMoving(true);
         setFacing(dir);
-
-        // Check if pushing cart
-        const nearCart = Math.abs(playerX - cartX) <= CART_PUSH_RANGE;
-        const pushing = cartHeld && nearCart && !hasSupply;
-
-        if (pushing) {
-          setCartPushers(1);
-          const pushSpeed = CART_SOLO_SPEED;
-          setPlayerX((px) => Math.max(30, Math.min(WORLD_W - 30, px + dir * pushSpeed * dt)));
-          setCartX((cx) => Math.max(90, Math.min(WORLD_W - 90, cx + dir * pushSpeed * dt)));
-          setStamina((s) => {
-            const next = Math.max(0, s - CARRY_VIGOR_DRAIN * 1.2 * dt);
-            if (next <= 0) setExhausted(true);
-            return next;
-          });
-        } else {
-          setCartPushers(0);
-          const moveSpeed = hasSupply ? CARRY_SPEED : SPEED;
-          setPlayerX((px) => Math.max(30, Math.min(WORLD_W - 30, px + dir * moveSpeed * dt)));
-
-          if (hasSupply) {
-            setStamina((s) => {
-              const next = Math.max(0, s - CARRY_VIGOR_DRAIN * dt);
-              if (next <= 0) setExhausted(true);
-              return next;
-            });
-          }
+        const pushing = !state.inside && state.cartHeld && !state.hasSupply && Math.abs(state.playerX - state.cartX) <= CART_PUSH_RANGE;
+        setCartPushers(pushing ? 1 : 0);
+        const speed = pushing ? CART_SOLO_SPEED : state.hasSupply ? CARRY_SPEED : SPEED;
+        const step = walkThroughBuildings(state.playerX, state.playerX + dir * speed * dt, state.inside, state.doors);
+        state.playerX = step.x; state.inside = step.inside;
+        setPlayerX(step.x); setInside(step.inside);
+        if (pushing) { state.cartX = clampWorld(state.cartX + dir * speed * dt, 90); setCartX(state.cartX); }
+        if (pushing || state.hasSupply) {
+          const next = Math.max(0, state.stamina - CARRY_VIGOR_DRAIN * (pushing ? 1.2 : 1) * dt);
+          state.stamina = next; setStamina(next);
+          if (next <= 0) setExhausted(true);
         }
-
-        // Chapter 1 milestone check
-        if (currentChapter === 1 && Math.abs(playerX - 480) > 220) {
-          advanceToChapter(2);
+        if (state.currentChapter === 1 && Math.abs(state.playerX - 480) > 220) {
+          state.currentChapter = 2; advanceRef.current(2);
         }
       } else {
-        setMoving(false);
         setCartPushers(0);
-        // Idle vigor regen
-        setStamina((s) => {
-          const next = Math.min(1.0, s + STAMINA_IDLE_REGEN * dt);
-          if (next >= 0.2) setExhausted(false);
-          return next;
-        });
+        const next = Math.min(1, state.stamina + STAMINA_IDLE_REGEN * dt);
+        state.stamina = next; setStamina(next);
+        if (next >= 0.2 && state.exhausted) setExhausted(false);
       }
-
-      // Proximity dread in Chapter 6
-      if (currentChapter === 6) {
-        const distToSquare = Math.abs(playerX - BELL_X);
-        const dread = distToSquare < 400 ? 0.75 : 0.2;
-        setDanger(dread);
-      }
+      if (state.currentChapter === 6) setDanger(Math.abs(state.playerX - BELL_X) < 400 ? 0.75 : 0.2);
     }, 50);
-
     return () => clearInterval(interval);
-  }, [
-    advanceToChapter,
-    cartHeld,
-    cartX,
-    currentChapter,
-    hasSupply,
-    playerX,
-  ]);
+  }, []);
 
   // Construct current simulated snapshot for canvas renderer
   const buildSnapshot = useCallback((): Snapshot => {
@@ -532,9 +657,9 @@ export default function TutorialClient() {
     const mini = activeTask && pz ? wardView(activeTask.id, activeTask.name, pz) : null;
 
     let hint: string | null = null;
-    const nearbyWard = tasks.find((t) => !t.done && Math.abs(t.x - playerX) < INTERACT_RANGE);
-    const atCart = Math.abs(cartX - playerX) < INTERACT_RANGE;
-    const nearCart = Math.abs(cartX - playerX) <= CART_PUSH_RANGE;
+    const nearbyWard = tasks.find((t) => !t.done && (t.inside ?? null) === inside && Math.abs(t.x - playerX) < INTERACT_RANGE);
+    const atCart = !inside && Math.abs(cartX - playerX) < INTERACT_RANGE;
+    const nearCart = !inside && Math.abs(cartX - playerX) <= CART_PUSH_RANGE;
 
     if (nearbyWard && nearbyWard.delivered) hint = "E — open repair puzzle";
     else if (nearbyWard && !nearbyWard.delivered && hasSupply) hint = "E — deliver kit to ward";
@@ -544,8 +669,11 @@ export default function TutorialClient() {
     else if (nearCart && !hasSupply) hint = "Hold Shift + A/D to push cart";
     else if (hasSupply) hint = "G — drop carried kit";
     else if (Math.abs(BELL_X - playerX) < INTERACT_RANGE) hint = "E — ring the chapel bell";
+    hint = buildingHint(doors, "me", playerX, inside) ?? hint;
+    if (!inside && timepieceX !== null && Math.abs(timepieceX - playerX) < 55) hint = "E — take the timepiece";
+    else if (hasTimepiece && !hint) hint = "M — choose a moment in the past";
 
-    return {
+    const result: Snapshot = {
       code: "TUTOR",
       phase: "playing",
       round: 1,
@@ -557,6 +685,8 @@ export default function TutorialClient() {
         caged: false,
         hasKey,
         hasSupply,
+        doorKeys: doors.filter((d) => d.holder === "me").map((d) => d.id),
+        hasTimepiece,
         bellUsed: false,
         killCooldownMs: 0,
         canKill: false,
@@ -572,7 +702,7 @@ export default function TutorialClient() {
       players: [
         {
           id: "me",
-          name: "You (Learner)",
+          name: "You",
           color: "#3a7ca5",
           x: playerX,
           facing,
@@ -581,6 +711,10 @@ export default function TutorialClient() {
           caged: false,
           hasKey,
           hasSupply,
+          inside,
+          hasTimepiece,
+          doorKeys: doors.filter((door) => door.holder === "me").map((door) => door.id),
+          action: actionNotice && actionNotice.until > Date.now() ? actionNotice : null,
           voted: myVote !== null,
           bubble: null,
           isHost: true,
@@ -617,7 +751,9 @@ export default function TutorialClient() {
         },
       ],
       bodies: [],
+      doors,
       keyX,
+      timepieceX,
       supplyDrops,
       cartX,
       cartPushers,
@@ -657,11 +793,32 @@ export default function TutorialClient() {
       abilityReady: Math.abs(playerX - BELL_X) < INTERACT_RANGE + 20,
       hostId: "me",
       playerCount: 3,
+      nightT: 0.3,
       minigame: mini,
     };
+    const first = tutorialHistory.current[0], last = tutorialHistory.current.at(-1);
+    if (timeVisit) {
+      const cursor = Math.min(Date.now(), timeVisit.originAt + Date.now() - timeVisit.startedAt);
+      const historical = [...tutorialHistory.current].reverse().find((frame) => frame.at <= cursor) ?? first;
+      if (historical) {
+        const me = result.players[0];
+        const shift = Date.now() - cursor;
+        result.players = [me, ...historical.snapshot.players.map((player) => ({ ...player, id: `echo:${player.id}`, echo: true, isHost: false, bubble: null,
+          action: player.action ? { ...player.action, until: player.action.until + shift } : null }))];
+        result.cages = historical.snapshot.cages.map((cage) => ({ ...cage, occupant: cage.occupant ? `echo:${cage.occupant}` : null }));
+      }
+      result.time = { mode: "past", earliest: first?.at ?? timeVisit.originAt, latest: last?.at ?? timeVisit.originAt, cursor, endsAt: timeVisit.endsAt };
+    } else result.time = { mode: "present", earliest: first?.at ?? Date.now(), latest: last?.at ?? Date.now() };
+    return result;
   }, [
     tasks,
     activeWardId,
+    timeVisit,
+    timepieceX,
+    hasTimepiece,
+    actionNotice,
+    doors,
+    inside,
     playerX,
     cartX,
     hasKey,
@@ -680,6 +837,9 @@ export default function TutorialClient() {
     blackoutUntil,
     danger,
   ]);
+
+  const snapshotRef = useRef(buildSnapshot);
+  useEffect(() => { snapshotRef.current = buildSnapshot; }, [buildSnapshot]);
 
   // Main canvas render loop
   useEffect(() => {
@@ -722,11 +882,23 @@ export default function TutorialClient() {
       const dt = Math.min(0.05, (nowMs - last) / 1000);
       last = nowMs;
 
-      const snap = buildSnapshot();
+      const snap = snapshotRef.current();
+      if (snap.time?.mode !== "past" && (!tutorialHistory.current.length || Date.now() - tutorialHistory.current[tutorialHistory.current.length - 1].at >= HISTORY_SAMPLE_MS)) {
+        tutorialHistory.current.push({ at: Date.now(), snapshot: structuredClone(snap) });
+        if (tutorialHistory.current.length > 7200) tutorialHistory.current = tutorialHistory.current.filter((_, index) => index % 2 === 0);
+      }
       for (const p of snap.players) {
         const cur = displayX.current.get(p.id);
-        if (cur === undefined || Math.abs(cur - p.x) > 300) displayX.current.set(p.id, p.x);
-        else displayX.current.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 10));
+        if (cur === undefined || Math.abs(cur - p.x) > 300) { displayX.current.set(p.id, p.x); continue; }
+        if (p.id === snap.self.id && !snap.self.caged) {
+          // Local prediction at the authoritative speed; the local step only
+          // corrects drift, so movement no longer lags behind the input.
+          const spd = !snap.self.alive ? GHOST_SPEED : snap.self.hasSupply ? CARRY_SPEED : SPEED;
+          const pred = cur + lastDir.current * spd * dt;
+          displayX.current.set(p.id, Math.abs(p.x - pred) > 90 ? p.x : pred + (p.x - pred) * Math.min(1, dt * 25));
+        } else {
+          displayX.current.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 16));
+        }
       }
 
       renderer.render(ctx, vw(), vh(), snap, displayX.current, nowMs / 1000, dt);
@@ -739,26 +911,37 @@ export default function TutorialClient() {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
     };
-  }, [buildSnapshot, getSettingsStore]);
+  }, [getSettingsStore]);
 
   // Practice modal helper
   const openPracticeWard = (kind: WardKind) => {
+    keys.current.clear(); lastDir.current = 0; setMoving(false); setCartHeld(false);
     setPracticeKind(kind);
     const pz = createWardPuzzle(kind, Date.now());
     setPracticePuzzle(pz);
+    const now = Date.now();
+    setPracticeNow(now);
+    setPracticePreviewUntil(kind === "scarecrow" ? now + 3200 : 0);
     setPracticeModalOpen(true);
   };
 
   const handlePracticeMove = (index: number) => {
-    if (!practicePuzzle) return;
+    if (!practicePuzzle || (practicePuzzle.kind === "scarecrow" && index !== 4 && Date.now() < practicePreviewUntil)) return;
     const next = applyWardMove(practicePuzzle, index);
     setPracticePuzzle(next);
+    if (practicePuzzle.kind === "scarecrow" && (index === 4 || next.values[0] !== practicePuzzle.values[0] || next.mistakes > practicePuzzle.mistakes)) {
+      const now = Date.now(); setPracticeNow(now); setPracticePreviewUntil(now + 3200);
+    }
     if (wardSolved(next)) {
       showToast(`${WARD_JOBS[practiceKind].title} solved! Excellent work.`);
     }
   };
 
   const activeChap = CHAPTERS[currentChapter - 1] ?? CHAPTERS[0];
+  const nearKeyedDoor = BUILDINGS.find((b) => Math.abs(doorX(b) - playerX) <= DOOR_REACH && doors.some((d) => d.id === b.id && d.holder === "me"));
+  const nearDoorState = doors.find((d) => d.id === nearKeyedDoor?.id);
+  const nearbyIndoorJob = tasks.find((t) => t.inside && t.inside === inside && !t.done && Math.abs(t.x - playerX) < INTERACT_RANGE);
+  const actionHint = !inside && timepieceX !== null && Math.abs(timepieceX - playerX) < 55 ? "E — take the timepiece" : buildingHint(doors, "me", playerX, inside) ?? (nearbyIndoorJob ? `E — ${nearbyIndoorJob.delivered ? "repair" : "deliver a kit to"} ${nearbyIndoorJob.name}` : null);
 
   return (
     <main
@@ -779,6 +962,7 @@ export default function TutorialClient() {
               <ArrowLeft className="h-3.5 w-3.5" /> Back to Town Menu
             </Link>
             <span className="hidden font-display text-lg text-[#d99a3d] md:inline">Singleplayer School</span>
+            {(hasTimepiece || timeVisit) && <button onClick={activateTimepiece} className="rounded border border-[#7ba9a6] bg-[#243b3c]/90 px-2 py-1.5 text-xs text-[#cbeae1]">{timeVisit ? "Return · M" : "Timepiece · M"}</button>}
           </div>
 
           <div className="flex items-center gap-2">
@@ -792,7 +976,7 @@ export default function TutorialClient() {
               onClick={() => {
                 ensureAudio();
                 const m = !muted;
-                setMuted(m);
+                getSettingsStore().update((draft) => { draft.audio.muted = m; });
                 audioRef.current?.setMuted(m);
               }}
               title={muted ? "Unmute" : "Mute"}
@@ -822,7 +1006,7 @@ export default function TutorialClient() {
                   key={ch.id}
                   onClick={() => setCurrentChapter(ch.id)}
                   title={ch.title}
-                  className={`h-5 w-5 rounded text-[11px] font-mono transition ${
+                  className={`h-5 w-5 rounded text-[11px] font-mono transition-colors ${
                     currentChapter === ch.id
                       ? "bg-[#d99a3d] font-bold text-[#140d18]"
                       : completedChapters.includes(ch.id)
@@ -841,6 +1025,8 @@ export default function TutorialClient() {
         </div>
       </div>
 
+      {timeVisit && <div data-testid="past-countdown" className="absolute right-3 top-48 z-20 rounded border border-[#83b9b4] bg-[#172c32]/95 px-3 py-2 text-xs text-[#d2eee5]">In the past · {Math.max(0, Math.ceil((timeVisit.endsAt - timeNow) / 1000))}s <button onClick={activateTimepiece} className="ml-2 underline">Return now</button></div>}
+
       {/* ---- Interactive Objectives Indicator & Wards Bar ---- */}
       <div className="absolute left-3 top-48 hidden w-56 rounded border border-[#3a2733]/70 bg-[#140d18]/80 p-3 text-xs backdrop-blur sm:block">
         <div className="mb-2 uppercase tracking-widest text-[#9c8b7a]">Tutorial Town Status</div>
@@ -854,6 +1040,14 @@ export default function TutorialClient() {
           <div className="flex justify-between">
             <span>Carrying Kit:</span>
             <span className="font-mono text-[#d99a3d]">{hasSupply ? "YES (slow)" : "None"}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Location:</span>
+            <span data-testid="tutorial-location" className="font-mono text-[#c9b8a4]">{inside ? BUILDINGS.find((b) => b.id === inside)?.name : "The road"}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Your position:</span>
+            <span data-testid="tutorial-position" className="font-mono text-[#c9b8a4]">{Math.round(playerX)}</span>
           </div>
           <div className="flex justify-between">
             <span>Cart Position:</span>
@@ -878,7 +1072,7 @@ export default function TutorialClient() {
             />
             <div className="h-2 w-28 overflow-hidden rounded-full border border-[#3a2733] bg-[#140d18]/80">
               <div
-                className={`h-full transition-all duration-300 ${
+                className={`h-full transition-[width] duration-300 ${
                   stamina <= 0 ? "bg-[#e06a5a]" : stamina < 0.3 ? "bg-[#d99a3d]" : "bg-[#6b8e23]"
                 }`}
                 style={{ width: `${Math.round(stamina * 100)}%` }}
@@ -918,6 +1112,9 @@ export default function TutorialClient() {
 
         {/* Right: Actions */}
         <div className="flex items-end gap-2 sm:gap-3">
+          {nearKeyedDoor && (
+            <button onClick={() => handleBuilding("lock")} className="h-12 rounded-full border border-[#84624c] bg-[#33231f]/90 px-3 text-xs text-[#f2cf91]">{nearDoorState?.locked ? "Unlock" : "Lock"} (L)</button>
+          )}
           {hasSupply ? (
             <button
               onClick={handleDropSupply}
@@ -940,6 +1137,7 @@ export default function TutorialClient() {
           )}
 
           <div className="flex flex-col items-center gap-1">
+            {actionHint && <span className="max-w-48 rounded bg-[#0d0810]/90 px-2 py-1 text-center text-xs text-[#ffd98a]">{actionHint}</span>}
             <button
               onClick={handleInteract}
               className="h-14 w-14 rounded-full border-2 border-[#d99a3d] bg-[#3a2410]/95 font-display text-xl text-[#ffd98a] shadow-[0_0_20px_rgba(217,154,61,0.3)] active:scale-95"
@@ -988,7 +1186,7 @@ export default function TutorialClient() {
                 <button
                   key={k}
                   onClick={() => openPracticeWard(k)}
-                  className={`rounded px-2 py-1 text-xs transition ${
+                  className={`rounded px-2 py-1 text-xs transition-colors ${
                     practiceKind === k
                       ? "bg-[#d99a3d] font-bold text-[#140d18]"
                       : "border border-[#3a2733] bg-[#1d1420] text-[#c9b8a4] hover:border-[#d99a3d]"
@@ -1018,19 +1216,14 @@ export default function TutorialClient() {
                   </button>
                 </div>
               ) : (
-                <div className="w-full">
-                  <div className="flex flex-wrap justify-center gap-2">
-                    {Array.from({ length: 4 }).map((_, i) => (
-                      <button
-                        key={i}
-                        onClick={() => handlePracticeMove(i)}
-                        className="rounded border border-[#6d554a] bg-[#261c24] px-4 py-3 text-sm text-[#f1dfc5] hover:border-[#e2a667] active:scale-95"
-                      >
-                        Action / Dial {i + 1}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                <div
+                  className="w-full"
+                  onClick={(event) => {
+                    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-ward-move]");
+                    if (button && !button.disabled) handlePracticeMove(Number(button.dataset.wardMove));
+                  }}
+                  dangerouslySetInnerHTML={{ __html: renderWardJob(wardView(practiceKind, WARD_JOBS[practiceKind].title, practicePuzzle, Math.max(0, practicePreviewUntil - practiceNow))) }}
+                />
               )}
             </div>
           </div>

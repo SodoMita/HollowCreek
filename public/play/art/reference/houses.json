@@ -1,0 +1,73 @@
+{
+  "place": "Malye Korely open-air museum of wooden architecture, Korelka creek, Primorsky District, Arkhangelsk Oblast (opened 1973)",
+  "placeUrl": "https://en.wikipedia.org/wiki/Malye_Korely",
+  "note": "Real houses of the reference place. Each house has its own individually hand-authored SVG assets (exterior + interior) and downloaded reference photos. Photos live outside the game bundle in /home/user/malye-korely/photos (see /home/user/malye-korely/SOURCES.md).",
+  "houses": [
+    {
+      "slug": "pukhov",
+      "name": "Дом-двор А. Ф. Пухова",
+      "year": "1812",
+      "origin": "д. Большой Халуй, Каргопольский р-н",
+      "sector": "Kargopol-Onega",
+      "exterior": "reference/pukhov-exterior.svg",
+      "interior": "reference/pukhov-interior.svg",
+      "photos": { "exterior": "../../malye-korely/photos/pukhov-ext.jpg", "interior": "../../malye-korely/photos/pukhov-int.jpg" },
+      "sources": ["http://towntravel.ru/arxangelskaya-oblast/arxangelsk-muzej-malye-korely.html", "https://cruiseinform.ru/blog/1/malyekorely/"]
+    },
+    {
+      "slug": "kirillov",
+      "name": "Дом-двор Е. И. Кириллова («дом о двух конях»)",
+      "year": "кон. XIX в.",
+      "origin": "д. Киселёво",
+      "sector": "Kargopol-Onega",
+      "exterior": "reference/kirillov-exterior.svg",
+      "interior": "reference/kirillov-interior.svg",
+      "photos": { "exterior": "../../malye-korely/photos/kirillov-ext.jpg", "interior": "../../malye-korely/photos/kirillov-int.jpg" },
+      "sources": ["https://michailov-na.livejournal.com/69012.html", "https://news.myseldon.com/ru/news/index/221100782"]
+    },
+    {
+      "slug": "tretyakov",
+      "name": "Дом-двор М. А. Третьякова (отопление по-чёрному)",
+      "year": "2-я пол. XIX в.",
+      "origin": "д. Гарь",
+      "sector": "Kargopol-Onega",
+      "exterior": "reference/tretyakov-exterior.svg",
+      "interior": "reference/tretyakov-interior.svg",
+      "photos": { "exterior": "../../malye-korely/photos/tretyakov-ext.jpg", "interior": "../../malye-korely/photos/tretyakov-int.jpg" },
+      "sources": ["http://www.museum.ru/M1841", "https://michailov-na.livejournal.com/69012.html"]
+    },
+    {
+      "slug": "popov",
+      "name": "Дом-двор А. Я. Попова",
+      "year": "XIX в.",
+      "origin": "д. Погост",
+      "sector": "Kargopol-Onega",
+      "exterior": "reference/popov-exterior.svg",
+      "interior": "reference/popov-interior.svg",
+      "photos": { "exterior": "../../malye-korely/photos/popov-ext.jpg", "interior": "../../malye-korely/photos/popov-int.jpg" },
+      "sources": ["http://towntravel.ru/arxangelskaya-oblast/arxangelsk-muzej-malye-korely.html", "https://izi.travel/en/aeac-arkhangelskiy-gosudarstvennyy-muzey-derevyannogo-zodchestva-i-narodnogo-iskusstva-malye-korely/ru"]
+    },
+    {
+      "slug": "klokotov",
+      "name": "Дом-двор В. Я. Клокотова (расписные ставни, светёлка)",
+      "year": "1879",
+      "origin": "д. Заозерье, Лешуконский р-н",
+      "sector": "Mezen",
+      "exterior": "reference/klokotov-exterior.svg",
+      "interior": "reference/klokotov-interior.svg",
+      "photos": { "exterior": "../../malye-korely/photos/klokotov-ext.jpg", "interior": "../../malye-korely/photos/klokotov-int.jpg" },
+      "sources": ["http://towntravel.ru/arxangelskaya-oblast/arxangelsk-muzej-malye-korely.html", "https://b0p0h0b.livejournal.com/38992.html", "https://m.korely.ru/museum/news/15466/"]
+    },
+    {
+      "slug": "limonnikov",
+      "name": "Дом-двор поморского крестьянина Н. Лимонникова",
+      "year": "1920",
+      "origin": "д. Ёлкино",
+      "sector": "Mezen",
+      "exterior": "reference/limonnikov-exterior.svg",
+      "interior": "reference/limonnikov-interior.svg",
+      "photos": { "exterior": "../../malye-korely/photos/limonnikov-ext.jpg", "interior": "../../malye-korely/photos/limonnikov-int.jpg" },
+      "sources": ["http://towntravel.ru/arxangelskaya-oblast/arxangelsk-muzej-malye-korely.html", "https://m.korely.ru/museum/news/15466/", "https://site.kizhi.karelia.ru/library/vestnik19/2176.html"]
+    }
+  ]
+}

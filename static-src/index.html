@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>Hollow Creek</title>
 <meta name="theme-color" content="#0b0710" />
+<meta name="hc-art-base" content="./art/" />
 <link rel="icon" href="favicon.ico" sizes="48x48 32x32 16x16" />
 <link rel="icon" type="image/png" sizes="192x192" href="icon.png" />
 <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png" />
@@ -69,6 +70,13 @@
   #topbar { top:0; left:0; right:0; display:flex; justify-content:space-between; align-items:flex-start; gap:8px; padding:8px; padding-top:max(8px,env(safe-area-inset-top)); }
   #topbar .right { display:flex; gap:6px; align-items:center; }
   #supplydrop { display:none; background:#4a3323; color:#f2cf91; font-size:11px; padding:6px 8px; }
+  #noteoverlay, #pinpanel { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(11,7,16,.6); backdrop-filter:blur(2px); z-index:30; }
+  .notepage { width:min(92vw,460px); background:#f4ead2; color:#2c2118; border:1px solid #8a6f4d; border-radius:3px; padding:18px 22px; transform:rotate(-1deg); box-shadow:0 18px 50px rgba(0,0,0,.55); }
+  .notehead { display:flex; justify-content:space-between; align-items:center; font-size:11px; letter-spacing:.25em; text-transform:uppercase; color:#8a6f4d; margin-bottom:8px; }
+  #notetext { white-space:pre-wrap; word-break:break-word; font-size:19px; line-height:1.5; font-family:Georgia,serif; }
+  .noteauthor { text-align:right; font-size:12px; font-style:italic; color:#8a6f4d; margin-top:8px; }
+  #pintextarea { width:100%; resize:none; background:#1d1420; color:#e9dfcf; border:1px solid #d99a3d66; border-radius:4px; padding:8px 10px; font-size:14px; }
+  #pinpanel .chip, #noteclose { color:#2c2118; background:#e0d2b2; border:1px solid #8a6f4d; }
   #voicebtn { color:#b8d8a4; border-color:#648262; font-size:13px; }
   #micmute { display:none; color:#b8d8a4; font-size:13px; }
   #voicestatus { display:none; top:50px; right:8px; max-width:min(75vw,280px); border-color:#6e3433; color:#e29a84; font-size:12px; z-index:8; }
@@ -150,7 +158,7 @@
         <h1>Hollow<br/>Creek</h1>
         <p>The harvest was good. Then the church bell rang on its own, and not everyone who came home was <em>people</em> anymore.</p>
         <p>Walk the one long street. The wards have been smashed: bring kits from the one movable cart, then press E at a ward to play its repair puzzle. Push together to roll the cart faster. When the bell tolls, walk to the square and vote — the condemned are caged in iron, still able to plead.</p>
-        <p class="muted">A / D walk · E interact · hold Shift + walk to push · G drop kit · R ruin (Hollow) · Q ability · F snuff · Enter speak · T proximity voice. Rebind controls, adjust the mixer, and tune graphics/accessibility in Settings.</p>
+        <p class="muted">A / D walk · E interact / open or close door · L lock or unlock · M use the timepiece · hold Shift + walk to push · G drop kit · R ruin (Hollow) · Q ability · F snuff · Enter speak · T proximity voice. Rebind controls, adjust the mixer, and tune graphics/accessibility in Settings.</p>
       </div>
       <div class="card">
         <h2>Enter the town</h2>
@@ -181,7 +189,10 @@
       <div class="chip"><button id="copycode" style="font-family:monospace;letter-spacing:.3em;color:var(--ink)"></button> <span id="soulcount" style="color:var(--dim)"></span></div>
       <div class="right">
         <span id="role" class="crew"></span>
+        <button class="chip" id="timebtn" style="display:none" title="Use the timepiece or return from the past">Timepiece · M</button>
         <button class="chip" id="supplydrop" title="Drop repair kit (G)" aria-label="Drop repair kit">Drop kit</button>
+        <button class="chip" id="pinbtn" style="display:none" title="Pin a handwritten page to a wall or tree (inside a house: its interior wall)" aria-label="Pin page">✎ Pin page</button>
+        <button class="chip" id="readnote" style="display:none" title="Zoom in and read this page" aria-label="Read page" data-testid="read-note">📖 Read page</button>
         <button class="chip" id="mute" aria-label="Mute score and effects">🔊</button>
         <button class="chip" id="voicebtn" aria-label="Join proximity voice" title="Join proximity voice">🎙</button>
         <button class="chip" id="micmute" aria-label="Mute microphone" title="Mute microphone">🎙</button>
@@ -207,6 +218,7 @@
       </div>
       <div class="grp">
         <button id="talkbtn">💬</button>
+        <button id="doorlock" class="chip" style="display:none" title="Lock or unlock this door">Lock · L</button>
         <div class="col" style="align-items:center"><div id="hint"></div><button class="rbtn" data-hold="e" id="ebtn">E</button></div>
         <div class="col" style="align-items:center"><div id="cd"></div><button class="rbtn snuff" id="snuffbtn" style="display:none">Snuff<small>F</small></button></div>
         <button class="rbtn kill" id="ability">Kill</button>
@@ -216,6 +228,23 @@
     <div class="hud" id="chatbox"><input id="chatinput" maxlength="120" placeholder="Say something… it appears above your head" /></div>
     <div class="hud" id="toast"></div>
     <div id="overlay"><div class="panel" id="overlaypanel"></div></div>
+    <div class="hud" id="noteoverlay" style="display:none" data-testid="note-reader">
+      <div class="notepage">
+        <div class="notehead"><span>Pinned page</span><button class="chip" id="noteclose" aria-label="Close page">✕</button></div>
+        <p id="notetext"></p>
+        <p class="noteauthor" id="noteauthor"></p>
+      </div>
+    </div>
+    <div class="hud" id="pinpanel" style="display:none" data-testid="pin-note-panel">
+      <div class="notepage">
+        <div class="notehead"><span>Pin a page to a wall or tree</span></div>
+        <textarea id="pintextarea" maxlength="200" rows="4" placeholder="Write your note… (max 200 characters)"></textarea>
+        <div class="row" style="justify-content:flex-end;gap:8px;margin-top:8px">
+          <button class="chip" id="pincancel">Cancel</button>
+          <button class="chip" id="pinsubmit" data-testid="pin-note-submit">Pin page</button>
+        </div>
+      </div>
+    </div>
     <div id="reveal"><div><div class="r1"></div><div class="r2"></div></div></div>
   </div>
   <script src="game.js"></script>

@@ -52,24 +52,31 @@ export default async function ChroniclePage({ params }: { params: Promise<{ code
       </main>
     );
   }
-  const rows = await db
-    .select()
-    .from(gameEvents)
-    .where(eq(gameEvents.roomCode, code.toUpperCase()))
-    .orderBy(desc(gameEvents.id))
-    .limit(800);
-  const events = rows.reverse();
+  let events: (typeof gameEvents.$inferSelect)[] = [];
+  let dbDown = false;
+  try {
+    const rows = await db
+      .select()
+      .from(gameEvents)
+      .where(eq(gameEvents.roomCode, code.toUpperCase()))
+      .orderBy(desc(gameEvents.id))
+      .limit(800);
+    events = rows.reverse();
+  } catch {
+    dbDown = true;
+  }
 
   return (
     <main className="min-h-screen bg-[#0b0710] px-4 py-10">
       <div className="mx-auto max-w-3xl">
         <Link href="/" className="text-sm text-[#9c8b7a] hover:text-[#d99a3d]">← back to the crossroads</Link>
         <h1 className="mt-2 font-display text-5xl text-[#e9dfcf]">The Chronicle of {code.toUpperCase()}</h1>
+        {dbDown && <p role="status" className="mt-2 text-sm text-[#e29a84]">The ledger is unreachable right now (no database) — entries will appear once the town server is connected.</p>}
         <p className="mt-2 italic text-[#9c8b7a]">
           Every step, word, vote and kill — written down by the town clerk, who saw more than he said.
         </p>
         <div className="mt-8 space-y-1.5">
-          {events.length === 0 && <p className="text-[#6b5a55]">Nothing is written here yet.</p>}
+          {events.length === 0 && <p className="text-[#9a877f]">Nothing is written here yet.</p>}
           {events.map((e) => {
             const [icon, label] = TYPE_LABELS[e.type] ?? ["•", e.type];
             const d = (e.data ?? {}) as Record<string, unknown>;
@@ -89,7 +96,7 @@ export default async function ChroniclePage({ params }: { params: Promise<{ code
             const danger = e.type === "kill" || e.type === "game_end";
             return (
               <div key={e.id} className={`flex items-baseline gap-3 rounded border px-3 py-2 text-sm ${danger ? "border-[#4a1210] bg-[#1c0e0e]/60" : "border-[#241a26] bg-[#140d18]/60"}`}>
-                <span className="shrink-0 font-mono text-xs text-[#6b5a55]">
+                <span className="shrink-0 font-mono text-xs text-[#9a877f]">
                   {new Date(e.createdAt).toLocaleTimeString()}
                 </span>
                 <span className="shrink-0">{icon}</span>
@@ -97,7 +104,7 @@ export default async function ChroniclePage({ params }: { params: Promise<{ code
                   {e.playerName ? <b className="text-[#e9dfcf]">{e.playerName}</b> : <i className="text-[#9c8b7a]">the town</i>}{" "}
                   {label} {detail && <span className="italic text-[#9c8b7a]">{detail}</span>}
                 </span>
-                {typeof d.x === "number" && <span className="ml-auto shrink-0 font-mono text-xs text-[#5a4a50]">x:{d.x}</span>}
+                {typeof d.x === "number" && <span className="ml-auto shrink-0 font-mono text-xs text-[#8a7a82]">x:{d.x}</span>}
               </div>
             );
           })}

@@ -17,11 +17,17 @@ function fmtTime(sec: number): string {
 }
 
 export default async function StatsPage() {
-  const rows = await db
-    .select()
-    .from(playerStats)
-    .orderBy(desc(playerStats.wins), desc(playerStats.games))
-    .limit(200);
+  let rows: (typeof playerStats.$inferSelect)[] = [];
+  let dbDown = false;
+  try {
+    rows = await db
+      .select()
+      .from(playerStats)
+      .orderBy(desc(playerStats.wins), desc(playerStats.games))
+      .limit(200);
+  } catch {
+    dbDown = true; // no database (dev sandbox) — show the page with an empty ledger
+  }
 
   const totals = rows.reduce(
     (a, r) => ({
@@ -54,10 +60,11 @@ export default async function StatsPage() {
     <main className="min-h-screen bg-[#0b0710] px-4 py-10">
       <div className="pointer-events-none fixed inset-0 bg-gradient-to-b from-[#120b1e]/60 via-transparent to-transparent" />
       <div className="relative mx-auto max-w-5xl">
-        <Link href="/" className="flex w-fit items-center gap-1.5 text-sm text-[#9c8b7a] transition hover:text-[#d99a3d]">
+        <Link href="/" className="flex w-fit items-center gap-1.5 text-sm text-[#9c8b7a] transition-colors hover:text-[#d99a3d]">
           <ArrowLeft className="h-4 w-4" /> back to the crossroads
         </Link>
         <h1 className="mt-3 font-display text-6xl text-[#e9dfcf] drop-shadow-[0_4px_24px_rgba(200,90,40,0.3)]">Hall of Records</h1>
+      {dbDown && <p role="status" className="mt-3 rounded border border-[#6e3433] bg-[#1c1216] px-3 py-2 text-sm text-[#e29a84]">The clerk\u2019s ledger is unreachable right now (no database) — stats will appear once the town server is connected.</p>}
         <p className="mt-2 max-w-xl italic text-[#9c8b7a]">
           The town clerk writes down everything — every night endured, every blade,
           every cage, every letter spoken into the fog. He does not judge. He only counts.
@@ -74,7 +81,7 @@ export default async function StatsPage() {
         </div>
 
         {rows.length === 0 ? (
-          <p className="mt-10 text-lg italic text-[#6b5a55]">
+          <p className="mt-10 text-lg italic text-[#9a877f]">
             The ledger is empty. No soul has yet finished a night in Hollow Creek.
           </p>
         ) : (
@@ -92,16 +99,16 @@ export default async function StatsPage() {
               </thead>
               <tbody>
                 {rows.map((r, i) => (
-                  <tr key={r.playerId} className={`border-b border-[#241a26] transition hover:bg-[#1d1420]/70 ${i < 3 ? "bg-[#1c1210]/40" : ""}`}>
+                  <tr key={r.playerId} className={`border-b border-[#241a26] transition-colors hover:bg-[#1d1420]/70 ${i < 3 ? "bg-[#1c1210]/40" : ""}`}>
                     <td className="px-4 py-2.5">
                       <span className="flex items-center gap-2">
                         {i === 0 ? <Trophy className="h-4 w-4 text-[#d99a3d]" />
                           : i === 1 ? <Trophy className="h-4 w-4 text-[#9aa0a8]" />
                           : i === 2 ? <Trophy className="h-4 w-4 text-[#a06a3c]" />
-                          : <span className="w-4 text-center font-mono text-xs text-[#5a4a50]">{i + 1}</span>}
+                          : <span className="w-4 text-center font-mono text-xs text-[#8a7a82]">{i + 1}</span>}
                         <b className="text-[#e9dfcf]">{r.name}</b>
                         {r.games > 0 && (
-                          <span className="text-xs text-[#6b5a55]">{Math.round((100 * r.wins) / r.games)}%</span>
+                          <span className="text-xs text-[#9a877f]">{Math.round((100 * r.wins) / r.games)}%</span>
                         )}
                       </span>
                     </td>
@@ -116,7 +123,7 @@ export default async function StatsPage() {
             </table>
           </div>
         )}
-        <p className="mt-4 text-xs text-[#6b5a55]">
+        <p className="mt-4 text-xs text-[#9a877f]">
           Records follow the soul (your browser identity) across towns and nights. Playtime counts nights seen through to the end.
         </p>
       </div>

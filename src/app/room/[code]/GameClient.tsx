@@ -1,16 +1,27 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
 import { Renderer } from "@/game/render";
+import { useGameStream } from "./useGameStream";
+import { useGameInput } from "./useGameInput";
+import { useGameRender } from "./useGameRender";
+import { useGameOverlays } from "./useGameOverlays";
+import { BUILDINGS, DOOR_REACH, doorX } from "@/game/buildings";
 import { WardPanel } from "@/game/ward-ui";
-import { AudioDirector } from "@/game/audio";
-import { VoiceChat, type VoiceStatus } from "@/game/voice";
+import { TimePanel } from "@/game/time-ui";
+import type { AudioDirector } from "@/game/audio";
+import type { VoiceChat, VoiceStatus } from "@/game/voice";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
-import { BELL_X } from "@/game/types";
+import { NoteReader, RoleBanner, Toast } from "./hud";
+import { MidHud } from "./midhud";
+import { BottomControls, TopBar } from "./bars";
+import { ChatBox, PinPanel } from "./chat";
+import { EndOverlay, LobbyOverlay } from "./overlays";
+import { BELL_X, CARRY_SPEED, GHOST_SPEED, SPEED } from "@/game/types";
 import type { Snapshot } from "@/game/types";
 
 function getPid(): string {
@@ -22,6 +33,7 @@ function getPid(): string {
 export default function GameClient({ code }: { code: string }) {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -40,8 +52,16 @@ export default function GameClient({ code }: { code: string }) {
     mode: "idle",
     speaking: false,
     error: null,
+    reconnecting: false,
   });
   const [tasksOpen, setTasksOpen] = useState(false);
+  const [pinOpen, setPinOpen] = useState(false);
+  const [pinText, setPinText] = useState("");
+  const [noteFocus, setNoteFocus] = useState<{ id: string; x: number; author: string; text: string } | null>(null);
+  const focusRef = useRef<number | null>(null);
+  const noteOpenRef = useRef(false);
+  const rendererRef = useRef<Renderer | null>(null);
+  useEffect(() => { focusRef.current = noteFocus ? noteFocus.x : null; noteOpenRef.current = !!noteFocus; }, [noteFocus]);
   const [leaving, setLeaving] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(createDefaultSettings);
 
@@ -52,30 +72,35 @@ export default function GameClient({ code }: { code: string }) {
   const lastDir = useRef(0);
   const audioRef = useRef<AudioDirector | null>(null);
   const voiceRef = useRef<VoiceChat | null>(null);
+  const audioInitRef = useRef<Promise<typeof import("@/game/audio")> | null>(null);
+  const voiceInitRef = useRef<Promise<VoiceChat> | null>(null);
   const wardPanelRef = useRef<WardPanel | null>(null);
+  const timePanelRef = useRef<TimePanel | null>(null);
   const settingsStoreRef = useRef<SettingsStore | null>(null);
   const settingsDialogRef = useRef<SettingsDialog | null>(null);
   const interactToggled = useRef(false);
   const lastPhase = useRef<string>("lobby");
   const leavingRef = useRef(false);
   const chatInputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    chatOpenRef.current = chatOpen;
-  }, [chatOpen]);
+  const pendingInputRef = useRef<Record<string, unknown> | null>(null); // last intent the server never got
 
   const send = useCallback(async (payload: Record<string, unknown>) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2500); // hung POSTs must not pile up; next poll resyncs
     try {
       const res = await fetch("/api/game/input", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ code, playerId: getPid(), ...payload }),
+        signal: controller.signal,
       });
       const data = await res.json();
       if (!data.ok && data.error) {
         setToast(data.error);
         setTimeout(() => setToast(null), 2200);
       }
-    } catch { /* network hiccup — next poll resyncs */ }
+    } catch { pendingInputRef.current = payload; } // dropped intent: re-sent after the next healthy poll
+    finally { clearTimeout(timeout); }
   }, [code]);
 
   const getSettingsStore = useCallback(() => {
@@ -93,6 +118,12 @@ export default function GameClient({ code }: { code: string }) {
     lastDir.current = 0;
     interactToggled.current = false;
     void send({ dir: 0, interactHeld: false, cartHeld: false });
+  }, [send]);
+
+  const activateTimepiece = useCallback(() => {
+    const current = snapRef.current;
+    if (current?.time?.mode === "past") { void send({ action: "time_return" }); return; }
+    if (current?.self.hasTimepiece && current.time) timePanelRef.current?.open(current.time);
   }, [send]);
 
   /** Free the seat before navigating, so the lobby and host update at once. */
@@ -133,109 +164,45 @@ export default function GameClient({ code }: { code: string }) {
   const openChat = useCallback(() => {
     stopInteract();
     setChatOpen(true);
-    setTimeout(() => chatInputRef.current?.focus(), 30);
+    // focus the field on desktop only — popping the keyboard on phones is hostile
+    if (window.matchMedia("(pointer: fine)").matches) setTimeout(() => chatInputRef.current?.focus(), 30);
   }, [stopInteract]);
 
-  useEffect(() => {
-    const store = getSettingsStore();
-    setSettings(store.value);
-    setMuted(store.value.audio.muted);
-    applyDocumentPreferences(store.value);
-    const unsubscribe = store.subscribe((next) => {
-      setSettings(next);
-      setMuted(next.audio.muted);
-      applyDocumentPreferences(next);
-      voiceRef.current?.applyMix();
-    });
-    const dialog = new SettingsDialog(store, document.body, { onOpen: releaseInputs });
-    settingsDialogRef.current = dialog;
-    return () => {
-      unsubscribe();
-      dialog.destroy();
-      settingsDialogRef.current = null;
-      audioRef.current?.destroy();
-      audioRef.current = null;
-    };
-  }, [getSettingsStore, releaseInputs]);
 
-  const ensureAudio = useCallback(() => {
-    if (!audioRef.current) audioRef.current = new AudioDirector(getSettingsStore());
+  const ensureAudio = useCallback(async () => {
+    if (!audioRef.current) {
+      audioInitRef.current ??= import("@/game/audio");
+      const mod = await audioInitRef.current;
+      if (!audioRef.current) audioRef.current = new mod.AudioDirector(getSettingsStore());
+    }
     audioRef.current.start();
   }, [getSettingsStore]);
 
   // Shared repair panel: built once, never re-mounted on each 100ms state poll.
-  useEffect(() => {
-    const panel = new WardPanel(document.body, {
-      move: (wardId, move) => { void send({ action: "ward_move", wardId, move }); },
-      close: () => { void send({ action: "ward_cancel" }); },
-      opened: () => releaseInputs(),
-    });
-    wardPanelRef.current = panel;
-    return () => { panel.destroy(); wardPanelRef.current = null; };
-  }, [releaseInputs, send]);
 
-  // Voice is off by default. Only the Voice button calls getUserMedia().
-  useEffect(() => {
-    const voice = new VoiceChat({ baseUrl: () => "", roomCode: () => code,
-      playerId: getPid, getSettings: () => getSettingsStore().value, onStatus: setVoiceStatus });
-    voiceRef.current = voice;
-    const goodbye = () => voice.stop();
-    window.addEventListener("pagehide", goodbye);
-    return () => { window.removeEventListener("pagehide", goodbye); voice.destroy(); voiceRef.current = null; };
+
+  // Voice is off by default and its module loads only on first use — the page
+  // stays light until the player actually joins voice. Only then getUserMedia().
+  const getVoice = useCallback((): Promise<VoiceChat> => {
+    voiceInitRef.current ??= import("@/game/voice").then((mod) => {
+      const v = new mod.VoiceChat({ baseUrl: () => "", roomCode: () => code,
+        playerId: getPid, getSettings: () => getSettingsStore().value, onStatus: setVoiceStatus });
+      voiceRef.current = v;
+      return v;
+    });
+    return voiceInitRef.current;
   }, [code, getSettingsStore]);
 
-  // ---- join + poll ----
-  useEffect(() => {
-    let alive = true;
-    let timer: ReturnType<typeof setInterval> | null = null;
-    (async () => {
-      const name = localStorage.getItem("hc_name") || "Stranger";
-      const res = await fetch("/api/game/join", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code, playerId: getPid(), name }),
-      });
-      const data = await res.json();
-      if (!alive) return;
-      if (!res.ok || !data.ok) { setJoinError(data.error ?? "Could not enter the town."); return; }
-      // the server may re-adopt a stale seat under our name — use its canonical id
-      if (data.playerId && data.playerId !== getPid()) localStorage.setItem("hc_pid", data.playerId);
-      timer = setInterval(async () => {
-        try {
-          const r = await fetch(`/api/game/state?code=${code}&playerId=${getPid()}`);
-          if (!r.ok) return;
-          const s: Snapshot = await r.json();
-          if (!alive) return;
-          snapRef.current = s;
-          wardPanelRef.current?.update(s.minigame, s.self.stamina, s.self.exhausted);
-          setSnap(s);
-          audioRef.current?.update(s);
-          if (lastPhase.current === "lobby" && s.phase === "playing") {
-            setRoleBanner(s.self.role === "hollow" ? "hollow" : "crew");
-            setTimeout(() => setRoleBanner(null), 4500);
-          }
-          lastPhase.current = s.phase;
-        } catch { /* retry next tick */ }
-      }, 100);
-    })();
-    const bye = () => {
-      if (leavingRef.current) return; // explicit leave already freed the seat
-      try {
-        navigator.sendBeacon(
-          "/api/game/leave",
-          new Blob([JSON.stringify({ code, playerId: getPid() })], { type: "application/json" })
-        );
-      } catch { /* noop */ }
-    };
-    window.addEventListener("pagehide", bye);
-    return () => {
-      alive = false;
-      if (timer) clearInterval(timer);
-      window.removeEventListener("pagehide", bye);
-      if (!leavingRef.current) void send({ dir: 0, interactHeld: false, cartHeld: false });
-      bye();
-    };
-  }, [code, send]);
+
+  useGameOverlays({
+    send, getSettingsStore, releaseInputs, ensureAudio, getVoice, setSettings, setMuted,
+    chatOpen, chatOpenRef, settingsDialogRef, wardPanelRef, timePanelRef, voiceRef, voiceInitRef, audioRef,
+  });
+
+  useGameStream({
+    code, send, getPid, setJoinError, setSnap, setRoleBanner,
+    snapRef, pendingInputRef, mainRef, wardPanelRef, timePanelRef, settingsDialogRef, noteOpenRef, audioRef, lastPhase, leavingRef,
+  });
 
   // ---- input: clients only ever send intent ----
   const computeDir = useCallback(() => {
@@ -244,105 +211,13 @@ export default function GameClient({ code }: { code: string }) {
     if (d !== lastDir.current) { lastDir.current = d; void send({ dir: d }); }
   }, [send]);
 
-  useEffect(() => {
-    const unlockAudio = () => ensureAudio();
-    const down = (e: KeyboardEvent) => {
-      unlockAudio();
-      if (settingsDialogRef.current?.isOpen) return;
-      if (wardPanelRef.current?.isOpen) {
-        if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
-        return; // Tab, Enter and Space belong to the focused puzzle buttons.
-      }
-      if (chatOpenRef.current) {
-        if (e.key === "Escape") setChatOpen(false);
-        return;
-      }
-      const target = e.target as HTMLElement | null;
-      if (target && (["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName) || target.isContentEditable)) return;
-      const controls = getSettingsStore().value.controls;
-      const bound = (action: BindableAction) => matchesControl(controls, action, e.code);
-      if (bound("left")) { keys.current.add("left"); computeDir(); e.preventDefault(); }
-      else if (bound("right")) { keys.current.add("right"); computeDir(); e.preventDefault(); }
-      else if (bound("interact") && !e.repeat) { interactDown(); e.preventDefault(); }
-      else if (bound("ability") && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
-      else if (bound("blackout") && !e.repeat) { void send({ action: "blackout" }); e.preventDefault(); }
-      else if (bound("push") && !e.repeat) { void send({ cartHeld: true }); e.preventDefault(); }
-      else if (bound("drop") && !e.repeat) { void send({ action: "drop_supply" }); e.preventDefault(); }
-      else if (bound("ruin") && !e.repeat) { void send({ action: "sabotage" }); e.preventDefault(); }
-      else if (bound("chat") && !e.repeat) { openChat(); e.preventDefault(); }
-      else if (bound("talk") && !e.repeat) {
-        const voice = voiceRef.current;
-        if (voice) { if (voice.current.active) voice.stop(); else void voice.start(); }
-        e.preventDefault();
-      }
-    };
-    const up = (e: KeyboardEvent) => {
-      if (settingsDialogRef.current?.isOpen || wardPanelRef.current?.isOpen) return;
-      const controls = getSettingsStore().value.controls;
-      if (matchesControl(controls, "left", e.code)) { keys.current.delete("left"); computeDir(); }
-      else if (matchesControl(controls, "right", e.code)) { keys.current.delete("right"); computeDir(); }
-      else if (matchesControl(controls, "interact", e.code)) interactUp();
-      else if (matchesControl(controls, "push", e.code)) void send({ cartHeld: false });
-    };
-    window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
-    window.addEventListener("pointerdown", unlockAudio);
-    window.addEventListener("blur", releaseInputs);
-    return () => {
-      window.removeEventListener("keydown", down); window.removeEventListener("keyup", up);
-      window.removeEventListener("pointerdown", unlockAudio); window.removeEventListener("blur", releaseInputs);
-    };
-  }, [computeDir, send, ensureAudio, getSettingsStore, interactDown, interactUp, openChat, releaseInputs]);
+  useGameInput({
+    send, keys, lastDir, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract,
+    wardPanelRef, timePanelRef, settingsDialogRef, chatOpen, pinOpen, setChatOpen, setPinOpen, setPinText, activateTimepiece,
+    chatOpenRef, noteOpenRef, closeNote: () => setNoteFocus(null), getSettingsStore, getVoice,
+  });
 
-  // ---- render loop ----
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const renderer = new Renderer();
-    const store = getSettingsStore();
-    renderer.setSettings(store.value);
-    let raf = 0;
-    let last = performance.now();
-    // visualViewport: mobile URL bars otherwise clip the bottom controls
-    const vw = () => window.visualViewport?.width ?? window.innerWidth;
-    const vh = () => window.visualViewport?.height ?? window.innerHeight;
-    const resize = () => {
-      const graphics = store.value.graphics;
-      const dprCap = graphics.quality === "high" ? 2 : graphics.quality === "medium" ? 1.5 : 1;
-      const dpr = Math.min(window.devicePixelRatio || 1, dprCap) * graphics.resolution;
-      canvas.width = Math.max(1, Math.round(vw() * dpr));
-      canvas.height = Math.max(1, Math.round(vh() * dpr));
-      canvas.style.width = `${vw()}px`;
-      canvas.style.height = `${vh()}px`;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    const unsubscribe = store.subscribe((next) => { renderer.setSettings(next); resize(); });
-    resize();
-    window.addEventListener("resize", resize);
-    window.visualViewport?.addEventListener("resize", resize);
-    const loop = (nowMs: number) => {
-      raf = requestAnimationFrame(loop);
-      const dt = Math.min(0.05, (nowMs - last) / 1000);
-      last = nowMs;
-      const s = snapRef.current;
-      if (!s) return;
-      for (const p of s.players) {
-        const cur = displayX.current.get(p.id);
-        if (cur === undefined || Math.abs(cur - p.x) > 300) displayX.current.set(p.id, p.x);
-        else displayX.current.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 10));
-      }
-      renderer.render(ctx, vw(), vh(), s, displayX.current, nowMs / 1000, dt);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => {
-      unsubscribe();
-      cancelAnimationFrame(raf);
-      window.removeEventListener("resize", resize);
-      window.visualViewport?.removeEventListener("resize", resize);
-    };
-  }, [getSettingsStore]);
+  useGameRender({ canvasRef, rendererRef, snapRef, displayX, focusRef, lastDir, getSettingsStore });
 
   const holdMove = (dir: "left" | "right", on: boolean) => {
     if (on) keys.current.add(dir); else keys.current.delete(dir);
@@ -356,14 +231,35 @@ export default function GameClient({ code }: { code: string }) {
   };
 
   const toggleVoice = () => {
-    const voice = voiceRef.current;
-    if (!voice || voiceStatus.starting) return;
-    if (voiceStatus.active) voice.stop();
-    else void voice.start();
+    if (voiceStatus.starting) return;
+    void getVoice().then((voice) => {
+      if (voiceStatus.active) voice.stop();
+      else void voice.start();
+    });
   };
-  const toggleMic = () => voiceRef.current?.setMuted(!voiceStatus.muted);
+  const toggleMic = () => { void getVoice().then((v) => v.setMuted(!voiceStatus.muted)); };
 
   // ------------------------------------------------------------------ UI ---
+
+  const me = useMemo(() => snap?.players.find((p) => p.id === snap.self.id), [snap]);
+  const nearestNote = useMemo(() => snap && me ? (snap.notes ?? [])
+    .filter((n) => Math.abs(n.x - me.x) <= 150)
+    .sort((a, b) => Math.abs(a.x - me.x) - Math.abs(b.x - me.x))[0] : undefined, [snap, me]);
+  const pinNote = async () => {
+    const text = pinText.trim();
+    if (!text) return;
+    await send({ action: "pin_note", noteText: text });
+    setPinText(""); setPinOpen(false);
+  };
+  const s = snap;
+  const nearbyKeyedDoor = useMemo(() => me && s ? BUILDINGS.find((b) => Math.abs(doorX(b) - me.x) <= DOOR_REACH && s.self.doorKeys?.includes(b.id)) : undefined, [me, s]);
+  const nearbyDoorLocked = useMemo(() => s?.doors?.find((d) => d.id === nearbyKeyedDoor?.id)?.locked, [s, nearbyKeyedDoor]);
+  const secsLeft = s?.meeting ? Math.max(0, Math.ceil((s.meeting.endsAt - s.now) / 1000)) : 0;
+  const voteOptions = useMemo(() => s ? [
+    ...s.players.filter((p) => p.alive && !p.caged && p.id !== s.self.id).map((p) => ({ key: p.id, label: `Cage ${p.name}`, color: p.color })),
+    ...s.players.filter((p) => p.caged).map((p) => ({ key: `free:${p.id}`, label: `Free ${p.name}`, color: "#7fb069" })),
+    { key: "skip", label: "Abstain", color: "#7f8c8d" },
+  ] : [], [s]);
 
   if (joinError) {
     return (
@@ -377,17 +273,10 @@ export default function GameClient({ code }: { code: string }) {
     );
   }
 
-  const me = snap?.players.find((p) => p.id === snap.self.id);
-  const s = snap;
-  const secsLeft = s?.meeting ? Math.max(0, Math.ceil((s.meeting.endsAt - s.now) / 1000)) : 0;
-  const voteOptions = s ? [
-    ...s.players.filter((p) => p.alive && !p.caged && p.id !== s.self.id).map((p) => ({ key: p.id, label: `Cage ${p.name}`, color: p.color })),
-    ...s.players.filter((p) => p.caged).map((p) => ({ key: `free:${p.id}`, label: `Free ${p.name}`, color: "#7fb069" })),
-    { key: "skip", label: "Abstain", color: "#7f8c8d" },
-  ] : [];
 
   return (
-    <main className="fixed inset-0 h-[100dvh] w-full select-none overflow-hidden bg-[#0b0710]" style={{ touchAction: "none" }}>
+    <main id="main" ref={mainRef} className="fixed inset-0 h-[100dvh] w-full select-none overflow-hidden bg-[#0b0710]" style={{ touchAction: "none" }}>
+      <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-2 focus:rounded focus:bg-[#8f3b1f] focus:px-3 focus:py-2 focus:text-[#f3e6d0]">Skip to the game</a>
       <canvas ref={canvasRef} className="absolute inset-0" />
 
       {!s && !joinError && (
@@ -398,403 +287,54 @@ export default function GameClient({ code }: { code: string }) {
 
       {s && (
         <>
-          {/* ---- top bar ---- */}
-          <div className="hc-hud-item hc-hud-fade absolute left-0 right-0 top-0 flex items-start justify-between gap-2 p-2 pt-[max(0.5rem,env(safe-area-inset-top))] text-xs sm:gap-3 sm:p-3 sm:text-sm">
-            <div className="min-w-0 rounded border border-[#3a2733]/70 bg-[#140d18]/80 px-2 py-1.5 backdrop-blur sm:px-3 sm:py-2">
-              <span className="hidden font-display text-lg text-[#d99a3d] md:inline">Hollow Creek</span>
-              <button
-                onClick={() => { void navigator.clipboard?.writeText(s.code); setToast("Town code copied"); setTimeout(() => setToast(null), 1500); }}
-                className="rounded bg-[#2a1a26] px-2 py-0.5 font-mono tracking-[0.3em] text-[#e9dfcf] hover:bg-[#3a2733] md:ml-3"
-                title="Copy town code"
-              >{s.code}</button>
-              <span className="ml-2 hidden text-[#9c8b7a] sm:inline">{s.playerCount} souls</span>
-              {s.phase === "playing" && s.self.alive && s.self.hasSupply && (
-                <button title="Drop repair kit for another player" aria-label="Drop repair kit"
-                  onClick={() => void send({ action: "drop_supply" })}
-                  className="ml-2 rounded bg-[#4a3323] px-1.5 py-0.5 text-xs text-[#f2cf91] hover:bg-[#684327]">
-                  ▣<span className="hidden sm:inline"> Drop kit · {keyLabel(settings.controls.drop)}</span>
-                </button>
-              )}
-            </div>
-            {s.phase !== "lobby" && (
-              <div className="mt-1 hidden w-72 sm:block">
-                <div className="mb-1 text-center text-xs uppercase tracking-widest text-[#9c8b7a]">Town wards restored</div>
-                <div className="h-3 overflow-hidden rounded-full border border-[#3a2733] bg-[#140d18]/80">
-                  <div className="h-full bg-gradient-to-r from-[#8f3b1f] to-[#d99a3d] transition-all duration-500" style={{ width: `${s.taskBar.total ? (100 * s.taskBar.done) / s.taskBar.total : 0}%` }} />
-                </div>
-              </div>
-            )}
-            <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-              <span className={`rounded px-1 py-1 font-display text-xs sm:px-3 sm:py-1.5 sm:text-lg ${!s.self.alive ? "bg-[#2a2a3a]/80 text-[#9aa]" : s.self.role === "hollow" ? "bg-[#4a1210]/90 text-[#ff6a5a]" : "bg-[#1d2a1a]/80 text-[#a8c98a]"}`}>
-                <span className="sm:hidden">{!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "Hollow" : "Crew"}</span>
-                <span className="hidden sm:inline">{!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "The Hollow" : "Townfolk"}</span>
-                {s.self.caged && s.self.alive ? " · Caged" : ""}
-              </span>
-              <button
-                onClick={() => { ensureAudio(); const m = !muted; setMuted(m); audioRef.current?.setMuted(m); }}
-                title={muted ? "Unmute" : "Mute"}
-                className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] sm:py-1.5"
-              >{muted ? "🔇" : "🔊"}</button>
-              <button onClick={toggleVoice} disabled={voiceStatus.starting} aria-label={voiceStatus.active ? "Leave proximity voice" : "Join proximity voice"}
-                aria-pressed={voiceStatus.active} title={voiceStatus.active ? `Voice: ${voiceStatus.connected} connected (${voiceStatus.p2pCount} P2P, ${voiceStatus.relayCount} Relay) · ${voiceStatus.nearby} nearby · ${voiceStatus.speaking ? "Speaking" : "Listening"} · ${keyLabel(settings.controls.talk)} to leave` : `Join proximity voice (${keyLabel(settings.controls.talk)}) — asks for microphone permission`}
-                className={`rounded border px-1.5 py-1 sm:py-1.5 ${voiceStatus.active ? (voiceStatus.speaking ? "border-[#ffd98a] bg-[#3a2a16] text-[#ffd98a]" : "border-[#6b8e5a] bg-[#1d2a1a]/90 text-[#b8d8a4]") : "border-[#3a2733] bg-[#140d18]/80 text-[#c9b8a4]"}`}>
-                {voiceStatus.starting ? "…" : <Volume2 className={`h-4 w-4 ${voiceStatus.speaking ? "animate-pulse text-[#ffd98a]" : ""}`} />}
-              </button>
-              {voiceStatus.active && <button onClick={toggleMic} aria-label={voiceStatus.muted ? "Unmute microphone" : "Mute microphone"}
-                title={voiceStatus.muted ? "Unmute microphone" : "Mute microphone"}
-                className="rounded border border-[#3a2733] bg-[#140d18]/80 px-1.5 py-1 text-[#c9b8a4] sm:py-1.5">
-                {voiceStatus.muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-              </button>}
-              <button
-                onClick={() => settingsDialogRef.current?.open()}
-                title="Settings"
-                aria-label="Settings"
-                className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a] sm:py-1.5"
-              >⚙</button>
-              <button onClick={() => void leaveToTownList()} disabled={leaving} aria-label="Back to towns" className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#e06a5a] disabled:opacity-50 sm:px-3 sm:py-1.5"><span className="sm:hidden">←</span><span className="hidden sm:inline">Back</span></button>
-            </div>
-          </div>
+          <TopBar s={s} me={me} nearestNote={nearestNote} muted={muted} leaving={leaving} voiceStatus={voiceStatus} controls={settings.controls}
+            onCopyCode={() => { void navigator.clipboard?.writeText(s.code); setToast("Town code copied"); setTimeout(() => setToast(null), 1500); }}
+            onTimepiece={activateTimepiece} onPinToggle={() => setPinOpen((v) => !v)} onReadNote={setNoteFocus}
+            onDropKit={() => void send({ action: "drop_supply" })}
+            onMute={() => { ensureAudio(); const m = !muted; getSettingsStore().update((draft) => { draft.audio.muted = m; }); audioRef.current?.setMuted(m); }}
+            onToggleVoice={toggleVoice} onToggleMic={toggleMic}
+            onSettings={() => settingsDialogRef.current?.open()} onLeave={() => void leaveToTownList()} />
 
-          {s.phase !== "lobby" && voiceStatus.error && (
-            <p role="alert" className="absolute right-2 top-12 z-20 max-w-[min(70vw,250px)] rounded border border-[#6e3433] bg-[#1c1216]/95 px-3 py-2 text-xs text-[#e29a84]">
-              {voiceStatus.error}
-              {voiceStatus.error.includes("Enable sound") && <button onClick={() => void voiceRef.current?.resumePlayback()} className="ml-2 underline">Enable sound</button>}
-            </p>
-          )}
-
-          {/* ---- task list ---- */}
-          {s.phase !== "lobby" && s.self.alive && s.tasks.length > 0 && (
-            <div className="hc-hud-item hc-hud-fade hc-task-list absolute left-2 top-12 w-56 max-w-[70vw] rounded border border-[#3a2733]/60 bg-[#140d18]/70 p-2.5 text-xs backdrop-blur sm:left-3 sm:top-20 sm:w-60 sm:p-3">
-              <button onClick={() => setTasksOpen(!tasksOpen)} className="mb-1.5 flex w-full items-center justify-between uppercase tracking-widest text-[#9c8b7a]">
-                <span>{s.self.role === "hollow" ? "Town wards (pretend)" : "Town wards · shared"}</span>
-                <span className="sm:hidden">{tasksOpen ? "▾" : "▸"}</span>
-              </button>
-              <div className={`${tasksOpen ? "block" : "hidden"} max-h-[26dvh] overflow-y-auto sm:block`}>
-              {s.tasks.map((t) => (
-                <div key={t.id} className={`flex items-center gap-2 py-0.5 ${t.done ? "text-[#6b8e5a] line-through" : "text-[#d8c9b4]"}`}>
-                  <span>{t.done ? "✓" : t.delivered ? "▣" : "◇"}</span><span className="min-w-0 flex-1 truncate">{t.name}</span>
-                  {!t.done && (
-                    <span className={`ml-auto shrink-0 ${t.delivered ? "text-[#a8c98a]" : "text-[#d99a3d]"}`}>
-                      {t.delivered ? t.progress > 0 ? `${Math.round(t.progress * 100)}%` : "puzzle ready" : t.sabotaged ? "ruined" : "needs kit"}
-                    </span>
-                  )}
-                </div>
-              ))}
-              </div>
-            </div>
-          )}
-
-          {/* ---- meeting banner ---- */}
-          {s.phase === "meeting" && s.meeting && (
-            <div className="hc-hud-item hc-hud-fade absolute left-1/2 top-11 w-[min(94vw,540px)] -translate-x-1/2 rounded border border-[#d99a3d]/40 bg-[#1c1210]/90 p-2 text-center backdrop-blur sm:top-16 sm:p-3">
-              <div className="hidden font-display text-2xl text-[#d99a3d] sm:block" style={{ animation: "hc-bell-swing 1s ease-in-out infinite", display: undefined }}>🔔</div>
-              <div className="font-display text-base leading-tight text-[#e9dfcf] sm:text-xl">🔔 {s.meeting.reason}</div>
-              <div className="mt-1 text-sm text-[#9c8b7a]">
-                {s.meeting.inArea ? <>Cast your verdict — <span className="text-[#d99a3d]">{secsLeft}s</span></> : <>Walk to the town square {me && me.x < BELL_X ? "→ east" : "← west"} — <span className="text-[#d99a3d]">{secsLeft}s</span></>}
-              </div>
-            </div>
-          )}
-
-          {/* ---- vote panel ---- */}
-          {s.phase === "meeting" && s.meeting?.inArea && s.self.alive && (
-            <div className="hc-hud-item hc-hud-fade absolute right-2 top-28 max-h-[44dvh] w-44 overflow-y-auto rounded border border-[#3a2733] bg-[#140d18]/90 p-2 backdrop-blur sm:right-3 sm:top-32 sm:w-56 sm:max-h-[55dvh] sm:p-3">
-              <div className="mb-2 font-display text-xl text-[#e9dfcf]">The Verdict</div>
-              <div className="flex flex-col gap-1.5">
-                {voteOptions.map((o) => (
-                  <button
-                    key={o.key}
-                    disabled={!!s.self.myVote}
-                    onClick={() => send({ action: "vote", vote: o.key })}
-                    className={`flex items-center gap-2 rounded px-2.5 py-1.5 text-left text-sm transition ${s.self.myVote === o.key ? "bg-[#8f3b1f] text-[#f3e6d0]" : s.self.myVote ? "bg-[#1d1420] text-[#6b5a55]" : "bg-[#1d1420] text-[#d8c9b4] hover:bg-[#2a1a26]"}`}
-                  >
-                    <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: o.color }} />
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-              {s.self.myVote && <p className="mt-2 text-xs text-[#9c8b7a]">Your verdict is cast. Wait for the toll.</p>}
-              <p className="mt-2 text-xs text-[#6b5a55]">Most votes: caged in the square. Caged folk may still speak — free them by vote or iron key.</p>
-            </div>
-          )}
-
-          {/* ---- event feed ---- */}
-          <div className="hc-hud-item hc-hud-fade hc-event-feed pointer-events-none absolute bottom-24 left-2 w-[min(70vw,360px)] space-y-1 text-xs sm:bottom-32 sm:left-3 sm:text-sm short:hidden">
-            {s.feed.slice(-5).map((f, i) => (
-              <p key={f.at + "" + i} className={`rounded bg-[#0d0810]/60 px-2 py-0.5 italic text-[#c9b8a4] sm:py-1 ${i < 3 ? "hidden sm:block" : ""}`} style={{ opacity: 0.45 + (i / 5) * 0.55 }}>{f.text}</p>
-            ))}
-          </div>
-
-          {/* ---- status banners ---- */}
-          {!s.self.alive && s.phase !== "ended" && (
-            <div className="hc-hud-item hc-hud-fade pointer-events-none absolute left-1/2 top-[7.5rem] sm:top-28 max-w-[92vw] text-center -translate-x-1/2 rounded bg-[#0d0810]/70 px-4 py-1.5 text-sm text-[#9aa]">
-              You are dead. Drift as a ghost — only the dead can see and hear you.
-            </div>
-          )}
-          {s.self.caged && s.self.alive && (
-            <div className="hc-hud-item hc-hud-fade pointer-events-none absolute left-1/2 top-[7.5rem] sm:top-28 max-w-[92vw] text-center -translate-x-1/2 rounded bg-[#1c1210]/80 px-4 py-1.5 text-sm text-[#d99a3d]">
-              The iron is cold. You can still speak and vote — plead for the key.
-            </div>
-          )}
-
-          {/* ---- Hollow sabotage, separate from kill and blackout ---- */}
-          {s.self.role === "hollow" && s.self.alive && s.phase === "playing" && (
-            <button onClick={() => void send({ action: "sabotage" })}
-              disabled={!s.self.canSabotage}
-              className={`absolute bottom-[calc(5.1rem+env(safe-area-inset-bottom))] right-2 z-10 rounded border px-3 py-1.5 text-xs backdrop-blur sm:right-4 ${s.self.canSabotage ? "border-[#d87762] bg-[#391519]/90 text-[#ffd0bf]" : "border-[#3a2733] bg-[#140d18]/80 text-[#807070]"}`}>
-              Ruin · {keyLabel(settings.controls.ruin)}{s.self.sabotageCooldownMs > 0 ? ` · ${Math.ceil(s.self.sabotageCooldownMs / 1000)}s` : ""}
-            </button>
-          )}
-
-          {/* ---- bottom controls ---- */}
-          <div className="hc-hud-item hc-hud-fade hc-touch-controls absolute bottom-0 left-0 right-0 flex items-end justify-between gap-2 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))]">
-            <div className="flex flex-col gap-1.5">
-              {s.self.alive && s.phase !== "lobby" && (
-                <div className="flex items-center gap-1.5" title="Vigor — work and deeds drain it; stand still to recover. Low vigor slows chores, zero halts them.">
-                  <Zap className={`h-3.5 w-3.5 ${s.self.stamina <= 0 ? "text-[#e06a5a]" : s.self.stamina < 0.3 ? "text-[#d99a3d]" : "text-[#a8c98a]"}`} />
-                  <div className="h-2 w-24 overflow-hidden rounded-full border border-[#3a2733] bg-[#140d18]/80 sm:w-28">
-                    <div
-                      className={`h-full transition-all duration-300 ${s.self.stamina <= 0 ? "bg-[#e06a5a]" : s.self.stamina < 0.3 ? "bg-[#d99a3d]" : "bg-[#6b8e23]"}`}
-                      style={{ width: `${Math.round(s.self.stamina * 100)}%` }}
-                    />
-                  </div>
-                  <span className={`text-[10px] ${s.self.exhausted ? "text-[#e06a5a]" : "text-[#9c8b7a]"}`}>{s.self.exhausted ? "spent — rest!" : "vigor"}</span>
-                </div>
-              )}
-              {s.self.alive && !s.self.caged && s.phase === "playing" && (s.self.hasSupply ? (
-                <button onClick={() => void send({ action: "drop_supply" })}
-                  className="self-start rounded border border-[#84624c] bg-[#33231f]/90 px-2 py-1 text-[11px] text-[#f2cf91]">
-                  Drop kit · {keyLabel(settings.controls.drop)}
-                </button>
-              ) : (
-                <button onPointerDown={(e) => { e.preventDefault(); void send({ cartHeld: true }); }}
-                  onPointerUp={() => void send({ cartHeld: false })}
-                  onPointerLeave={() => void send({ cartHeld: false })}
-                  onPointerCancel={() => void send({ cartHeld: false })}
-                  onContextMenu={(e) => e.preventDefault()}
-                  className="self-start rounded border border-[#84624c] bg-[#33231f]/90 px-2 py-1 text-[11px] text-[#f2cf91]">
-                  Hold Push + ◀▶ {s.cartPushers > 0 ? `· ${s.cartPushers} pushing` : ""}
-                </button>
-              ))}
-              <div className="flex gap-2 sm:gap-3">
-              {([["left", "◀"], ["right", "▶"]] as const).map(([d, glyph]) => (
-                <button
-                  key={d}
-                  className="h-[52px] w-[52px] rounded-full border border-[#3a2733] bg-[#140d18]/80 text-xl text-[#d8c9b4] backdrop-blur active:bg-[#3a2733] sm:h-16 sm:w-16 sm:text-2xl short:h-12 short:w-12"
-                  onPointerDown={(e) => { e.preventDefault(); holdMove(d, true); }}
-                  onPointerUp={() => holdMove(d, false)}
-                  onPointerLeave={() => holdMove(d, false)}
-                  onPointerCancel={() => holdMove(d, false)}
-                  onContextMenu={(e) => e.preventDefault()}
-                >{glyph}</button>
-              ))}
-              </div>
-            </div>
-            <div className="flex items-end gap-2 sm:gap-3">
-              <button
-                onClick={openChat}
-                className="h-11 rounded-full border border-[#3a2733] bg-[#140d18]/80 px-3 text-sm text-[#d8c9b4] backdrop-blur hover:bg-[#2a1a26] sm:px-4"
-              >💬<span className="hidden sm:inline"> Speak</span></button>
-              <div className="flex flex-col items-center gap-1">
-                {s.hint && <span className="hc-interaction-hint max-w-36 rounded bg-[#0d0810]/80 px-2 py-0.5 text-center text-xs text-[#d99a3d] sm:max-w-44">{s.hint}</span>}
-                <button
-                  onPointerDown={(e) => { e.preventDefault(); interactDown(); }}
-                  onPointerUp={interactUp}
-                  onPointerLeave={interactUp}
-                  onPointerCancel={interactUp}
-                  className={`h-[52px] w-[52px] rounded-full border-2 font-display text-sm sm:h-16 sm:w-16 sm:text-base short:h-12 short:w-12 text-lg backdrop-blur ${s.hint ? "border-[#d99a3d] bg-[#3a2410]/90 text-[#ffd98a]" : "border-[#3a2733] bg-[#140d18]/80 text-[#9c8b7a]"}`}
-                >{keyLabel(settings.controls.interact)}</button>
-              </div>
-              {s.self.role === "hollow" && s.self.alive && s.phase === "playing" && (
-                <div className="flex flex-col items-center gap-1">
-                  {s.self.blackoutCooldownMs > 0 && (
-                    <span className="rounded bg-[#0d0810]/80 px-2 py-0.5 text-xs text-[#9aa]">{Math.ceil(s.self.blackoutCooldownMs / 1000)}s</span>
-                  )}
-                  <button
-                    onClick={() => send({ action: "blackout" })}
-                    title="Snuff every lantern (F)"
-                    className={`h-[52px] w-[52px] rounded-full border-2 font-display text-sm sm:h-16 sm:w-16 sm:text-base short:h-12 short:w-12 text-base leading-tight backdrop-blur ${s.self.canBlackout ? "border-[#7a6ab0] bg-[#1a1430]/90 text-[#b0a0e0] shadow-[0_0_18px_rgba(120,100,200,0.35)]" : "border-[#3a2733] bg-[#140d18]/80 text-[#6b5a55]"}`}
-                  >Snuff<br /><span className="text-[10px]">{keyLabel(settings.controls.blackout)}</span></button>
-                </div>
-              )}
-              <div className="flex flex-col items-center gap-1">
-                {s.self.role === "hollow" && s.self.killCooldownMs > 0 && s.self.alive && (
-                  <span className="rounded bg-[#0d0810]/80 px-2 py-0.5 text-xs text-[#ff6a5a]">{Math.ceil(s.self.killCooldownMs / 1000)}s</span>
-                )}
-                <button
-                  onClick={() => send({ action: "ability" })}
-                  disabled={!s.self.alive}
-                  className={`h-[52px] w-[52px] rounded-full border-2 font-display text-sm sm:h-16 sm:w-16 sm:text-base short:h-12 short:w-12 text-base leading-tight backdrop-blur ${s.abilityReady ? (s.self.role === "hollow" ? "border-[#ff4a3a] bg-[#4a1210]/90 text-[#ff8a7a] shadow-[0_0_20px_rgba(255,60,40,0.4)]" : "border-[#d99a3d] bg-[#3a2410]/90 text-[#ffd98a]") : "border-[#3a2733] bg-[#140d18]/80 text-[#6b5a55]"}`}
-                >{s.abilityLabel}</button>
-              </div>
-            </div>
-          </div>
+          <MidHud s={s} controls={settings.controls} me={me} secsLeft={secsLeft} voteOptions={voteOptions} tasksOpen={tasksOpen} voiceStatus={voiceStatus}
+            onTimepiece={activateTimepiece} onToggleTasks={() => setTasksOpen(!tasksOpen)}
+            onVote={(key) => send({ action: "vote", vote: key })} onSabotage={() => void send({ action: "sabotage" })}
+            onResumePlayback={() => void voiceRef.current?.resumePlayback()} />
+          <BottomControls s={s} controls={settings.controls} nearbyKeyedDoor={!!nearbyKeyedDoor} nearbyDoorLocked={nearbyDoorLocked}
+            onMove={holdMove} onPush={(on) => void send({ cartHeld: on })} onDropKit={() => void send({ action: "drop_supply" })}
+            onChat={openChat} onDoorLock={() => void send({ action: "door_lock" })}
+            onInteractDown={interactDown} onInteractUp={interactUp}
+            onBlackout={() => send({ action: "blackout" })} onAbility={() => send({ action: "ability" })} />
 
           {/* ---- chat ---- */}
+          {pinOpen && s.phase === "playing" && (
+            <PinPanel text={pinText} onText={setPinText} onSubmit={() => void pinNote()} onCancel={() => { setPinOpen(false); setPinText(""); }} />
+          )}
+
+          {noteFocus && <NoteReader note={noteFocus} onClose={() => setNoteFocus(null)} />}
+
           {chatOpen && (
-            <div className="hc-hud-item absolute bottom-20 left-1/2 w-[min(92vw,420px)] sm:bottom-24 -translate-x-1/2">
-              <input
-                ref={chatInputRef}
-                value={chatText}
-                onChange={(e) => setChatText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") submitChat(); e.stopPropagation(); }}
-                onBlur={submitChat}
-                maxLength={120}
-                placeholder={s.self.alive ? "Say something… (it appears above your head)" : "Whisper to the dead…"}
-                className="w-full rounded-full border border-[#d99a3d]/50 bg-[#140d18]/95 px-5 py-3 text-[#e9dfcf] outline-none placeholder:text-[#6b5a55]"
-              />
-            </div>
+            <ChatBox alive={s.self.alive} text={chatText} onText={setChatText} onSubmit={submitChat} inputRef={chatInputRef} />
           )}
 
           {/* ---- lobby overlay ---- */}
           {s.phase === "lobby" && (
-            <div className="absolute inset-0 flex items-center justify-center bg-[#0b0710]/70 backdrop-blur-sm">
-              <div className="hc-rise max-h-[88dvh] w-[min(92vw,440px)] overflow-y-auto rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-4 text-center sm:p-6">
-                <h2 className="font-display text-4xl text-[#e9dfcf]">{s.round > 0 ? `Night ${s.round + 1} approaches` : "Gathering at dusk"}</h2>
-                <p className="mt-1 text-sm text-[#9c8b7a]">{s.round > 0 ? "The same souls, the same street — new roles when darkness falls" : "Share the town code with your fellow townsfolk"}</p>
-                <p className="mx-auto mt-3 max-w-sm text-sm leading-snug text-[#c9b8a4]">The wards are broken. Deliver a kit from the movable cart, then press E at the ward to play its repair puzzle. More hands push the cart faster. Cages hold suspects; repair every ward to win.</p>
-                <div className="mt-3 font-mono text-5xl tracking-[0.4em] text-[#d99a3d]">{s.code}</div>
-                <div className="mt-5 grid grid-cols-2 gap-2 text-left text-sm">
-                  {s.players.map((p) => (
-                    <div key={p.id} className="flex items-center gap-2 rounded bg-[#1d1420] px-3 py-2">
-                      <span className="h-3.5 w-3.5 rounded-full" style={{ background: p.color }} />
-                      <span className="truncate text-[#d8c9b4]">{p.name}</span>
-                      {p.isHost && <span className="ml-auto text-xs text-[#d99a3d]">host</span>}
-                    </div>
-                  ))}
-                </div>
-                {s.self.id === s.hostId ? (
-                  <button
-                    onClick={() => send({ action: "start" })}
-                    disabled={s.playerCount < 4}
-                    className="mt-6 w-full rounded bg-[#8f3b1f] py-3 font-display text-2xl text-[#f3e6d0] hover:bg-[#a84a26] disabled:opacity-40"
-                  >
-                    {s.playerCount < 4 ? "Waiting for more souls… (min 4)" : "Let night fall"}
-                  </button>
-                ) : (
-                  <p className="mt-6 text-[#9c8b7a]">Waiting for the host to let night fall…</p>
-                )}
-                <div className="mt-4 flex justify-center gap-2">
-                  <button onClick={() => settingsDialogRef.current?.open()} className="rounded border border-[#3a2733] px-3 py-1.5 text-sm text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]">⚙ Settings</button>
-                  <Link href="/tutorial" className="flex items-center gap-1.5 rounded border border-[#3a2733] px-3 py-1.5 text-sm text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]">
-                    <BookOpen className="h-3.5 w-3.5 text-[#d99a3d]" /> Tutorial
-                  </Link>
-                </div>
-                <button onClick={() => void leaveToTownList()} disabled={leaving}
-                  className="mt-3 w-full rounded border border-[#84624c] px-4 py-2 text-sm text-[#e9dfcf] hover:bg-[#33231f] disabled:opacity-50">
-                  {leaving ? "Leaving…" : "← Back to towns"}
-                </button>
-                <div className="mt-3 flex flex-wrap justify-center gap-2">
-                  <button onClick={toggleVoice} disabled={voiceStatus.starting}
-                    className="rounded border border-[#648262] px-3 py-2 text-sm text-[#b8d8a4] disabled:opacity-50">
-                    {voiceStatus.starting ? "Asking for microphone…" : voiceStatus.active ? "Leave voice chat" : "Join proximity voice"}
-                  </button>
-                  {voiceStatus.active && <button onClick={toggleMic} className="rounded border border-[#3a2733] px-3 py-2 text-sm text-[#c9b8a4]">
-                    {voiceStatus.muted ? "Unmute mic" : "Mute mic"}
-                  </button>}
-                </div>
-                {voiceStatus.active && <p className="mt-2 text-xs text-[#9c8b7a]">{voiceStatus.connected} connected ({voiceStatus.p2pCount} P2P, {voiceStatus.relayCount} Server Relay) · {voiceStatus.nearby} in earshot. Farther voices fade; the dead hear only the dead.{voiceStatus.speaking ? " · ● Speaking" : ""}</p>}
-                {voiceStatus.error && <p role="alert" className="mt-2 text-xs text-[#e29a84]">
-                  {voiceStatus.error}
-                  {voiceStatus.error.includes("Enable sound") && <button onClick={() => void voiceRef.current?.resumePlayback()} className="ml-2 underline">Enable sound</button>}
-                </p>}
-                <p className="mt-3 text-xs text-[#6b5a55]">4–10 players · 1–2 of you will be Hollow</p>
-              </div>
-            </div>
+            <LobbyOverlay s={s} leaving={leaving} voiceStatus={voiceStatus} controls={settings.controls}
+              onStart={() => send({ action: "start" })} onSettings={() => settingsDialogRef.current?.open()}
+              onLeave={() => void leaveToTownList()} onToggleVoice={toggleVoice} onToggleMic={toggleMic}
+              onResumePlayback={() => void voiceRef.current?.resumePlayback()} />
           )}
 
           {/* ---- role reveal ---- */}
-          {roleBanner && (
-            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/60">
-              <div className="text-center">
-                {roleBanner === "hollow" ? (
-                  <>
-                    <p className="font-display text-5xl sm:text-7xl text-[#ff4a3a] drop-shadow-[0_0_30px_rgba(255,60,40,0.6)]">You are Hollow</p>
-                    <p className="mt-3 text-lg text-[#c9a0a0]">Wear their faces. {keyLabel(settings.controls.ability)} to strike, {keyLabel(settings.controls.blackout)} to snuff, {keyLabel(settings.controls.ruin)} to ruin a supplied or repaired ward.</p>
-                  </>
-                ) : (
-                  <>
-                    <p className="font-display text-5xl sm:text-7xl text-[#a8c98a]">Townfolk</p>
-                    <p className="mt-3 text-lg text-[#b8c9a4]">Carry kits from the one cart to broken wards; press E to open each repair puzzle. Push together to move the cart faster.</p>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
+          {roleBanner && <RoleBanner role={roleBanner} controls={settings.controls} />}
 
           {/* ---- end overlay ---- */}
           {s.phase === "ended" && (
-            <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0b0710]/80 backdrop-blur-sm">
-              <div className="hc-rise max-h-[88dvh] w-[min(94vw,640px)] overflow-y-auto rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-4 text-center sm:p-7">
-                <p className={`font-display text-4xl sm:text-6xl ${s.winner === "hollow" ? "text-[#ff4a3a]" : "text-[#a8c98a]"}`}>
-                  {s.winner === "hollow" ? "The Hollow wins" : "The town survives"}
-                </p>
-                <p className="mt-4 text-lg italic text-[#c9b8a4]">{s.winReason}</p>
-                {s.results && (
-                  <section className="mt-5 text-left" aria-label="Match results">
-                    <div className="mb-2 flex items-center justify-between text-xs uppercase tracking-widest text-[#c9b8a4]">
-                      <span>Who was who · this match</span>
-                      <span className="font-mono normal-case tracking-normal text-[#9c8b7a]">
-                        {Math.floor(s.results.durationSec / 60)}m {String(s.results.durationSec % 60).padStart(2, "0")}s
-                      </span>
-                    </div>
-                    <div className="max-h-[43dvh] space-y-2 overflow-y-auto pr-1">
-                      {s.results.players.map((player) => {
-                        const st = player.stats;
-                        const labels: [string, number][] = [
-                          ["Repaired", st.repairs], ["Kits", st.kitsDelivered], ["Kills", st.kills], ["Deaths", st.deaths],
-                          ["Jailed", st.timesCaged], ["Unlocked", st.cagesOpened], ["Votes", st.votes], ["Reports", st.reports],
-                          ["Ruins", st.ruins], ["Bells", st.bells], ["Snuffs", st.blackouts], ["Steps", st.distance],
-                        ];
-                        return (
-                          <div key={player.id} className="rounded border border-[#3a2733] bg-[#1d1420] p-2.5">
-                            <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
-                              <span className="h-3 w-3 rounded-full" style={{ background: player.color }} />
-                              <strong className="text-[#e9dfcf]">{player.name}</strong>
-                              <span className={`ml-auto rounded px-2 py-0.5 text-[10px] uppercase tracking-wide ${player.role === "hollow" ? "bg-[#4a1210] text-[#ff8a7a]" : "bg-[#1d2a1a] text-[#a8c98a]"}`}>
-                                {player.role === "hollow" ? "Hollow" : "Townfolk"}
-                              </span>
-                              <span className="text-[10px] text-[#9c8b7a]">{!player.alive ? "dead" : player.caged ? "jailed" : "free"}</span>
-                            </div>
-                            <div className="grid grid-cols-4 gap-x-2 gap-y-1 text-[10px] text-[#9c8b7a] sm:text-xs">
-                              {labels.map(([label, value]) => <span key={label}>{label} <b className="text-[#e9dfcf]">{value}</b></span>)}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </section>
-                )}
-                <div className="mt-3 flex flex-wrap justify-center gap-2">
-                  <button onClick={toggleVoice} disabled={voiceStatus.starting} className="rounded border border-[#648262] px-3 py-2 text-sm text-[#b8d8a4] disabled:opacity-50">
-                    {voiceStatus.starting ? "Opening mic…" : voiceStatus.active ? "Leave voice" : "Join proximity voice"}
-                  </button>
-                  {voiceStatus.active && <button onClick={toggleMic} className="rounded border border-[#3a2733] px-3 py-2 text-sm text-[#c9b8a4]">{voiceStatus.muted ? "Unmute mic" : "Mute mic"}</button>}
-                </div>
-                {s.self.id === s.hostId ? (
-                  <button
-                    onClick={() => send({ action: "restart" })}
-                    className="mt-6 flex w-full items-center justify-center gap-2 rounded bg-[#8f3b1f] py-3 font-display text-2xl text-[#f3e6d0] transition hover:bg-[#a84a26]"
-                  >
-                    <Flame className="h-5 w-5" /> Gather the same souls again
-                  </button>
-                ) : (
-                  <p className="mt-6 rounded border border-[#3a2733] bg-[#0d0810]/60 py-3 text-sm text-[#9c8b7a]">
-                    The lantern-bearer may gather this town for another night…
-                  </p>
-                )}
-                <div className="mt-3 flex flex-wrap justify-center gap-3">
-                  <button onClick={() => settingsDialogRef.current?.open()} className="rounded border border-[#3a2733] px-4 py-2 text-sm text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]">⚙ Settings</button>
-                  <button onClick={() => router.push("/")} className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#c9b8a4] hover:bg-[#2a1a26]"><DoorOpen className="h-4 w-4" /> Other towns</button>
-                  <a href={`/chronicle/${s.code}`} target="_blank" className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#d99a3d] hover:bg-[#2a1a26]"><ScrollText className="h-4 w-4" /> Chronicle</a>
-                  <a href="/stats" target="_blank" className="flex items-center gap-2 rounded border border-[#3a2733] px-5 py-2 font-display text-lg text-[#c9b8a4] hover:bg-[#2a1a26]"><Trophy className="h-4 w-4" /> Records</a>
-                </div>
-              </div>
-            </div>
+            <EndOverlay s={s} voiceStatus={voiceStatus}
+              onRestart={() => send({ action: "restart" })} onSettings={() => settingsDialogRef.current?.open()}
+              onToggleVoice={toggleVoice} onToggleMic={toggleMic} onResumePlayback={() => void voiceRef.current?.resumePlayback()} />
           )}
 
-          {toast && (
-            <div className="absolute bottom-32 left-1/2 sm:bottom-44 -translate-x-1/2 rounded bg-[#1c1210]/95 px-4 py-2 text-sm text-[#d99a3d]">{toast}</div>
-          )}
+          <Toast text={toast} />
         </>
       )}
     </main>

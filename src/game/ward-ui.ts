@@ -1,5 +1,6 @@
 // Shared repair workbench used by React and the static client. Both render the
 // exact authoritative board; the browser sends only a numbered physical action.
+import { trapTab } from "./focus-trap";
 import { WARD_JOBS, type WardGameView } from "./wards";
 
 const STYLE_ID = "hc-ward-panel-style";
@@ -77,7 +78,7 @@ const button = (index: number, label: string, inner: string, css = "") =>
   `<button type="button" data-ward-move="${index}" aria-label="${escapeText(label)}" class="${css}">${inner}</button>`;
 const gauge = (value: number, max: number) => `<div class="hc-ward-gauge"><div style="width:${Math.round(value / max * 100)}%"></div></div>`;
 
-function renderJob(view: WardGameView): string {
+export function renderWardJob(view: WardGameView): string {
   const v = view.values, t = view.targets;
   switch (view.kind) {
     case "pumpkins": {
@@ -162,6 +163,31 @@ function renderJob(view: WardGameView): string {
           ${button(2, "Shorten antenna", '− Antenna')} ${button(3, "Extend antenna", '+ Antenna')}
         </div>${button(4, "Lock radio signal", "Lock the receiver on the voice", "hc-ward-action")}`;
     }
+    case "hearth": {
+      const names = ["Left draft", "Chimney", "Right draft"];
+      return `<div class="hc-ward-console">Set the three dampers to their chalk marks, then strike the hearth. The wood and matches are already here.</div>
+        <div class="hc-ward-grid three">${v.map((value, i) => button(i, `Turn ${names[i]}: ${value}, target ${t[i]}`,
+          `<span class="hc-ward-glyph">${value}</span><small>${names[i]}<br/>mark ${t[i]}</small>`, value === t[i] ? "done" : "")).join("")}</div>
+        ${button(3, "Light the hearth", "Strike the hearth", "hc-ward-action")}`;
+    }
+    case "pantry": {
+      const jars = ["APPLE", "PEAR", "PLUM", "CHERRY"];
+      return `<div class="hc-ward-console">The keeper's harvest order is <b>apple → pear → plum → cherry</b>. Swap neighboring jars until they match the shelf labels.</div>
+        <div class="hc-ward-grid four">${v.map((jar) => `<div class="hc-ward-console" style="text-align:center;margin:0;padding:8px 2px"><span class="hc-ward-glyph">▥</span><small>${jars[jar]}</small></div>`).join("")}</div>
+        <div class="hc-ward-grid three">${[0, 1, 2].map((i) => button(i, `Swap jars ${i + 1} and ${i + 2}`, `↔<small>Swap ${i + 1} / ${i + 2}</small>`)).join("")}</div>`;
+    }
+    case "clock": {
+      const time = (hours: number, quarters: number) => `${hours + 1}:${String(quarters * 15).padStart(2, "0")}`;
+      return `<div class="hc-ward-console">The note says <b>${time(t[0], t[1])}</b>. The stopped clock reads <b>${time(v[0], v[1])}</b>. Align both hands, then wind it.</div>
+        <div class="hc-ward-grid two">${button(0, "Move hour hand back", "− Hour")} ${button(1, "Move hour hand forward", "+ Hour")}
+        ${button(2, "Move minute hand back", "− Quarter hour")} ${button(3, "Move minute hand forward", "+ Quarter hour")}</div>
+        ${button(4, "Wind the clock", "Wind the clock", "hc-ward-action")}`;
+    }
+    case "fusebox": {
+      return `<div class="hc-ward-console">The old fuse switches are linked: each one changes itself and its neighbors. Restore all four green circuits.</div>
+        <div class="hc-ward-grid four">${v.map((on, i) => button(i, `Toggle fuse ${i + 1}, ${on ? "connected" : "broken"}`,
+          `<span class="hc-ward-glyph">${on ? "◉" : "○"}</span><small>Fuse ${i + 1}<br/>${on ? "live" : "open"}</small>`, on ? "done" : "")).join("")}</div>`;
+    }
     case "silo": {
       return `<div class="hc-ward-console">The four bars bear each other's weight. The keeper left three chalk rules:
         <b>${BARS[t[1]]}</b> must be seated before <b>${BARS[t[2]]}</b>;
@@ -192,9 +218,13 @@ export class WardPanel {
     this.root.setAttribute("aria-label", "Repair ward minigame");
     this.root.hidden = true;
     this.root.addEventListener("click", this.onClick);
+    window.addEventListener("keydown", this.onKey, true);
     parent.appendChild(this.root);
   }
   get isOpen() { return !this.root.hidden; }
+  /** element that had focus before the puzzle opened — restored on close */
+  private previouslyFocused: HTMLElement | null = null;
+  private onKey = (event: KeyboardEvent) => { if (this.isOpen) trapTab(this.root, event); };
 
   update(view: WardGameView | null, stamina: number, exhausted: boolean) {
     if (!view) {
@@ -202,6 +232,8 @@ export class WardPanel {
       this.current = null;
       this.signature = "";
       this.opening = false;
+      if (this.previouslyFocused?.isConnected) this.previouslyFocused.focus({ preventScroll: true });
+      this.previouslyFocused = null;
       return;
     }
     const wasOpen = this.isOpen;
@@ -215,6 +247,7 @@ export class WardPanel {
       this.render(view);
       if (!wasOpen) {
         this.opening = true;
+        this.previouslyFocused = document.activeElement as HTMLElement | null;
         this.callbacks.opened();
         (this.root.querySelector(view.kind === "scarecrow" && view.revealMs > 0 ? "[data-ward-close]" : "[data-ward-move]") as HTMLButtonElement | null)?.focus({ preventScroll: true });
         this.opening = false;
@@ -228,7 +261,7 @@ export class WardPanel {
     if (vigor) vigor.textContent = exhausted ? "Rest here; vigor returns while you stand still." : `Vigor ${Math.round(stamina * 100)}% · each move takes a little effort`;
   }
 
-  destroy() { this.root.removeEventListener("click", this.onClick); this.root.remove(); }
+  destroy() { this.root.removeEventListener("click", this.onClick); window.removeEventListener("keydown", this.onKey, true); this.root.remove(); }
   private onClick = (event: MouseEvent) => {
     const target = event.target as HTMLElement;
     if (target.closest("[data-ward-close]")) { this.callbacks.close(); return; }
@@ -244,7 +277,7 @@ export class WardPanel {
       <p class="hc-ward-lead">${job.instruction}</p>
       <div class="hc-ward-progress" role="progressbar" aria-label="Ward repair progress" aria-valuenow="${Math.round(view.progress * 100)}" aria-valuemin="0" aria-valuemax="100"><div style="width:${Math.round(view.progress * 100)}%"></div></div>
       <div class="hc-ward-meta"><span>${Math.round(view.progress * 100)}% repaired</span><span>${view.moves} moves${view.mistakes ? ` · ${view.mistakes} slips` : ""}</span></div>
-      ${renderJob(view)}
+      ${renderWardJob(view)}
       <p data-ward-vigor class="hc-ward-note"></p>
       <p class="hc-ward-note">No deadline to finish. Tap a part, or use Tab then Enter / Space. Esc leaves; progress stays with this ward.</p>
     </div>`;

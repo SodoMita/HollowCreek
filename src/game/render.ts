@@ -2,24 +2,93 @@
 import {
   BELL_X, CAGE_XS, MEETING_FROM, MEETING_TO, STATIONS, WORLD_W,
 } from "./types";
-import type { Snapshot, Station } from "./types";
+import type { PublicPlayer, Snapshot, Station, TaskView } from "./types";
 import { createDefaultSettings, type GameSettings } from "./settings";
 import { drawBrokenWard, drawKit, drawSupplyCart } from "./ward-art";
+import { BUILDINGS, doorX, TREE_MAX, TREE_MIN, treeX, WORLD_MIN, WORLD_MAX, type DoorState } from "./buildings";
+import { TOWN_HOUSES } from "./town";
+import { drawHouseExterior, drawHouseInterior } from "./house-art";
+import { drawSvg, drawTraveler } from "./svg-assets";
 
 interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: string; s: number }
 
+// Tiny deterministic PRNG for effect recycling — avoids Math.random() in the frame loop.
+let leafSeed = 1;
+const nextRand = () => ((leafSeed = (Math.imul(leafSeed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
+
 const LEAF_COLORS = ["#b4552a", "#c9762f", "#8f3b1f", "#d99a3d", "#7a4a21"];
+
+// Dusk and deep-night sky palettes (top -> horizon); lerped by nightT.
+const SKY_DUSK = ["#090b1b", "#211329", "#512534", "#9a4c2c", "#c0743c"];
+const SKY_NIGHT = ["#030309", "#0b0817", "#141021", "#241423", "#3a2030"];
+const GROUND_DUSK = ["#2b1a12", "#1d120c", "#0d0806"];
+const GROUND_NIGHT = ["#17100b", "#100a07", "#070403"];
+
+function lerpHex(a: string, b: string, t: number): string {
+  const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
+  const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+  const m = pa.map((v, i) => Math.round(v + (pb[i] - v) * t));
+  return `#${m.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+}
 
 export class Renderer {
   private leaves: Leaf[] = [];
+  // per-snapshot lookup caches — snap objects are rebuilt per poll, so these
+  // turn 60fps finds/sorts into one pass per 100ms snapshot
+  private cacheFor: unknown = null;
+  private meCache: PublicPlayer | undefined;
+  private sortedCache: PublicPlayer[] = [];
+  private doorsCache = new Map<string, DoorState>();
+  private tasksCache = new Map<string, TaskView>();
+  private cacheSnap(snap: Snapshot) {
+    if (this.cacheFor === snap) return;
+    this.cacheFor = snap;
+    this.meCache = snap.players.find((p) => p.id === snap.self.id);
+    this.sortedCache = [...snap.players].sort((a, b) => (a.id === snap.self.id ? 1 : 0) - (b.id === snap.self.id ? 1 : 0));
+    this.doorsCache = new Map((snap.doors ?? []).map((d) => [d.id, d]));
+    this.tasksCache = new Map(snap.tasks.map((t) => [t.id, t]));
+  }
+  private grads = new Map<string, CanvasGradient>();
+  private bubbleWrap = new Map<string, { lines: string[]; bw: number }>();
+
+  /** Canvas gradients are immutable once built; cache them by the dims that define them. */
+  /** LRU read: a hit is re-inserted so hot entries survive eviction. */
+  private lruGet<V>(map: Map<string, V>, key: string): V | undefined {
+    const v = map.get(key);
+    if (v !== undefined) { map.delete(key); map.set(key, v); }
+    return v;
+  }
+  /** LRU write: evicts only the oldest entry when at capacity. */
+  private lruSet<V>(map: Map<string, V>, key: string, value: V, cap: number) {
+    map.delete(key);
+    while (map.size >= cap) {
+      const oldest = map.keys().next();
+      if (oldest.done) break;
+      map.delete(oldest.value);
+    }
+    map.set(key, value);
+  }
+
+  private grad(key: string, make: () => CanvasGradient): CanvasGradient {
+    let g = this.lruGet(this.grads, key);
+    if (!g) {
+      g = make();
+      this.lruSet(this.grads, key, g, 256);
+    }
+    return g;
+  }
   private settings: GameSettings = createDefaultSettings();
   cameraX = 0;
+  /** When set, the camera centers on this world x and zooms in to read a page. */
+  focusX: number | null = null;
+  setFocus(x: number | null) { this.focusX = x; }
   private visionR = 420;
+  private doorOpenAmount = new Map<string, number>();
 
   constructor() {
     for (let i = 0; i < 110; i++) {
       this.leaves.push({
-        x: Math.random() * WORLD_W,
+        x: WORLD_MIN + Math.random() * (WORLD_MAX - WORLD_MIN),
         y: Math.random() * 600,
         vx: -12 - Math.random() * 25,
         vy: 18 + Math.random() * 30,
@@ -52,24 +121,38 @@ export class Renderer {
     dt: number
   ) {
     const graphics = this.settings.graphics;
+    // Zoom the world, not the DOM HUD. Gameplay and server vision stay in world units.
+    // A focused page (read-note zoom) overrides both zoom and camera target.
+    const focused = this.focusX !== null;
+    const zoom = focused ? Math.max(graphics.worldZoom, 2.6) : graphics.worldZoom;
+    ctx.save(); ctx.scale(zoom, zoom); w /= zoom; h /= zoom;
     if (graphics.reducedMotion) t = 0;
-    const me = snap.players.find((p) => p.id === snap.self.id);
+    this.cacheSnap(snap);
+    const me = this.meCache;
     const meX = me ? displayX.get(me.id) ?? me.x : WORLD_W / 2;
-    const targetCam = Math.max(0, Math.min(WORLD_W - w, meX - w / 2));
+    const lookX = focused ? this.focusX! : meX;
+    const targetCam = Math.max(WORLD_MIN, Math.min(WORLD_MAX - w, lookX - w / 2));
     if (graphics.cameraSmoothing) this.cameraX += (targetCam - this.cameraX) * Math.min(1, dt * 6);
     else this.cameraX = targetCam;
-    if (WORLD_W < w) this.cameraX = (WORLD_W - w) / 2;
+    if (WORLD_MAX - WORLD_MIN < w) this.cameraX = (WORLD_MIN + WORLD_MAX - w) / 2;
     const cam = this.cameraX;
     const ground = h * 0.78;
     const now = snap.now;
 
-    // --- layered dusk sky ---
-    const sky = ctx.createLinearGradient(0, 0, 0, ground);
-    sky.addColorStop(0, "#090b1b");
-    sky.addColorStop(0.38, "#211329");
-    sky.addColorStop(0.72, "#512534");
-    sky.addColorStop(0.9, "#9a4c2c");
-    sky.addColorStop(1, "#c0743c");
+    // --- day-night sky: dusk palette lerps into deep night as the round goes on ---
+    // (time travel to the past pins the sky to early dusk and warms the scene)
+    const past = snap.time?.mode === "past";
+    const night = past ? 0.05 : Math.min(1, Math.max(0, snap.nightT ?? 0.2));
+    const nb = Math.round(night * 10) / 10; // bucket: keeps the gradient cache small
+    const sky = this.grad(`sky:${ground}:${nb}`, () => {
+      const g = ctx.createLinearGradient(0, 0, 0, ground);
+      g.addColorStop(0, lerpHex(SKY_DUSK[0], SKY_NIGHT[0], night));
+      g.addColorStop(0.38, lerpHex(SKY_DUSK[1], SKY_NIGHT[1], night));
+      g.addColorStop(0.72, lerpHex(SKY_DUSK[2], SKY_NIGHT[2], night));
+      g.addColorStop(0.9, lerpHex(SKY_DUSK[3], SKY_NIGHT[3], night));
+      g.addColorStop(1, lerpHex(SKY_DUSK[4], SKY_NIGHT[4], night));
+      return g;
+    });
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, w, ground);
 
@@ -80,7 +163,7 @@ export class Renderer {
       const sx = ((i * 197.3 + 41) % (w + 160)) - 80 - (cam * 0.008) % 40;
       const sy = 18 + ((i * 83.7) % Math.max(60, ground * 0.52));
       const radius = 0.45 + (i % 7 === 0 ? 0.85 : 0.25);
-      ctx.globalAlpha = 0.25 + (i % 5) * 0.1;
+      ctx.globalAlpha = (0.25 + (i % 5) * 0.1) * (0.3 + 0.7 * night);
       ctx.fillStyle = i % 9 === 0 ? "#ffd9a0" : "#d9d8ed";
       ctx.beginPath(); ctx.arc(sx, sy, radius, 0, Math.PI * 2); ctx.fill();
     }
@@ -92,7 +175,7 @@ export class Renderer {
     ctx.save();
     if (graphics.glow) {
       const halo = ctx.createRadialGradient(mx, my, 32, mx, my, 145);
-      halo.addColorStop(0, "rgba(244,222,181,.25)");
+      halo.addColorStop(0, `rgba(244,222,181,${0.18 + 0.12 * night})`);
       halo.addColorStop(0.45, "rgba(222,191,170,.08)");
       halo.addColorStop(1, "rgba(222,191,170,0)");
       ctx.fillStyle = halo; ctx.fillRect(mx - 150, my - 150, 300, 300);
@@ -141,19 +224,67 @@ export class Renderer {
     }
     ctx.lineTo(w, ground); ctx.fill();
 
-    for (let i = 0; i < 60; i++) {
-      const wx = i * 130 + ((i * 97) % 60);
+    for (let i = 0; i < 78; i++) {
+      const wx = WORLD_MIN + i * 155 + ((i * 97) % 60);
       const sx = wx - cam * 0.45;
       if (sx < -90 || sx > w + 90) continue;
       const th = 74 + ((i * 53) % 56);
       this.drawTree(ctx, sx, ground, th, i);
     }
 
+    // --- background village: 100+ distinct houses along the whole world (visual only) ---
+    {
+      const s = 0.66, par = 0.62;
+      for (const th of TOWN_HOUSES) {
+        if (th.x < WORLD_MIN + 40 || th.x > WORLD_MAX - 40) continue;
+        const sx = th.x - cam * par;
+        const hw = th.w * s, hh = th.h * s;
+        if (sx < -hw || sx > w + hw) continue;
+        ctx.save();
+        ctx.globalAlpha = 0.82;
+        if (th.flip) { ctx.translate(sx + hw / 2, 0); ctx.scale(-1, 1); ctx.translate(-(sx + hw / 2), 0); }
+        drawSvg(ctx, th.asset, sx - hw / 2, ground - hh + 6, hw, hh);
+        ctx.restore();
+      }
+    }
+
+    // --- Malye Korely street dressing: fences, door lanterns, woodpiles, windmill ---
+    // Purely decorative world-anchored props; they never change gameplay coordinates.
+    const FENCE_XS = [-2760, -2180, -1460, -1250, -700, -120, 420, 760, 1560, 1860, 2560, 2960, 3320, 3780, 4180, 4420, 5100, 5260, 5980, 6280, 6900, 7180];
+    for (const fx of FENCE_XS) {
+      const sx = fx - cam;
+      if (sx < -160 || sx > w + 160) continue;
+      drawSvg(ctx, "props/fence.svg", sx, ground - 46, 140, 46);
+    }
+    for (const b of BUILDINGS) {
+      const lx = doorX(b) + b.side * 46 - cam; // lantern post beside each doorway
+      if (lx > -40 && lx < w + 40) drawSvg(ctx, "props/lantern-post.svg", lx, ground - 96, 30, 96);
+    }
+    for (const wx of [-560, 5300]) {
+      const sx = wx - cam;
+      if (sx > -80 && sx < w + 80) drawSvg(ctx, "props/woodpile.svg", sx - 32, ground - 44, 64, 44);
+    }
+    for (const mx of [4350, 6620]) { // Pomor windmills: past the silo and at the far east end
+      const sx = mx - cam;
+      if (sx > -150 && sx < w + 150) drawSvg(ctx, "props/windmill.svg", sx - 65, ground - 160, 130, 160);
+    }
+    for (const gx of [3110, 3265, 3345]) { // grave markers around the graves ward (x=3200)
+      const sx = gx - cam;
+      if (sx > -50 && sx < w + 50) drawSvg(ctx, "props/gravestone.svg", sx - 17, ground - 46, 34, 46);
+    }
+    for (const hx of [195, 352]) { // haystacks by the harvest shed (x=280)
+      const sx = hx - cam;
+      if (sx > -90 && sx < w + 90) drawSvg(ctx, "props/haystack.svg", sx - 35, ground - 52, 70, 52);
+    }
+
     // --- ground ---
-    const gg = ctx.createLinearGradient(0, ground, 0, h);
-    gg.addColorStop(0, "#2b1a12");
-    gg.addColorStop(0.12, "#1d120c");
-    gg.addColorStop(1, "#0d0806");
+    const gg = this.grad(`ground:${ground}:${h}:${nb}`, () => {
+      const g = ctx.createLinearGradient(0, ground, 0, h);
+      g.addColorStop(0, lerpHex(GROUND_DUSK[0], GROUND_NIGHT[0], night));
+      g.addColorStop(0.12, lerpHex(GROUND_DUSK[1], GROUND_NIGHT[1], night));
+      g.addColorStop(1, lerpHex(GROUND_DUSK[2], GROUND_NIGHT[2], night));
+      return g;
+    });
     ctx.fillStyle = gg;
     ctx.fillRect(0, ground, w, h - ground);
     // Rutted road, scattered stones, leaf piles, and a broken fence rhythm.
@@ -167,8 +298,8 @@ export class Renderer {
       }
       ctx.stroke();
     }
-    for (let i = 0; i < 50; i++) {
-      const sx = i * 190 + ((i * 71) % 90) - cam;
+    for (let i = TREE_MIN; i <= TREE_MAX; i++) {
+      const sx = treeX(i) - cam;
       if (sx < -60 || sx > w + 60) continue;
       ctx.fillStyle = "rgba(160,90,40,0.28)";
       ctx.beginPath(); ctx.ellipse(sx, ground + 8, 30, 6, 0, 0, Math.PI * 2); ctx.fill();
@@ -179,19 +310,25 @@ export class Renderer {
     }
     if (graphics.quality !== "low") {
       ctx.strokeStyle = "rgba(107,75,50,.55)"; ctx.lineWidth = 4;
-      for (let i = 0; i < 24; i++) {
-        const fx = i * 235 - cam;
+      for (let i = 0; i < 34; i++) {
+        const fx = WORLD_MIN + i * 320 - cam;
         if (fx < -80 || fx > w + 80) continue;
         const fy = ground + 48 + (i % 3) * 3;
         ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx - 2, fy - 31); ctx.moveTo(fx + 74, fy); ctx.lineTo(fx + 72, fy - 28);
         ctx.moveTo(fx - 5, fy - 23); ctx.lineTo(fx + 78, fy - 17); ctx.moveTo(fx - 4, fy - 9); ctx.lineTo(fx + 77, fy - 5); ctx.stroke();
       }
       ctx.fillStyle = "rgba(93,103,111,.18)";
-      for (let i = 0; i < 30; i++) {
-        const sx = i * 173 + 60 - cam;
+      for (let i = 0; i < 42; i++) {
+        const sx = WORLD_MIN + i * 260 + 60 - cam;
         if (sx < 0 || sx > w) continue;
         ctx.beginPath(); ctx.ellipse(sx, ground + 27, 4 + i % 5, 2, 0, 0, Math.PI * 2); ctx.fill();
       }
+    }
+
+    { // Hollow Creek crosses the road's west end; drawn after the ground so the water
+      // and plank bridge sit in the foreground, in front of the road surface
+      const sx = -2660 - cam;
+      if (sx > -300 && sx < w + 300) drawSvg(ctx, "props/creek-bridge.svg", sx, ground - 6, 260, 64);
     }
 
     // meeting square highlight
@@ -201,8 +338,25 @@ export class Renderer {
       ctx.fillRect(MEETING_FROM - cam, ground - 200, MEETING_TO - MEETING_FROM, 200 + 40);
     }
 
+    // House backdrops share the street's world coordinates. Occupied houses
+    // become a cutaway only after their occupants have been painted.
+    for (const b of BUILDINGS) {
+      const sx = b.x - cam;
+      if (sx < -b.width || sx > w + b.width) continue;
+      const occupied = snap.players.some((p) => p.inside === b.id && p.alive);
+      drawHouseInterior(ctx, b, sx, ground, t, [...this.tasksCache.values()].find((task) => task.inside === b.id), occupied);
+      // Pages pinned on this house's interior wall (only visible to souls inside).
+      for (const note of snap.notes ?? []) {
+        if (note.house !== b.id) continue;
+        const nx = note.x - cam;
+        if (nx < -60 || nx > w + 60) continue;
+        this.drawNote(ctx, nx, ground, "wall", this.focusX === note.x, t);
+      }
+    }
+
     // --- stations / buildings ---
     for (const st of STATIONS) {
+      if (st.inside) continue; // house work is painted as part of its interior
       const sx = st.x - cam;
       if (sx > -280 && sx < w + 280) this.drawStation(ctx, st, sx, ground, t, now, snap);
     }
@@ -223,6 +377,15 @@ export class Renderer {
       if (sx > -45 && sx < w + 45) drawKit(ctx, sx, ground);
     }
 
+    // --- pinned pages on walls and tree trunks ---
+    for (const note of snap.notes ?? []) {
+      if (note.house) continue; // interior pages are drawn with their house
+      const sx = note.x - cam;
+      if (sx < -60 || sx > w + 60) continue;
+      const big = focused && this.focusX === note.x;
+      this.drawNote(ctx, sx, ground, note.kind, big, t);
+    }
+
     // --- bell tower ---
     this.drawBellTower(ctx, BELL_X - cam, ground, t, now - snap.bellAt < 4000);
 
@@ -238,16 +401,66 @@ export class Renderer {
       this.glow(ctx, 16);
       ctx.strokeStyle = "#e8b93c";
       ctx.lineWidth = 3.5;
-      ctx.beginPath(); ctx.arc(kx, ground - 26 + bob, 6, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(kx, ground - 20 + bob); ctx.lineTo(kx, ground - 6 + bob);
-      ctx.moveTo(kx, ground - 10 + bob); ctx.lineTo(kx + 6, ground - 10 + bob);
-      ctx.moveTo(kx, ground - 6 + bob); ctx.lineTo(kx + 5, ground - 6 + bob); ctx.stroke();
+      if (!drawSvg(ctx, "props/key.svg", kx - 9, ground - 32 + bob, 18, 32)) {
+        ctx.beginPath(); ctx.arc(kx, ground - 26 + bob, 6, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(kx, ground - 20 + bob); ctx.lineTo(kx, ground - 6 + bob);
+        ctx.moveTo(kx, ground - 10 + bob); ctx.lineTo(kx + 6, ground - 10 + bob);
+        ctx.moveTo(kx, ground - 6 + bob); ctx.lineTo(kx + 5, ground - 6 + bob); ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // Timepieces are collectibles; several can rest on the road at once.
+    const pieceXs = Array.isArray(snap.timepieces) && snap.timepieces.length ? snap.timepieces
+      : (typeof snap.timepieceX === "number" ? [snap.timepieceX] : []);
+    for (const px of pieceXs) {
+      const tx = px - cam, bob = Math.sin(t * 2.4 + px) * 3;
+      if (tx > -50 && tx < w + 50) {
+        ctx.save(); ctx.shadowColor = "#9cdad3"; this.glow(ctx, 20);
+        if (!drawSvg(ctx, "props/timepiece.svg", tx - 18, ground - 48 + bob, 36, 48)) {
+          ctx.fillStyle = "#a8d2cf"; ctx.beginPath(); ctx.arc(tx, ground - 24 + bob, 12, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = "#ebc988"; ctx.lineWidth = 3; ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
+    // Each house has its own identifiable key, separate from the cage key.
+    for (const d of snap.doors ?? []) {
+      if (d.keyX === null) continue;
+      const kx = d.keyX - cam;
+      if (kx < -30 || kx > w + 30) continue;
+      ctx.save(); ctx.strokeStyle = "#dfad55"; ctx.lineWidth = 3;
+      ctx.shadowColor = "#ffd578"; this.glow(ctx, 12);
+      const bob = Math.sin(t * 3) * 3;
+      if (!drawSvg(ctx, "props/key.svg", kx - 9, ground - 32 + bob, 18, 32)) {
+        ctx.beginPath(); ctx.arc(kx, ground - 25 + bob, 5, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(kx, ground - 20 + bob); ctx.lineTo(kx, ground - 7 + bob);
+        ctx.lineTo(kx + 5, ground - 7 + bob); ctx.moveTo(kx, ground - 12 + bob); ctx.lineTo(kx + 5, ground - 12 + bob); ctx.stroke();
+      }
       ctx.restore();
     }
 
     // --- bodies (crows gather above the dead) ---
-    for (const b of snap.bodies) {
+    const drawBody = (b: Snapshot["bodies"][number]) => {
       const bx = b.x - cam;
+      const age = b.at ? now - b.at : 9999;
+      if (age >= 0 && age < 950 && !graphics.reducedMotion) {
+        const progress = age / 950;
+        ctx.save();
+        ctx.globalAlpha = (1 - progress) * 0.7;
+        const flash = ctx.createRadialGradient(bx, ground - 45, 3, bx, ground - 45, 70 + progress * 80);
+        flash.addColorStop(0, "rgba(220,40,28,.9)"); flash.addColorStop(1, "rgba(110,0,0,0)");
+        ctx.fillStyle = flash; ctx.fillRect(bx - 160, ground - 200, 320, 220);
+        if (progress < 0.55) {
+          ctx.strokeStyle = "#f1b1a0"; ctx.lineWidth = 4 * (1 - progress);
+          for (let i = 0; i < 3; i++) {
+            ctx.beginPath(); ctx.moveTo(bx - 35 + i * 12, ground - 105);
+            ctx.quadraticCurveTo(bx + 8 + i * 12, ground - 65, bx + 35 + i * 12, ground - 25); ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
       ctx.fillStyle = "rgba(90,10,10,0.7)";
       ctx.beginPath(); ctx.ellipse(bx, ground - 2, 30, 7, 0, 0, Math.PI * 2); ctx.fill();
       ctx.save();
@@ -268,10 +481,11 @@ export class Renderer {
         ctx.quadraticCurveTo(cx2, cy2 + 3, cx2 + 7, cy2 - flap);
         ctx.stroke();
       }
-    }
+    };
+    for (const b of snap.bodies) if (b.inside) drawBody(b);
 
     // --- players ---
-    const sorted = [...snap.players].sort((a, b) => (a.id === snap.self.id ? 1 : 0) - (b.id === snap.self.id ? 1 : 0));
+    const sorted = this.sortedCache;
     const drawPlayer = (p: Snapshot["players"][number]) => {
       const px = (displayX.get(p.id) ?? p.x) - cam;
       if (px < -100 || px > w + 100) return;
@@ -281,6 +495,7 @@ export class Renderer {
       const floatY = ghost ? -14 + Math.sin(t * 2 + p.x) * 5 : 0;
       ctx.save();
       if (ghost) ctx.globalAlpha = 0.45;
+      else if (p.echo) ctx.globalAlpha = 0.52;
       if (!ghost) {
         ctx.fillStyle = "rgba(0,0,0,.35)";
         ctx.beginPath(); ctx.ellipse(px, ground + 2, 17, 4, 0, 0, Math.PI * 2); ctx.fill();
@@ -290,37 +505,67 @@ export class Renderer {
       // A kit stays visible on its carrier until someone delivers it.
       if (p.hasSupply) drawKit(ctx, px - 23, ground - 16 + floatY);
       // key icon
-      if (p.hasKey) {
+      if (p.hasKey || (p.doorKeys?.length ?? 0) > 0) {
         ctx.fillStyle = "#e8b93c";
         ctx.font = "12px serif";
         ctx.textAlign = "center";
         ctx.fillText("🗝", px + 16, ground - 52 + floatY);
       }
+      if (p.hasTimepiece) {
+        ctx.save(); ctx.shadowColor = "#9cdad3"; this.glow(ctx, 8);
+        if (!drawSvg(ctx, "props/timepiece.svg", px + 12, ground - 62 + floatY, 15, 20)) {
+          ctx.fillStyle = "#a8d2cf"; ctx.beginPath(); ctx.arc(px + 19, ground - 52 + floatY, 5, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.restore();
+      }
       // name and speech are optional HUD layers; the figures remain identifiable by color.
       if (this.settings.interface.playerNames) {
         ctx.font = "600 12px system-ui, sans-serif";
         ctx.textAlign = "center";
-        const label = p.name + (snap.phase === "meeting" && p.voted ? " ✓" : "");
+        const label = p.name + (p.echo ? " · echo" : snap.phase === "meeting" && p.voted ? " ✓" : "");
         const width = ctx.measureText(label).width;
         ctx.fillStyle = "rgba(5,3,8,.55)";
         ctx.beginPath(); ctx.roundRect(px - width / 2 - 5, ground - 75 + floatY, width + 10, 17, 5); ctx.fill();
-        ctx.fillStyle = p.id === snap.self.id ? "#ffd98a" : isMate ? "#ff7a6a" : "rgba(245,235,220,.96)";
+        ctx.fillStyle = p.id === snap.self.id ? "#ffd98a" : p.echo ? "#b9d9d5" : isMate ? "#ff7a6a" : "rgba(245,235,220,.96)";
         ctx.fillText(label, px, ground - 62 + floatY);
       }
-      if (p.bubble && this.settings.interface.speechBubbles) this.drawBubble(ctx, px, ground - 72 + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
+      if (p.action && p.action.until > now) {
+        ctx.save(); ctx.font = "600 10px system-ui, sans-serif"; ctx.textAlign = "center";
+        const label = p.action.text, width = ctx.measureText(label).width;
+        ctx.fillStyle = "rgba(20,27,29,.9)"; ctx.beginPath(); ctx.roundRect(px - width / 2 - 6, ground - 98 + floatY, width + 12, 16, 5); ctx.fill();
+        ctx.fillStyle = p.echo ? "#bde6dc" : "#f2d1a2"; ctx.fillText(label, px, ground - 87 + floatY); ctx.restore();
+      }
+      if (p.bubble && this.settings.interface.speechBubbles) this.drawBubble(ctx, px, ground - (p.action ? 100 : 72) + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
     };
 
+    for (const p of sorted) if (p.inside && !p.caged) drawPlayer(p);
+    for (const b of BUILDINGS) {
+      const sx = b.x - cam;
+      const occupied = snap.players.some((p) => p.inside === b.id && p.alive);
+      if (sx > -b.width && sx < w + b.width) {
+        const door = this.doorsCache.get(b.id);
+        const target = door?.open ? 1 : 0;
+        const previous = this.doorOpenAmount.get(b.id) ?? target;
+        const amount = graphics.reducedMotion ? target : previous + (target - previous) * Math.min(1, dt * 10);
+        this.doorOpenAmount.set(b.id, amount);
+        drawSvg(ctx, "furniture/barrel.svg", sx - b.width / 2 - 30, ground - 34, 26, 34);
+        drawSvg(ctx, "furniture/crate.svg", sx + b.width / 2 + 8, ground - 26, 30, 26);
+        drawHouseExterior(ctx, b, sx, ground, t, door, occupied, amount);
+      }
+    }
+    for (const b of snap.bodies) if (!b.inside) drawBody(b);
     for (const p of sorted) if (p.caged) drawPlayer(p);
-    // Only prisoners stand behind the fronts; everyone else walks in front.
+    // Only prisoners stand behind the fronts; pedestrians remain on the road.
     for (const c of snap.cages) this.drawCage(ctx, c.x - cam, ground, true);
-    for (const p of sorted) if (!p.caged) drawPlayer(p);
+    for (const p of sorted) if (!p.caged && !p.inside) drawPlayer(p);
 
     // --- falling leaves (quantity follows the detail preset) ---
     if (graphics.particles) {
       const count = this.qualityCount(100, 55, 22);
-      for (const l of this.leaves.slice(0, count)) {
+      for (let li = 0; li < count && li < this.leaves.length; li++) {
+        const l = this.leaves[li];
         if (!graphics.reducedMotion) { l.x += l.vx * dt; l.y += l.vy * dt; l.r += dt * 2; }
-        if (l.y > ground + 10) { l.y = -20; l.x = cam + Math.random() * w; }
+        if (l.y > ground + 10) { l.y = -20; l.x = cam + nextRand() * w; } // deterministic recycle, no per-frame Math.random()
         if (l.x < cam - 60) l.x = cam + w + 40;
         const sx = l.x - cam;
         if (sx < -20 || sx > w + 20) continue;
@@ -342,10 +587,13 @@ export class Renderer {
       for (let i = 0; i < layers; i++) {
         const fy = ground - 24 - i * 25;
         const drift = Math.sin(t * 0.24 + i * 2) * 70;
-        const fog = ctx.createLinearGradient(0, fy - 25, 0, fy + 25);
-        fog.addColorStop(0, "rgba(120,110,130,0)");
-        fog.addColorStop(0.5, `rgba(145,132,151,${0.075 + i * 0.018})`);
-        fog.addColorStop(1, "rgba(120,110,130,0)");
+        const fog = this.grad(`fog:${ground}:${i}`, () => {
+          const g = ctx.createLinearGradient(0, fy - 25, 0, fy + 25);
+          g.addColorStop(0, "rgba(120,110,130,0)");
+          g.addColorStop(0.5, `rgba(145,132,151,${0.075 + i * 0.018})`);
+          g.addColorStop(1, "rgba(120,110,130,0)");
+          return g;
+        });
         ctx.fillStyle = fog;
         ctx.fillRect(drift - 90, fy - 25, w + 180, 50);
       }
@@ -368,11 +616,19 @@ export class Renderer {
       this.visionR = 420;
     }
 
+    // A restrained blue wash makes the recorded past distinct from the present.
+    if (snap.time?.mode === "past") {
+      ctx.fillStyle = "rgba(72,133,151,.10)"; ctx.fillRect(0, 0, w, h);
+    }
+
     // --- vignette ---
     if (graphics.vignette) {
-      const vg = ctx.createRadialGradient(w / 2, h / 2, h * 0.35, w / 2, h / 2, h * 0.95);
-      vg.addColorStop(0, "rgba(0,0,0,0)");
-      vg.addColorStop(1, "rgba(5,2,8,0.72)");
+      const vg = this.grad(`vg:${w}:${h}:${nb}`, () => {
+        const g = ctx.createRadialGradient(w / 2, h / 2, h * 0.35, w / 2, h / 2, h * 0.95);
+        g.addColorStop(0, "rgba(0,0,0,0)");
+        g.addColorStop(1, `rgba(4,2,7,${0.6 + 0.25 * night})`); // deep night closes in harder
+        return g;
+      });
       ctx.fillStyle = vg;
       ctx.fillRect(0, 0, w, h);
     }
@@ -384,11 +640,42 @@ export class Renderer {
       ctx.fillStyle = `rgba(0,0,0,${a * (1 - since / 900)})`;
       ctx.fillRect(0, 0, w, h);
     }
+    ctx.restore();
   }
 
   // -------------------------------------------------------------------------
 
+  /** A handwritten page pinned to a wall face or leaning on a trunk. */
+  private drawNote(ctx: CanvasRenderingContext2D, x: number, ground: number, kind: "wall" | "tree", big: boolean, t: number) {
+    const w = big ? 44 : 18, h = big ? 58 : 24;
+    const y = kind === "wall" ? ground - 118 - h : ground - 74 - h;
+    const sway = Math.sin(t * 1.7 + x * 0.05) * (big ? 2.2 : 1.1);
+    ctx.save();
+    ctx.translate(x, y + h);
+    ctx.rotate((kind === "tree" ? 0.10 : -0.05) + sway * 0.02);
+    ctx.translate(-w / 2, -h);
+    ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = big ? 14 : 6; ctx.shadowOffsetY = big ? 5 : 2;
+    ctx.fillStyle = big ? "#f4ead2" : "#e9dfc4";
+    ctx.strokeStyle = "#8a6f4d"; ctx.lineWidth = big ? 2 : 1;
+    ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.fill(); ctx.stroke();
+    // folded corner
+    ctx.beginPath(); ctx.moveTo(w, 0); ctx.lineTo(w, h * 0.28); ctx.lineTo(w - w * 0.28, 0); ctx.closePath();
+    ctx.fillStyle = "#d8c9a8"; ctx.fill(); ctx.stroke();
+    // ruled text lines
+    ctx.strokeStyle = "#7a6a52"; ctx.lineWidth = big ? 1.6 : 1;
+    const lines = big ? 6 : 3;
+    for (let i = 1; i <= lines; i++) {
+      const ly = (h / (lines + 1)) * i;
+      ctx.beginPath(); ctx.moveTo(w * 0.16, ly); ctx.lineTo(w * (0.84 - (i % 3) * 0.08), ly); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   private drawTree(ctx: CanvasRenderingContext2D, x: number, ground: number, height: number, seed: number) {
+    ctx.save(); ctx.translate(x, ground); ctx.scale(seed % 2 ? -1 : 1, 1);
+    const drawn = drawSvg(ctx, "scenery/autumn-tree.svg", -height * 0.375, -height, height * 0.75, height);
+    ctx.restore();
+    if (drawn) return;
     const top = ground - height;
     ctx.save();
     ctx.strokeStyle = seed % 2 ? "#241718" : "#2c1918";
@@ -436,6 +723,8 @@ export class Renderer {
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(facing * scale, scale);
+    const pose = moving ? (gait > 0.25 ? 1 : gait < -0.25 ? -1 : 0) : 0;
+    if (drawTraveler(ctx, color, redEyes, ghost, pose)) { ctx.restore(); return; }
     ctx.lineCap = "round";
 
     if (!ghost) {
@@ -490,17 +779,27 @@ export class Renderer {
     ctx.save();
     ctx.globalAlpha = Math.max(0.15, alpha);
     ctx.font = "12px system-ui, sans-serif";
-    const words = text.split(" ");
-    const lines: string[] = [];
-    let line = "";
-    for (const wd of words) {
-      const test = line ? line + " " + wd : wd;
-      if (ctx.measureText(test).width > 150 && line) { lines.push(line); line = wd; }
-      else line = test;
-      if (lines.length >= 3) break;
+    if (!text) return; // empty bubble: Math.max(...[]) would be -Infinity
+    let wrapped = this.lruGet(this.bubbleWrap, text);
+    if (!wrapped) {
+      const words = text.split(" ");
+      const lines: string[] = [];
+      let line = "";
+      let truncated = false;
+      for (const wd of words) {
+        const test = line ? line + " " + wd : wd;
+        if (ctx.measureText(test).width > 150 && line) { lines.push(line); line = wd; }
+        else line = test;
+        if (lines.length >= 4) { truncated = true; break; } // keep wrapping visible, mark with ellipsis below
+      }
+      if (line && lines.length < 4) lines.push(line);
+      else if (line) truncated = true;
+      if (truncated && lines.length > 0) lines[lines.length - 1] = lines[lines.length - 1].slice(0, -1) + "…";
+      const bw = (lines.length ? Math.max(...lines.map((l) => ctx.measureText(l).width)) : 0) + 16;
+      wrapped = { lines, bw };
+      this.lruSet(this.bubbleWrap, text, wrapped, 512);
     }
-    if (line && lines.length < 4) lines.push(line);
-    const bw = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 16;
+    const { lines, bw } = wrapped;
     const bh = lines.length * 15 + 10;
     const bx = x - bw / 2, by = topY - bh;
     ctx.fillStyle = "rgba(245,240,228,0.95)";
@@ -586,14 +885,16 @@ export class Renderer {
     t: number, now: number, snap: Snapshot
   ) {
     const blackout = now < snap.blackoutUntil;
-    const task = snap.tasks.find((tk) => tk.id === st.id);
+    // lanterns and lit windows burn brighter as the night deepens
+    const night = snap.time?.mode === "past" ? 0.05 : Math.min(1, Math.max(0, snap.nightT ?? 0.2));
+    const task = this.tasksCache.get(st.id);
     const broken = snap.phase === "lobby" || (!!task && !task.done);
     const supplied = !!task?.delivered;
     const flick = this.settings.graphics.flicker && !this.settings.graphics.reducedMotion && now - snap.flickerAt < 900 ? Math.random() * 0.6 : 0;
     const win = (wx: number, wy: number, ww: number, wh: number) => {
-      const a = blackout || broken ? 0.02 : Math.max(0.05, 0.75 - flick);
+      const a = blackout || broken ? 0.02 : Math.max(0.05, (0.75 - flick) * (0.45 + 0.55 * night));
       ctx.save();
-      ctx.shadowColor = "rgba(255,151,55,.75)"; this.glow(ctx, broken || blackout ? 0 : 13);
+      ctx.shadowColor = "rgba(255,151,55,.75)"; this.glow(ctx, broken || blackout ? 0 : Math.round(5 + 10 * night));
       const glass = ctx.createLinearGradient(wx, wy, wx, wy + wh);
       glass.addColorStop(0, `rgba(255,210,120,${a})`);
       glass.addColorStop(1, `rgba(210,91,35,${a * 0.82})`);
@@ -654,7 +955,7 @@ export class Renderer {
       case "lantern": {
         if (!blackout && !broken && this.settings.graphics.glow) {
           const light = ctx.createRadialGradient(0, -92, 4, 0, -72, 112);
-          light.addColorStop(0, "rgba(255,187,83,.22)"); light.addColorStop(1, "rgba(255,145,45,0)");
+          light.addColorStop(0, `rgba(255,187,83,${0.10 + 0.18 * night})`); light.addColorStop(1, "rgba(255,145,45,0)");
           ctx.fillStyle = light; ctx.fillRect(-115, -205, 230, 220);
         }
         ctx.fillStyle = "#191420";
@@ -665,9 +966,9 @@ export class Renderer {
           ctx.fillRect(-3, -110, 6, 110);
           ctx.fillRect(-14, -112, 28, 5);
         }
-        const glow = blackout || broken ? 0.03 : 0.6 + Math.sin(t * 5) * 0.1 - flick;
+        const glow = blackout || broken ? 0.03 : (0.3 + 0.45 * night) + Math.sin(t * 5) * 0.1 - flick;
         ctx.fillStyle = `rgba(255,190,90,${Math.max(0.03, glow)})`;
-        ctx.shadowColor = "rgba(255,180,80,0.9)"; this.glow(ctx, blackout || broken ? 0 : 24);
+        ctx.shadowColor = "rgba(255,180,80,0.9)"; this.glow(ctx, blackout || broken ? 0 : Math.round(10 + 16 * night));
         ctx.fillRect(-8, -106, 16, 18);
         ctx.shadowBlur = 0;
         ctx.fillStyle = "#191420"; ctx.fillRect(-10, -108, 20, 3);

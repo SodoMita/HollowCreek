@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="130" height="160" viewBox="0 0 130 160"><title>Pomor windmill (Malye Korely style)</title>
+<g stroke="#241a14" stroke-width="1.5">
+<path d="M52 158L58 62h14l6 96Z" fill="#5d4a3a"/>
+<path d="M55 100h20M57 130h16M60 75h10" stroke="#3a2c22"/>
+<path d="M50 62L65 40l15 22Z" fill="#413640"/>
+<circle cx="65" cy="62" r="7" fill="#2c2226"/>
+<g id="sails" stroke="#6b5136" stroke-width="4" stroke-linecap="round">
+<path d="M65 62L65 8M65 62L119 62M65 62L65 116M65 62L11 62"/>
+</g>
+<g stroke="#8a6f58" stroke-width="1.6">
+<path d="M65 14v42M65 68v42M17 62h42M77 62h42"/>
+<path d="M72 20l36 36M58 20l-36 36M72 104l36-36M58 104l-36-36" stroke-width="1.2" stroke-opacity=".8"/>
+</g>
+<path d="M58 158h14" stroke="#8a6f58"/>
+</g>
+</svg>

@@ -1,4 +1,5 @@
 // Dependency-free settings dialog shared by the React and standalone clients.
+import { trapTab } from "./focus-trap";
 import {
   applyDocumentPreferences,
   keyLabel,
@@ -140,6 +141,7 @@ export class SettingsDialog {
             <div class="hc-settings-section">Performance</div>
             <label class="hc-setting hc-select"><span>Detail preset</span><select data-setting="graphics.quality"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
             ${slider("graphics.resolution", "Render resolution", 50, 100, 5)}
+            ${slider("graphics.worldZoom", "World zoom", 100, 150, 5)}
             ${toggle("graphics.cameraSmoothing", "Smooth camera")}
             ${toggle("graphics.reducedMotion", "Reduced motion", "Freezes decorative animation and disables horror flashes.")}
             <div class="hc-settings-section">Atmosphere</div>
@@ -186,7 +188,10 @@ export class SettingsDialog {
 
   get isOpen() { return this.openState; }
 
+  private previouslyFocused: HTMLElement | null = null;
+
   open() {
+    this.previouslyFocused = document.activeElement as HTMLElement | null;
     if (this.openState) return;
     this.openState = true;
     this.root.hidden = false;
@@ -200,6 +205,8 @@ export class SettingsDialog {
     this.openState = false;
     this.waiting = null;
     this.root.hidden = true;
+    if (this.previouslyFocused?.isConnected) this.previouslyFocused.focus({ preventScroll: true });
+    this.previouslyFocused = null;
     this.onClose?.();
   }
 
@@ -246,6 +253,8 @@ export class SettingsDialog {
 
   private handleKey = (event: KeyboardEvent) => {
     if (!this.openState) return;
+    trapTab(this.root, event);
+    if (event.defaultPrevented) return;
     if (this.waiting) {
       event.preventDefault(); event.stopImmediatePropagation();
       const action = this.waiting;

@@ -2,12 +2,29 @@
 // server's health route. It never edits /app, publishes to GitHub,
 // uses a GitHub credential, or changes game mechanics.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as pause } from "node:timers/promises";
 
 const root = process.env.HOLLOW_POLISH_ROOT || process.cwd();
+
+// All scratch state lives in ONE base directory. Prefer a repo-local .cache
+// (real disk, survives /tmp tmpfs limits and reboots); HOLLOW_POLISH_TMP
+// overrides; fall back to the OS tmpdir only if the repo is not writable.
+function polishBase() {
+  const candidates = process.env.HOLLOW_POLISH_TMP
+    ? [process.env.HOLLOW_POLISH_TMP]
+    : [join(root, ".cache", "polish"), join(tmpdir(), "hollow-polish")];
+  for (const dir of candidates) {
+    try {
+      mkdirSync(dir, { recursive: true });
+      return dir;
+    } catch { /* try next candidate */ }
+  }
+  return tmpdir();
+}
+const base = polishBase();
 let channel = process.env.HOLLOW_MAYFLY_URL || "";
 if (!channel) {
   const channelFile = join(root, "scripts/mayfly-channel.txt");
@@ -17,8 +34,8 @@ if (!channel) {
 }
 
 const cli = join(root, "node_modules/.bin/opencode");
-const clone = join(tmpdir(), "hollow-polish-work");
-const statusPath = join(tmpdir(), "hollow-polish-status.json");
+const clone = join(base, "work");
+const statusPath = join(base, "status.json");
 const clientPath = join(root, "scripts/mayfly-client.mjs");
 const interval = Math.max(15_000, Number(process.env.HOLLOW_POLISH_INTERVAL_MS) || 60_000);
 const begun = new Date().toISOString();
@@ -33,7 +50,11 @@ const PREFERRED_MODELS = [
 
 const agentEnv = {
   PATH: process.env.PATH || "/usr/bin:/bin",
-  HOME: join(tmpdir(), "hollow-polish-home"),
+  HOME: join(base, "home"),
+  // Keep the agent's own caches inside the same base, never in /tmp or $HOME.
+  XDG_CACHE_HOME: join(base, "home", ".cache"),
+  XDG_DATA_HOME: join(base, "home", ".local", "share"),
+  XDG_CONFIG_HOME: join(base, "home", ".config"),
   LANG: "C.UTF-8",
   CI: "1",
   HOLLOW_MAYFLY_URL: channel,
@@ -138,14 +159,24 @@ function prepareClone() {
   } else {
     execute("git", ["fetch", "--depth", "1", "origin", "main"], clone, 90_000);
   }
-  const branch = `polish/agent-${Date.now()}`;
+  // One fixed branch: checkout -B re-creates it each pass, so refs never pile up.
+  const branch = "polish/agent";
   execute("git", ["checkout", "-B", branch, "origin/main"], clone);
   execute("git", ["reset", "--hard", "origin/main"], clone);
+  // -e node_modules keeps the dependency link below across passes.
   execute("git", ["clean", "-fdx", "-e", "node_modules"], clone);
 
   if (!existsSync(join(clone, "node_modules"))) {
-    if (existsSync(join(root, "node_modules"))) {
-      spawnSync("cp", ["-a", join(root, "node_modules"), join(clone, "node_modules")]);
+    const deps = join(root, "node_modules");
+    if (existsSync(deps)) {
+      // Symlink instead of `cp -a`: node_modules is hundreds of MB, and copying
+      // it into a tmpfs clone is what used to exhaust /tmp. Build caches still
+      // land in the clone's own .next, which is cleaned after each validation.
+      try {
+        symlinkSync(deps, join(clone, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+      } catch {
+        spawnSync("cp", ["-a", deps, join(clone, "node_modules")]);
+      }
     } else {
       execute("npm", ["ci", "--no-audit", "--no-fund"], clone, 240_000, {
         ...agentEnv,
@@ -228,7 +259,13 @@ async function onePass() {
   if (!execute("git", ["diff", "--check"], clone).ok) throw new Error("Whitespace errors in patch");
 
   report("validating", { branch, model: usedModel, files: paths });
-  validate(paths);
+  try {
+    validate(paths);
+  } finally {
+    // Reclaim the build output immediately instead of holding ~100s of MB
+    // until the next pass's `git clean`.
+    rmSync(join(clone, ".next"), { recursive: true, force: true });
+  }
 
   const staged = execute(
     "git",
