@@ -177,31 +177,28 @@ export default function Home() {
             ))}
           </div>
 
-          {/* stageshow-style product still: one quiet window, one story (the mended ward) */}
-          <div className="hc-rise-3 mt-8 max-w-lg overflow-hidden rounded-lg border border-[#3a2733] bg-[#0d0810] shadow-[0_16px_60px_rgba(0,0,0,0.55)]" data-testid="home-still" aria-hidden="true">
-            <svg viewBox="0 0 520 300" className="block h-auto w-full">
-              <rect x="0" y="0" width="520" height="300" fill="#0d0810" />
-              <circle cx="18" cy="16" r="4" fill="#4a3040" />
-              <circle cx="32" cy="16" r="4" fill="#4a3040" />
-              <circle cx="46" cy="16" r="4" fill="#8f3b1f" />
-              <text x="64" y="20" fontSize="10" fill="#8f7d6b" fontFamily="monospace">hollow creek — night watch</text>
-              <line x1="0" y1="32" x2="520" y2="32" stroke="#3a2733" strokeWidth="1" />
-              <text x="20" y="66" fontSize="13" fill="#e9dfcf" fontFamily="Georgia, serif">Ward 3 · mending</text>
-              <rect x="20" y="76" width="360" height="10" rx="5" fill="#1f151c" />
-              <rect x="20" y="76" width="295" height="10" rx="5" fill="#d99a3d" />
-              <text x="392" y="85" fontSize="10" fill="#d99a3d" fontFamily="monospace">82%</text>
-              <rect x="20" y="104" width="240" height="7" rx="3.5" fill="#241a26" />
-              <rect x="20" y="118" width="300" height="7" rx="3.5" fill="#241a26" />
-              <rect x="20" y="132" width="180" height="7" rx="3.5" fill="#241a26" />
-              <rect x="20" y="164" width="300" height="26" rx="6" fill="#1f151c" stroke="#3a2733" strokeWidth="1" />
-              <rect x="32" y="174" width="170" height="6" rx="3" fill="#3a2f3a" />
-              <rect x="20" y="206" width="128" height="24" rx="12" fill="#140d18" stroke="#84624c" strokeWidth="1" />
-              <text x="34" y="222" fontSize="11" fill="#ffd98a" fontFamily="monospace">M · visit the past</text>
-              <polygon points="368,88 368,106 373,101 377,110 380,108 376,99 383,99" fill="#e9dfcf" />
-              <rect x="0" y="252" width="520" height="48" fill="#0a0609" />
-              <rect x="20" y="266" width="200" height="7" rx="3.5" fill="#241a26" />
-              <rect x="20" y="280" width="140" height="7" rx="3.5" fill="#241a26" />
-            </svg>
+          {/* A printed broadside nailed by the road — the town's own notice, not a
+              software window. Same facts as before (wards, cart, bell, timepiece). */}
+          <div className="hc-rise-3 mt-8 max-w-lg" data-testid="home-still" aria-hidden="true">
+            <div className="relative -rotate-1 border border-[#8a7656] bg-[#efe3c8] px-6 py-5 text-[#2c2118] shadow-[0_14px_40px_rgba(0,0,0,0.55)] sm:px-8 sm:py-6"
+              style={{ backgroundImage: "radial-gradient(ellipse at 20% 15%, rgba(120,90,50,0.12), transparent 55%), radial-gradient(ellipse at 85% 90%, rgba(120,90,50,0.16), transparent 50%)" }}>
+              <span className="absolute left-1/2 top-1.5 h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-[#4a3a30] shadow-[inset_0_1px_1px_rgba(255,255,255,0.35)]" />
+              <p className="text-center font-display text-3xl leading-none tracking-wide sm:text-4xl">Notice</p>
+              <p className="mt-1 text-center text-[11px] uppercase tracking-[0.3em] text-[#6e5638]">to the inhabitants of Hollow Creek</p>
+              <div className="mx-auto mt-3 h-px w-24 bg-[#8a7656]" />
+              <p className="mt-3 text-center text-sm leading-relaxed sm:text-[15px]">
+                The Wards of this Town being <em>broken</em>, all able Persons are desired to carry Kits
+                from the Supply Cart and mend the Street before Midnight.
+                Whosoever hears the Bell shall repair at once to the Square, and there give Voice.
+              </p>
+              <p className="mt-3 text-center text-sm italic leading-relaxed text-[#4a3a30]">
+                Keep to the lantern-light. Trust no face by its name alone.
+              </p>
+              <div className="mt-4 flex items-end justify-between text-[11px] uppercase tracking-[0.2em] text-[#6e5638]">
+                <span>By order of the Watch</span>
+                <span className="font-display text-base normal-case tracking-normal text-[#2c2118]">— the Warden</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -294,10 +291,7 @@ export default function Home() {
                 aria-label="Refresh the list of open towns"
               >
                 <RefreshCw className="h-3.5 w-3.5" /> live
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute h-2 w-2 animate-ping rounded-full bg-[#6b8e23] opacity-60" />
-                  <span className="h-2 w-2 rounded-full bg-[#6b8e23]" />
-                </span>
+                <span className="h-2 w-2 rounded-full bg-[#d99a3d] shadow-[0_0_6px_rgba(217,154,61,0.8)]" />
               </button>
             </div>
             <div className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
