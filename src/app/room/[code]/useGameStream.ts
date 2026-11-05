@@ -1,5 +1,6 @@
 // Join + state streaming for the game screen: joins the room, prefers the SSE
-// push stream, and falls back to the adaptive 304 poll (with re-join on 404s).
+// push stream (one full frame, then deltas of changed fields and 1 Hz clock
+// frames), and falls back to the adaptive 304 poll (with re-join on 404s).
 import { useEffect, type RefObject } from "react";
 import type { Snapshot } from "@/game/types";
 import type { WardPanel } from "@/game/ward-ui";
@@ -122,12 +123,16 @@ export function useGameStream(d: GameStreamDeps) {
       // Preferred path: server push over SSE. If it never delivers (or dies),
       // close it and fall back to the adaptive poll above.
       let gotPush = false;
+      let held: Snapshot | null = null; // the last full state this stream delivered; deltas merge into it
       es = new EventSource(`/api/game/state/stream?code=${encodeURIComponent(code)}&playerId=${encodeURIComponent(getPid())}`);
       es.onmessage = (ev) => {
         try {
-          const msg = JSON.parse(ev.data) as { etag?: string; snap?: Snapshot; gone?: boolean };
+          const msg = JSON.parse(ev.data) as { etag?: string; snap?: Snapshot; delta?: Partial<Snapshot>; clock?: number; gone?: boolean };
           if (msg.gone) { void doJoin(); return; }
-          if (msg.snap) { gotPush = true; handleSnap(msg.snap, msg.etag ?? ""); }
+          if (msg.snap) { held = msg.snap; gotPush = true; handleSnap(held, msg.etag ?? ""); return; }
+          if (!held) return; // a delta before any full frame: the server always sends one first
+          if (msg.delta) { held = { ...held, ...msg.delta } as Snapshot; handleSnap(held, msg.etag ?? ""); return; }
+          if (typeof msg.clock === "number") { held = { ...held, now: msg.clock }; handleSnap(held, ""); }
         } catch { /* malformed frame — ignore */ }
       };
       const dropToPolling = () => {

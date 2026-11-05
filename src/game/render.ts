@@ -6,7 +6,6 @@ import type { PublicPlayer, Snapshot, Station, TaskView } from "./types";
 import { createDefaultSettings, type GameSettings } from "./settings";
 import { drawBrokenWard, drawKit, drawSupplyCart } from "./ward-art";
 import { BUILDINGS, doorX, TREE_MAX, TREE_MIN, treeX, WORLD_MIN, WORLD_MAX, type DoorState } from "./buildings";
-import { TOWN_HOUSES } from "./town";
 import { drawHouseExterior, drawHouseInterior } from "./house-art";
 import { drawSvg, drawTraveler } from "./svg-assets";
 
@@ -15,10 +14,6 @@ interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: str
 // Tiny deterministic PRNG for effect recycling — avoids Math.random() in the frame loop.
 let leafSeed = 1;
 const nextRand = () => ((leafSeed = (Math.imul(leafSeed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
-
-// World-x ranges with no backdrop houses: open fen, woods and ridge (edges of
-// the widened world are wild already — houses.json spans -2680…7280).
-const NATURE_GAPS: [number, number][] = [[-2560, -1480], [3340, 3600], [5620, 6540]];
 
 const LEAF_COLORS = ["#b4552a", "#c9762f", "#8f3b1f", "#d99a3d", "#7a4a21"];
 
@@ -128,8 +123,17 @@ export class Renderer {
     // Zoom the world, not the DOM HUD. Gameplay and server vision stay in world units.
     // A focused page (read-note zoom) overrides both zoom and camera target.
     const focused = this.focusX !== null;
-    const zoom = focused ? Math.max(graphics.worldZoom, 2.6) : graphics.worldZoom;
+    const zoom = focused ? Math.max(graphics.worldZoom, 3.2) : graphics.worldZoom;
     ctx.save(); ctx.scale(zoom, zoom); w /= zoom; h /= zoom;
+    // Through the glass the page, not the road, should sit mid-screen: lift
+    // the whole view so the paper is centred (wall pages hang higher than
+    // tree pages). Nothing else about the camera changes.
+    let lift = 0;
+    if (focused) {
+      const fn = (snap.notes ?? []).find((n) => n.x === this.focusX);
+      lift = Math.max(0, (fn?.kind === "wall" ? 165 : 121) - 0.28 * h);
+      ctx.translate(0, lift);
+    }
     if (graphics.reducedMotion) t = 0;
     this.cacheSnap(snap);
     const me = this.meCache;
@@ -158,7 +162,7 @@ export class Renderer {
       return g;
     });
     ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, w, ground);
+    ctx.fillRect(0, -lift, w, ground + lift);
 
     // Deterministic stars: no shimmering random layout between frames.
     const starCount = this.qualityCount(95, 48, 18);
@@ -236,37 +240,9 @@ export class Renderer {
       this.drawTree(ctx, sx, ground, th, i);
     }
 
-    // --- background village: 100+ distinct houses along the whole world (visual only) ---
-    // Nature stretches break the village up: the fen west of Orchard House, the
-    // graveyard woods, and the ridge past Quarry Cottage are left to the trees,
-    // and the new ground beyond the old town limits has no houses at all.
-    {
-      const s = 0.66, par = 0.62;
-      for (const th of TOWN_HOUSES) {
-        if (th.x < WORLD_MIN + 40 || th.x > WORLD_MAX - 40) continue;
-        if (NATURE_GAPS.some(([from, to]) => th.x > from && th.x < to)) continue;
-        const sx = th.x - cam * par;
-        const hw = th.w * s, hh = th.h * s;
-        if (sx < -hw || sx > w + hw) continue;
-        ctx.save();
-        ctx.globalAlpha = 0.82;
-        if (th.flip) { ctx.translate(sx + hw / 2, 0); ctx.scale(-1, 1); ctx.translate(-(sx + hw / 2), 0); }
-        drawSvg(ctx, th.asset, sx - hw / 2, ground - hh + 6, hw, hh);
-        ctx.restore();
-      }
-    }
-
-    // Dense woods where the village thins out, in the houses' parallax plane.
-    for (const [from, to] of NATURE_GAPS) {
-      const count = Math.floor((to - from) / 70);
-      for (let i = 0; i < count; i++) {
-        const wx = from + 35 + i * 70 + ((i * 37) % 28);
-        const sx = wx - cam * 0.62;
-        if (sx < -90 || sx > w + 90) continue;
-        this.drawTree(ctx, sx, ground + 2, 58 + ((i * 29) % 40), i + 300);
-      }
-    }
-
+    // No backdrop village: beyond the road there are only the wooded hills.
+    // (The old 100-house parallax strip is gone — 100 of its SVGs never existed,
+    // so every page load fired a hundred 404s.)
     // --- street dressing: fences, door lanterns, woodpiles, windmills ---
     // Purely decorative world-anchored props; they never change gameplay coordinates.
     const FENCE_XS = [-4060, -3880, -3240, -2760, -2180, -1460, -1250, -700, -120, 420, 760, 1560, 1860, 2560, 2960, 3320, 3780, 4180, 4420, 5100, 5260, 5980, 6280, 6900, 7180, 7620, 8020, 8560];
@@ -371,7 +347,7 @@ export class Renderer {
         if (note.house !== b.id) continue;
         const nx = note.x - cam;
         if (nx < -60 || nx > w + 60) continue;
-        this.drawNote(ctx, nx, ground, "wall", this.focusX === note.x, t);
+        this.drawNote(ctx, nx, ground, "wall", this.focusX === note.x, t, note.text, note.author);
       }
     }
 
@@ -404,7 +380,7 @@ export class Renderer {
       const sx = note.x - cam;
       if (sx < -60 || sx > w + 60) continue;
       const big = focused && this.focusX === note.x;
-      this.drawNote(ctx, sx, ground, note.kind, big, t);
+      this.drawNote(ctx, sx, ground, note.kind, big, t, note.text, note.author);
     }
 
     // --- bell tower ---
@@ -540,7 +516,7 @@ export class Renderer {
         ctx.restore();
       }
       // name and speech are optional HUD layers; the figures remain identifiable by color.
-      if (this.settings.interface.playerNames) {
+      if (this.settings.interface.playerNames && !focused) {
         ctx.font = "600 12px system-ui, sans-serif";
         ctx.textAlign = "center";
         const label = p.name + (p.echo ? " · echo" : snap.phase === "meeting" && p.voted ? " ✓" : "");
@@ -550,13 +526,13 @@ export class Renderer {
         ctx.fillStyle = p.id === snap.self.id ? "#ffd98a" : p.echo ? "#b9d9d5" : isMate ? "#ff7a6a" : "rgba(245,235,220,.96)";
         ctx.fillText(label, px, ground - 62 + floatY);
       }
-      if (p.action && p.action.until > now) {
+      if (p.action && p.action.until > now && !focused) {
         ctx.save(); ctx.font = "600 10px system-ui, sans-serif"; ctx.textAlign = "center";
         const label = p.action.text, width = ctx.measureText(label).width;
         ctx.fillStyle = "rgba(20,27,29,.9)"; ctx.beginPath(); ctx.roundRect(px - width / 2 - 6, ground - 98 + floatY, width + 12, 16, 5); ctx.fill();
         ctx.fillStyle = p.echo ? "#bde6dc" : "#f2d1a2"; ctx.fillText(label, px, ground - 87 + floatY); ctx.restore();
       }
-      if (p.bubble && this.settings.interface.speechBubbles) this.drawBubble(ctx, px, ground - (p.action ? 100 : 72) + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
+      if (p.bubble && this.settings.interface.speechBubbles && !focused) this.drawBubble(ctx, px, ground - (p.action ? 100 : 72) + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
     };
 
     for (const p of sorted) if (p.inside && !p.caged) drawPlayer(p);
@@ -667,27 +643,59 @@ export class Renderer {
   // -------------------------------------------------------------------------
 
   /** A handwritten page pinned to a wall face or leaning on a trunk. */
-  private drawNote(ctx: CanvasRenderingContext2D, x: number, ground: number, kind: "wall" | "tree", big: boolean, t: number) {
-    const w = big ? 44 : 18, h = big ? 58 : 24;
+  /** Word-wrap cache for page text (keyed by text + width + font). */
+  private noteWrap = new Map<string, string[]>();
+  private wrapNote(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, font: string, maxLines: number): string[] {
+    const key = `${font}|${maxWidth}|${maxLines}|${text}`;
+    const hit = this.lruGet(this.noteWrap, key);
+    if (hit) return hit;
+    ctx.save(); ctx.font = font;
+    const lines: string[] = [];
+    let line = "";
+    for (const word of text.split(/\s+/)) {
+      const probe = line ? `${line} ${word}` : word;
+      if (ctx.measureText(probe).width <= maxWidth || !line) line = probe;
+      else { lines.push(line); line = word; }
+      if (lines.length >= maxLines) break;
+    }
+    if (line && lines.length < maxLines) lines.push(line);
+    if (lines.length >= maxLines) lines[maxLines - 1] = lines[maxLines - 1].replace(/.{0,2}$/, "…");
+    ctx.restore();
+    this.lruSet(this.noteWrap, key, lines, 64);
+    return lines;
+  }
+
+  /** A pinned page. Its real words are inked on the paper — tiny from the road,
+   *  legible once the glass (focus zoom) is on it. No DOM pop-out. */
+  private drawNote(ctx: CanvasRenderingContext2D, x: number, ground: number, kind: "wall" | "tree", big: boolean, t: number, text = "", author = "") {
+    const w = big ? 72 : 18, h = big ? 94 : 24;
     const y = kind === "wall" ? ground - 118 - h : ground - 74 - h;
-    const sway = Math.sin(t * 1.7 + x * 0.05) * (big ? 2.2 : 1.1);
+    const sway = Math.sin(t * 1.7 + x * 0.05) * (big ? 1.2 : 1.1);
     ctx.save();
     ctx.translate(x, y + h);
-    ctx.rotate((kind === "tree" ? 0.10 : -0.05) + sway * 0.02);
+    ctx.rotate((big ? 0 : kind === "tree" ? 0.10 : -0.05) + sway * 0.02);
     ctx.translate(-w / 2, -h);
     ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = big ? 14 : 6; ctx.shadowOffsetY = big ? 5 : 2;
     ctx.fillStyle = big ? "#f4ead2" : "#e9dfc4";
-    ctx.strokeStyle = "#8a6f4d"; ctx.lineWidth = big ? 2 : 1;
+    ctx.strokeStyle = "#8a6f4d"; ctx.lineWidth = big ? 1.2 : 1;
     ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.fill(); ctx.stroke();
+    ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
     // folded corner
-    ctx.beginPath(); ctx.moveTo(w, 0); ctx.lineTo(w, h * 0.28); ctx.lineTo(w - w * 0.28, 0); ctx.closePath();
+    ctx.beginPath(); ctx.moveTo(w, 0); ctx.lineTo(w, h * 0.22); ctx.lineTo(w - w * 0.22, 0); ctx.closePath();
     ctx.fillStyle = "#d8c9a8"; ctx.fill(); ctx.stroke();
-    // ruled text lines
-    ctx.strokeStyle = "#7a6a52"; ctx.lineWidth = big ? 1.6 : 1;
-    const lines = big ? 6 : 3;
-    for (let i = 1; i <= lines; i++) {
-      const ly = (h / (lines + 1)) * i;
-      ctx.beginPath(); ctx.moveTo(w * 0.16, ly); ctx.lineTo(w * (0.84 - (i % 3) * 0.08), ly); ctx.stroke();
+    // the nail
+    ctx.fillStyle = "#4a3a30"; ctx.beginPath(); ctx.arc(w / 2, big ? 4 : 2.5, big ? 1.8 : 1, 0, Math.PI * 2); ctx.fill();
+    // ink
+    const font = big ? "italic 5.2px Georgia, serif" : "italic 3.2px Georgia, serif";
+    const pad = big ? 6 : 2.5;
+    const lineH = big ? 6.6 : 4.2;
+    const maxLines = big ? 11 : 4;
+    const lines = text ? this.wrapNote(ctx, text, w - pad * 2, font, maxLines) : [];
+    ctx.font = font; ctx.fillStyle = big ? "#2c2118" : "rgba(44,33,24,0.85)"; ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
+    lines.forEach((ln, i) => ctx.fillText(ln, pad, pad + lineH * (i + 1) + (big ? 2 : 1)));
+    if (big && author) {
+      ctx.font = "4px Georgia, serif"; ctx.fillStyle = "#6e5638"; ctx.textAlign = "right";
+      ctx.fillText(`— ${author}`, w - pad, h - pad);
     }
     ctx.restore();
   }
@@ -996,14 +1004,47 @@ export class Renderer {
         break;
       }
       case "chapel": {
-        ctx.fillStyle = "#221419";
-        ctx.fillRect(-65, -90, 130, 90);
-        ctx.beginPath(); ctx.moveTo(-72, -90); ctx.lineTo(0, -128); ctx.lineTo(72, -90); ctx.closePath(); ctx.fill();
-        ctx.fillRect(-16, -170, 32, 84);
-        ctx.beginPath(); ctx.moveTo(-20, -168); ctx.lineTo(0, -206); ctx.lineTo(20, -168); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#c9b98a"; ctx.fillRect(-2, -228, 4, 24); ctx.fillRect(-8, -221, 16, 4);
-        win(-44, -66, 14, 28); win(30, -66, 14, 28); win(-6, -156, 12, 20);
-        ctx.fillStyle = "#120a0e"; ctx.fillRect(-12, -44, 24, 44);
+        // A white-clapboard meeting house with a square belfry and a spire —
+        // the tallest thing on the street. Weathered white reads grey-violet
+        // in the dusk; the stone steps and the door face the road.
+        const W = 240, H = 150;
+        ctx.fillStyle = "#2b2129";
+        ctx.fillRect(-W / 2, -H, W, H);
+        ctx.strokeStyle = "rgba(0,0,0,0.28)"; ctx.lineWidth = 1;
+        for (let y = -H + 8; y < -2; y += 8) { ctx.beginPath(); ctx.moveTo(-W / 2, y); ctx.lineTo(W / 2, y); ctx.stroke(); }
+        // corner boards and water table
+        ctx.fillStyle = "#3a2f38"; ctx.fillRect(-W / 2, -H, 6, H); ctx.fillRect(W / 2 - 6, -H, 6, H); ctx.fillRect(-W / 2, -8, W, 8);
+        // gable roof facing the road, with a pediment cornice
+        ctx.fillStyle = "#17111a";
+        ctx.beginPath(); ctx.moveTo(-W / 2 - 14, -H); ctx.lineTo(0, -H - 72); ctx.lineTo(W / 2 + 14, -H); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = "#5a4f58"; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(-W / 2 - 14, -H); ctx.lineTo(0, -H - 72); ctx.lineTo(W / 2 + 14, -H); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-W / 2 - 14, -H + 2); ctx.lineTo(W / 2 + 14, -H + 2); ctx.stroke();
+        // tower astride the ridge: base, open belfry, spire, weathervane
+        ctx.fillStyle = "#2b2129"; ctx.fillRect(-26, -H - 160, 52, 100);
+        ctx.fillStyle = "#3a2f38"; ctx.fillRect(-30, -H - 164, 60, 6);
+        ctx.fillStyle = "#241a22"; ctx.fillRect(-22, -H - 214, 44, 50);
+        ctx.fillStyle = broken ? "#07050a" : "#120a0e";
+        ctx.beginPath(); ctx.moveTo(-12, -H - 168); ctx.lineTo(-12, -H - 196); ctx.arc(0, -H - 196, 12, Math.PI, 0); ctx.lineTo(12, -H - 168); ctx.closePath(); ctx.fill();
+        if (!broken) { ctx.fillStyle = "#8c6a2f"; ctx.beginPath(); ctx.arc(0, -H - 186, 6, 0, Math.PI * 2); ctx.fill(); }
+        ctx.fillStyle = "#3a2f38"; ctx.fillRect(-28, -H - 220, 56, 6);
+        ctx.fillStyle = "#17111a";
+        ctx.beginPath(); ctx.moveTo(-28, -H - 220); ctx.lineTo(0, -H - 310); ctx.lineTo(28, -H - 220); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = "#c9b98a"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(0, -H - 310); ctx.lineTo(0, -H - 336); ctx.moveTo(-9, -H - 326); ctx.lineTo(9, -H - 326); ctx.stroke();
+        // tall arched windows either side of the door, a fan light over it
+        for (const wx of [-86, 58]) {
+          ctx.fillStyle = "#1a1219";
+          ctx.beginPath(); ctx.moveTo(wx - 3, -56); ctx.lineTo(wx - 3, -112); ctx.arc(wx + 14, -112, 17, Math.PI, 0); ctx.lineTo(wx + 31, -56); ctx.closePath(); ctx.fill();
+          win(wx, -112, 28, 56);
+          ctx.strokeStyle = "rgba(31,17,15,.9)"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(wx + 14, -112); ctx.lineTo(wx + 14, -56); ctx.moveTo(wx, -84); ctx.lineTo(wx + 28, -84); ctx.stroke();
+        }
+        ctx.fillStyle = "#1a1219"; ctx.fillRect(-24, -92, 48, 92);
+        win(-19, -88, 38, 12);
+        ctx.fillStyle = "#120a0e"; ctx.fillRect(-19, -72, 38, 72);
+        ctx.strokeStyle = "#3a2f38"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, -72); ctx.lineTo(0, 0); ctx.stroke();
+        ctx.fillStyle = "#3d3a42"; ctx.fillRect(-34, -6, 68, 6); ctx.fillRect(-40, -3, 80, 3);
         break;
       }
       case "mill": {
@@ -1085,7 +1126,7 @@ export class Renderer {
       ctx.font = "bold 10px system-ui, sans-serif";
       ctx.textAlign = "center";
       ctx.fillStyle = supplied ? "#b3d59a" : task.sabotaged ? "#d87762" : "#ffcd5a";
-      ctx.fillText(supplied ? "PUZZLE" : task.sabotaged ? "SABOTAGED" : "NEEDS KIT", x, ground - 247);
+      ctx.fillText(supplied ? "PUZZLE" : task.sabotaged ? "SABOTAGED" : "NEEDS KIT", x, ground - (st.kind === "chapel" ? 500 : 247));
       ctx.restore();
       if (task.progress > 0) {
         ctx.fillStyle = "rgba(0,0,0,0.5)";

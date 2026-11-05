@@ -6,7 +6,7 @@
 import Link from "next/link";
 import type { VoiceCallbacks } from "./overlays";
 import { useRouter } from "next/navigation";
-import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
+import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Telescope, Trophy, Volume2, Zap } from "lucide-react";
 import type { Snapshot } from "@/game/types";
 import type { VoiceStatus } from "@/game/voice";
 import { keyLabel, type GameSettings } from "@/game/settings";
@@ -56,10 +56,10 @@ export function TopBar(props: {
       </button>
     )}
     {nearestNote && s.phase === "playing" && (
-      <button title={`Read the page pinned by ${nearestNote.author}`} aria-label="Read page" data-testid="read-note"
+      <button title={`Raise the spyglass to the page pinned by ${nearestNote.author}`} aria-label="Spyglass" data-testid="read-note"
         onClick={() => onReadNote(nearestNote!)}
         className="hc-btn hc-btn-teal ml-2 px-1.5 py-0.5 text-xs">
-        📖<span className="hidden sm:inline"> Read page</span>
+        <Telescope className="h-3.5 w-3.5" /><span className="hidden sm:inline"> Spyglass</span>
       </button>
     )}
     {s.phase === "playing" && s.self.alive && s.self.hasSupply && (
@@ -80,7 +80,7 @@ export function TopBar(props: {
   )}
   <div className="flex shrink-0 items-center gap-1 sm:gap-2">
     <span className={`rounded px-1 py-1 font-display text-xs sm:px-3 sm:py-1.5 sm:text-lg ${!s.self.alive ? "bg-[#2a2a3a]/80 text-[#9aa]" : s.self.role === "hollow" ? "bg-[#4a1210]/90 text-[#ff6a5a]" : "bg-[#1d2a1a]/80 text-[#a8c98a]"}`}>
-      <span className="sm:hidden">{!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "Hollow" : "Crew"}</span>
+      <span className="sm:hidden">{!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "Hollow" : "Townfolk"}</span>
       <span className="hidden sm:inline">{!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "The Hollow" : "Townfolk"}</span>
       {s.self.caged && s.self.alive ? " · Caged" : ""}
     </span>

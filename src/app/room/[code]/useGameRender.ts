@@ -51,12 +51,21 @@ export function useGameRender(d: GameRenderDeps) {
     };
     window.addEventListener("resize", debouncedResize);
     window.visualViewport?.addEventListener("resize", debouncedResize);
+    // Frames arrive sparsely now (only when something changes), so the room
+    // clock is advanced locally between them; bubbles, countdowns and the
+    // bell glow keep moving smoothly. The server's `now` is only ever moved
+    // forward, never back.
+    let clockSnap: Snapshot | null = null;
+    let clockBase = 0;
+    let clockAt = 0;
     const loop = (nowMs: number) => {
       raf = requestAnimationFrame(loop);
       const dt = Math.min(0.05, (nowMs - last) / 1000);
       last = nowMs;
       const s = snapRef.current;
       if (!s) return;
+      if (s !== clockSnap) { clockSnap = s; clockBase = s.now; clockAt = nowMs; }
+      s.now = Math.max(s.now, clockBase + (nowMs - clockAt));
       for (const p of s.players) {
         const cur = displayX.current.get(p.id);
         if (cur === undefined || Math.abs(cur - p.x) > 300) { displayX.current.set(p.id, p.x); continue; }

@@ -21,17 +21,13 @@ export function Toast({ text }: { text: string | null }) {
 }
 
 export function NoteReader({ note, onClose }: { note: { text: string; author: string }; onClose: () => void }) {
+  // The page itself is read on the canvas, through the spyglass zoom. This is
+  // only an invisible click-catcher plus a caption; the text stays on the paper.
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0b0710]/60 backdrop-blur-[2px]" onClick={onClose}>
-      <div data-testid="note-reader" onClick={(e) => e.stopPropagation()}
-        className="hc-rise w-[min(92vw,460px)] -rotate-1 rounded-sm border border-[#6e5638] bg-[#f4ead2] p-5 text-[#2c2118] shadow-2xl sm:p-7">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="hc-eyebrow text-[#6e5638]">Pinned page</span>
-          <button onClick={onClose} aria-label="Close page" className="rounded px-2 py-0.5 text-[#6e5638] hover:bg-[#e0d2b2]">✕</button>
-        </div>
-        <p className="whitespace-pre-wrap break-words font-display text-lg leading-relaxed sm:text-xl">{note.text}</p>
-        <p className="mt-3 text-right text-xs italic text-[#6e5638]">— pinned by {note.author}</p>
-        <p className="mt-2 text-center text-[11px] text-[#6e5638]">zoomed in · click anywhere to put it back</p>
+    <div className="absolute inset-0 z-20" onClick={onClose} data-testid="note-reader" aria-label={`Page pinned by ${note.author}: ${note.text}`} role="button">
+      <span className="sr-only">{note.text}</span>
+      <div className="pointer-events-none absolute bottom-32 left-1/2 -translate-x-1/2 sm:bottom-44">
+        <div className="hc-toast whitespace-nowrap text-xs">spyglass on a page pinned by {note.author} · click or Esc to lower it</div>
       </div>
     </div>
   );

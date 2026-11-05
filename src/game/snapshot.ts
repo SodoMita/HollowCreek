@@ -132,10 +132,15 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     if (blackout) danger = Math.max(danger, 0.35);
   }
 
+  // Per-tick values are quantised so an idle town produces an identical
+  // snapshot tick after tick: the SSE stream and the 304 poll then send
+  // nothing. 1/1000 of a night is 2.4 s; cooldowns are shown as whole
+  // seconds (Math.ceil), so sending them rounded up to the second is lossless.
   const nightT = room.phase === "lobby" ? 0.15
     : room.phase === "ended" ? 1
     : room.replaying || !room.startedAt ? 0.5
-    : Math.min(1, Math.max(0, (now - room.startedAt) / NIGHT_LENGTH_MS));
+    : Math.round(Math.min(1, Math.max(0, (now - room.startedAt) / NIGHT_LENGTH_MS)) * 1000) / 1000;
+  const coarseMs = (ms: number) => (ms <= 0 ? 0 : Math.ceil(ms / 1000) * 1000);
 
   return {
     code: room.code,
@@ -153,13 +158,13 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
       doorKeys: room.doors.filter((d) => d.holder === me.id).map((d) => d.id),
       hasTimepiece: !!heldPiece(room, me.id),
       bellUsed: me.bellUsed,
-      killCooldownMs: killCd,
+      killCooldownMs: me.role === "hollow" ? coarseMs(killCd) : 0, // townfolk never see it; the grace timer would churn their stream
       canKill: !!target && killCd <= 0,
       stamina: Math.round(me.stamina * 100) / 100,
       exhausted: me.exhausted,
-      blackoutCooldownMs: Math.max(0, room.blackoutReadyAt - now),
+      blackoutCooldownMs: coarseMs(room.blackoutReadyAt - now),
       canBlackout: me.role === "hollow" && me.alive && room.phase === "playing" && now >= room.blackoutReadyAt,
-      sabotageCooldownMs: Math.max(0, me.sabotageAt - now),
+      sabotageCooldownMs: coarseMs(me.sabotageAt - now),
       canSabotage,
       teammates: me.role === "hollow" ? ps.filter((p) => p.role === "hollow" && p.id !== me.id).map((p) => p.id) : [],
       myVote: me.vote,
@@ -205,14 +210,14 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     notes: room.notes.filter((n) => (n.house ? me.inside === n.house : !me.inside && canSee(n.x))).map((n) => ({ id: n.id, x: n.x, kind: n.kind, house: n.house, author: n.authorName, text: n.text })),
     timepieces: loosePieces(room).filter((tp) => canSee(tp.x)).map((tp) => tp.x),
     timepieceX: (() => { const tp = loosePieces(room).find((t2) => canSee(t2.x)); return tp ? tp.x : null; })(),
-    time: room.temporalShadow ? undefined : { mode: "present", earliest: room.history[0]?.at ?? room.startedAt, latest: room.history.at(-1)?.at ?? room.startedAt },
+    time: room.temporalShadow ? undefined : { mode: "present", earliest: room.history[0]?.at ?? room.startedAt, latest: Math.floor((room.history.at(-1)?.at ?? room.startedAt) / 1000) * 1000 }, // whole seconds: the scrubber cannot show finer, and it stops the stream ticking twice a second
     supplyDrops: room.supplyDrops.filter((item) => canSee(item.x)).map((item) => item.x),
     cartX: ix(room.cartX),
     cartPushers: room.cartPushers,
     cages: room.cages.map((c) => ({ x: c.x, occupant: c.occupant })),
     tasks: room.pool.map((t) => {
       const st = STATIONS.find((s) => s.id === t.id)!;
-      return { id: t.id, name: st.name, x: st.x, inside: st.inside, done: t.done, delivered: t.delivered, sabotaged: t.sabotaged, progress: t.progress };
+      return { id: t.id, name: st.name, x: st.x, inside: st.inside, done: t.done, delivered: t.delivered, sabotaged: t.sabotaged, progress: Math.round(t.progress * 100) / 100 };
     }),
     minigame,
     taskBar: { done: doneTasks, total: room.pool.length },

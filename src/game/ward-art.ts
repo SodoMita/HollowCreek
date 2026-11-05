@@ -104,17 +104,17 @@ export function drawBrokenWard(ctx: CanvasRenderingContext2D, kind: Station["kin
       ctx.moveTo(19, -15); ctx.lineTo(36, -7); ctx.stroke();
       break;
     case "chapel":
-      // Broken roof slates and boarded windows — no warm glow until restored.
+      // A hole torn in the roof beside the tower, boards nailed over both
+      // arched windows, and the belfry stands empty — no warm glow until restored.
       ctx.fillStyle = "#0a080d";
-      ctx.beginPath(); ctx.moveTo(-22, -116); ctx.lineTo(-5, -99); ctx.lineTo(17, -115);
-      ctx.lineTo(35, -94); ctx.lineTo(-20, -93); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(-96, -168); ctx.lineTo(-70, -196); ctx.lineTo(-44, -176); ctx.lineTo(-30, -192);
+      ctx.lineTo(-24, -160); ctx.lineTo(-88, -158); ctx.closePath(); ctx.fill();
       ctx.strokeStyle = "#493326"; ctx.lineWidth = 5;
-      for (const wx of [-42, 30]) {
-        ctx.beginPath(); ctx.moveTo(wx - 3, -65); ctx.lineTo(wx + 19, -37); ctx.stroke();
+      for (const wx of [-86, 58]) {
+        ctx.beginPath(); ctx.moveTo(wx - 6, -118); ctx.lineTo(wx + 34, -72); ctx.moveTo(wx - 6, -84); ctx.lineTo(wx + 34, -50); ctx.stroke();
       }
       ctx.strokeStyle = "#4c4146"; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(-59, -17); ctx.lineTo(-29, -47);
-      ctx.moveTo(-47, -20); ctx.lineTo(-24, -22); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-134, -6); ctx.lineTo(-104, -40); ctx.moveTo(-124, -10); ctx.lineTo(-100, -12); ctx.stroke();
       break;
     case "mill":
       ctx.fillStyle = "#0c090b";
