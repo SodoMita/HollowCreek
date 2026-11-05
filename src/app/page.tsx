@@ -176,6 +176,33 @@ export default function Home() {
               </div>
             ))}
           </div>
+
+          {/* stageshow-style product still: one quiet window, one story (the mended ward) */}
+          <div className="hc-rise-3 mt-8 max-w-lg overflow-hidden rounded-lg border border-[#3a2733] bg-[#0d0810] shadow-[0_16px_60px_rgba(0,0,0,0.55)]" data-testid="home-still" aria-hidden="true">
+            <svg viewBox="0 0 520 300" className="block h-auto w-full">
+              <rect x="0" y="0" width="520" height="300" fill="#0d0810" />
+              <circle cx="18" cy="16" r="4" fill="#4a3040" />
+              <circle cx="32" cy="16" r="4" fill="#4a3040" />
+              <circle cx="46" cy="16" r="4" fill="#8f3b1f" />
+              <text x="64" y="20" fontSize="10" fill="#8f7d6b" fontFamily="monospace">hollow creek — night watch</text>
+              <line x1="0" y1="32" x2="520" y2="32" stroke="#3a2733" strokeWidth="1" />
+              <text x="20" y="66" fontSize="13" fill="#e9dfcf" fontFamily="Georgia, serif">Ward 3 · mending</text>
+              <rect x="20" y="76" width="360" height="10" rx="5" fill="#1f151c" />
+              <rect x="20" y="76" width="295" height="10" rx="5" fill="#d99a3d" />
+              <text x="392" y="85" fontSize="10" fill="#d99a3d" fontFamily="monospace">82%</text>
+              <rect x="20" y="104" width="240" height="7" rx="3.5" fill="#241a26" />
+              <rect x="20" y="118" width="300" height="7" rx="3.5" fill="#241a26" />
+              <rect x="20" y="132" width="180" height="7" rx="3.5" fill="#241a26" />
+              <rect x="20" y="164" width="300" height="26" rx="6" fill="#1f151c" stroke="#3a2733" strokeWidth="1" />
+              <rect x="32" y="174" width="170" height="6" rx="3" fill="#3a2f3a" />
+              <rect x="20" y="206" width="128" height="24" rx="12" fill="#140d18" stroke="#84624c" strokeWidth="1" />
+              <text x="34" y="222" fontSize="11" fill="#ffd98a" fontFamily="monospace">M · visit the past</text>
+              <polygon points="368,88 368,106 373,101 377,110 380,108 376,99 383,99" fill="#e9dfcf" />
+              <rect x="0" y="252" width="520" height="48" fill="#0a0609" />
+              <rect x="20" y="266" width="200" height="7" rx="3.5" fill="#241a26" />
+              <rect x="20" y="280" width="140" height="7" rx="3.5" fill="#241a26" />
+            </svg>
+          </div>
         </div>
 
         {/* right: forms */}
