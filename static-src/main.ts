@@ -16,9 +16,9 @@ import type { RoomListing, Snapshot } from "../src/game/types";
 // The menu probes them in order; room-code joins also discover the backend
 // that owns the town and then stay pinned there. Use one server in production.
 const SERVERS = [
+  "https://3000-ihyvdl92l0bjqvzn0jthg.e2b.app",
   "https://3000-iv1ax3jjgiz1x3ha95746.e2b.app",
   "https://3000-ihrqg7gfricyapy48j4hv.e2b.app",
-  "https://3000-irlhq619hi9cpbud4mpec.e2b.app",
 ];
 const DEFAULT_SERVER = SERVERS[0];
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;

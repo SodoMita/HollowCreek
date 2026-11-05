@@ -2,8 +2,8 @@
 // beyond the original 0–4200 town; their thresholds never move a player.
 import { ix } from "./types";
 
-export const WORLD_MIN = -2800;
-export const WORLD_MAX = 7400;
+export const WORLD_MIN = -3600;
+export const WORLD_MAX = 8600;
 export const DOOR_REACH = 58;
 const KEY_REACH = 44;
 
@@ -18,10 +18,12 @@ export interface Building {
 }
 
 export const BUILDINGS: Building[] = [
+  { id: "ferryman", name: "Ferryman's Hut", keyName: "river-worn ferry key", x: -3120, width: 300, side: 1, keySpawn: -2880 },
   { id: "tollhouse", name: "Tollhouse", keyName: "brass tollhouse key", x: -470, width: 300, side: 1, keySpawn: -190 },
   { id: "orchard", name: "Orchard House", keyName: "iron orchard key", x: -1100, width: 330, side: 1, keySpawn: -840 },
   { id: "foreman", name: "Foreman's Office", keyName: "steel office key", x: 4700, width: 330, side: -1, keySpawn: 4440 },
   { id: "quarry", name: "Quarry Cottage", keyName: "forged cottage key", x: 5350, width: 340, side: -1, keySpawn: 5070 },
+  { id: "lodge", name: "Watchman's Lodge", keyName: "antler lodge key", x: 7980, width: 330, side: -1, keySpawn: 7700 },
 ];
 
 export interface DoorState {

@@ -1,7 +1,7 @@
-// Background village of Hollow Creek — modeled on Malye Korely's ~100 buildings.
-// Purely visual: these houses have no collision, no doors, no tasks; nothing
-// pinned in tests depends on them. The asset files and placement list are
-// authored by scripts/author-town-houses.mjs into public/art/town/.
+// Background village of Hollow Creek — a fictional Massachusetts mill town.
+// The street is dense; the fen west of the bridge and the far ridge are kept
+// as open nature stretches. Purely visual: no collision, doors or tasks.
+// Assets and placements live in public/art/town/ and are editable as data.
 import town from "../../public/art/town/houses.json";
 
 export interface TownHouse {

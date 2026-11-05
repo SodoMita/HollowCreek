@@ -5,10 +5,11 @@ import {
 import type { PublicPlayer, Snapshot, Station, TaskView } from "./types";
 import { createDefaultSettings, type GameSettings } from "./settings";
 import { drawBrokenWard, drawKit, drawSupplyCart } from "./ward-art";
-import { BUILDINGS, doorX, TREE_MAX, TREE_MIN, treeX, WORLD_MIN, WORLD_MAX, type DoorState } from "./buildings";
+import { BUILDINGS, TREE_MAX, TREE_MIN, treeX, WORLD_MIN, WORLD_MAX, type DoorState } from "./buildings";
 import { TOWN_HOUSES } from "./town";
 import { drawHouseExterior, drawHouseInterior } from "./house-art";
 import { drawSvg, drawTraveler } from "./svg-assets";
+import { drawCreekGlints, drawFireflies, drawForeground, drawGrade, drawMoonRays, drawStreetDressing, makeGrainTile } from "./atmosphere";
 
 interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: string; s: number }
 
@@ -78,6 +79,7 @@ export class Renderer {
     return g;
   }
   private settings: GameSettings = createDefaultSettings();
+  private grainTile: HTMLCanvasElement | null | undefined;
   cameraX = 0;
   /** When set, the camera centers on this world x and zooms in to read a page. */
   focusX: number | null = null;
@@ -193,6 +195,8 @@ export class Renderer {
     }
     ctx.restore();
 
+    if (graphics.glow && graphics.quality !== "low") drawMoonRays(ctx, mx, my, t, night);
+
     // Long, slow cloud banks crossing the moon and horizon.
     if (graphics.quality !== "low") {
       ctx.save();
@@ -224,12 +228,14 @@ export class Renderer {
     }
     ctx.lineTo(w, ground); ctx.fill();
 
-    for (let i = 0; i < 78; i++) {
+    for (let i = 0; i < 92; i++) {
       const wx = WORLD_MIN + i * 155 + ((i * 97) % 60);
       const sx = wx - cam * 0.45;
-      if (sx < -90 || sx > w + 90) continue;
+      if (sx < -150 || sx > w + 150) continue;
       const th = 74 + ((i * 53) % 56);
       this.drawTree(ctx, sx, ground, th, i);
+      // the fen and the ridge grow wild: doubled groves where the village ends
+      if (wx < -2650 || wx > 7350) this.drawTree(ctx, sx + 62, ground, th * 0.82, i + 7);
     }
 
     // --- background village: 100+ distinct houses along the whole world (visual only) ---
@@ -248,34 +254,8 @@ export class Renderer {
       }
     }
 
-    // --- Malye Korely street dressing: fences, door lanterns, woodpiles, windmill ---
-    // Purely decorative world-anchored props; they never change gameplay coordinates.
-    const FENCE_XS = [-2760, -2180, -1460, -1250, -700, -120, 420, 760, 1560, 1860, 2560, 2960, 3320, 3780, 4180, 4420, 5100, 5260, 5980, 6280, 6900, 7180];
-    for (const fx of FENCE_XS) {
-      const sx = fx - cam;
-      if (sx < -160 || sx > w + 160) continue;
-      drawSvg(ctx, "props/fence.svg", sx, ground - 46, 140, 46);
-    }
-    for (const b of BUILDINGS) {
-      const lx = doorX(b) + b.side * 46 - cam; // lantern post beside each doorway
-      if (lx > -40 && lx < w + 40) drawSvg(ctx, "props/lantern-post.svg", lx, ground - 96, 30, 96);
-    }
-    for (const wx of [-560, 5300]) {
-      const sx = wx - cam;
-      if (sx > -80 && sx < w + 80) drawSvg(ctx, "props/woodpile.svg", sx - 32, ground - 44, 64, 44);
-    }
-    for (const mx of [4350, 6620]) { // Pomor windmills: past the silo and at the far east end
-      const sx = mx - cam;
-      if (sx > -150 && sx < w + 150) drawSvg(ctx, "props/windmill.svg", sx - 65, ground - 160, 130, 160);
-    }
-    for (const gx of [3110, 3265, 3345]) { // grave markers around the graves ward (x=3200)
-      const sx = gx - cam;
-      if (sx > -50 && sx < w + 50) drawSvg(ctx, "props/gravestone.svg", sx - 17, ground - 46, 34, 46);
-    }
-    for (const hx of [195, 352]) { // haystacks by the harvest shed (x=280)
-      const sx = hx - cam;
-      if (sx > -90 && sx < w + 90) drawSvg(ctx, "props/haystack.svg", sx - 35, ground - 52, 70, 52);
-    }
+    // --- New England street dressing lives in atmosphere.ts (props only) ---
+    drawStreetDressing(ctx, cam, w, ground);
 
     // --- ground ---
     const gg = this.grad(`ground:${ground}:${h}:${nb}`, () => {
@@ -329,6 +309,7 @@ export class Renderer {
       // and plank bridge sit in the foreground, in front of the road surface
       const sx = -2660 - cam;
       if (sx > -300 && sx < w + 300) drawSvg(ctx, "props/creek-bridge.svg", sx, ground - 6, 260, 64);
+      drawCreekGlints(ctx, cam, w, ground, t);
     }
 
     // meeting square highlight
@@ -581,7 +562,8 @@ export class Renderer {
       }
     }
 
-    // --- low, layered fog ---
+    // --- fireflies at dusk, then the low, layered fog ---
+    if (graphics.particles) drawFireflies(ctx, cam, w, ground, t, night, this.qualityCount(18, 12, 6), treeX);
     if (graphics.fog) {
       const layers = this.qualityCount(4, 3, 1);
       for (let i = 0; i < layers; i++) {
@@ -599,6 +581,9 @@ export class Renderer {
       }
     }
 
+    // near-field reeds sweep past faster than the road — parallax depth
+    if (graphics.quality !== "low") drawForeground(ctx, cam, w, h, t);
+
     // --- lantern-light darkness mask (server-authoritative vision radius) ---
     const targetR = snap.visionRadius;
     if (targetR < 1500) {
@@ -608,10 +593,17 @@ export class Renderer {
       const cy2 = ground - 50;
       const dark = ctx.createRadialGradient(cx2, cy2, r * 0.45, cx2, cy2, r);
       dark.addColorStop(0, "rgba(4,2,8,0)");
-      dark.addColorStop(0.75, "rgba(4,2,8,0.55)");
+      dark.addColorStop(0.55, "rgba(4,2,8,0.3)");
+      dark.addColorStop(0.78, "rgba(4,2,8,0.6)");
       dark.addColorStop(1, "rgba(3,1,6,0.965)");
       ctx.fillStyle = dark;
       ctx.fillRect(0, 0, w, h);
+      // the lantern you carry is warm; the dark beyond it is cold
+      const warm = ctx.createRadialGradient(cx2, cy2, 6, cx2, cy2, r * 0.7);
+      warm.addColorStop(0, "rgba(255,178,92,0.07)");
+      warm.addColorStop(1, "rgba(255,178,92,0)");
+      ctx.fillStyle = warm;
+      ctx.fillRect(cx2 - r, cy2 - r, r * 2, r * 2);
     } else {
       this.visionR = 420;
     }
@@ -639,6 +631,12 @@ export class Renderer {
       const a = Math.random() < 0.5 ? 0.55 : 0.15;
       ctx.fillStyle = `rgba(0,0,0,${a * (1 - since / 900)})`;
       ctx.fillRect(0, 0, w, h);
+    }
+
+    // cool shadows / warm lantern grade, with fine grain on high detail
+    if (graphics.quality !== "low") {
+      if (this.grainTile === undefined) this.grainTile = makeGrainTile();
+      drawGrade(ctx, w, h, night, graphics.quality === "high" && !graphics.reducedMotion ? this.grainTile : null, t);
     }
     ctx.restore();
   }
@@ -779,7 +777,7 @@ export class Renderer {
     ctx.save();
     ctx.globalAlpha = Math.max(0.15, alpha);
     ctx.font = "12px system-ui, sans-serif";
-    if (!text) return; // empty bubble: Math.max(...[]) would be -Infinity
+    if (!text) { ctx.restore(); return; } // empty bubble: keep save/restore balanced
     let wrapped = this.lruGet(this.bubbleWrap, text);
     if (!wrapped) {
       const words = text.split(" ");

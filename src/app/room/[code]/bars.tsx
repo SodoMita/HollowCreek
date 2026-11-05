@@ -3,15 +3,11 @@
 // Presentational HUD overlays for the room screen, split out of GameClient.
 // All game logic stays in GameClient — these components only render + call back.
 
-import Link from "next/link";
-import type { VoiceCallbacks } from "./overlays";
-import { useRouter } from "next/navigation";
-import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
+import { BookOpen, MessageCircle, Mic, MicOff, Package, Pin, Settings, Volume2, VolumeX, Zap } from "lucide-react";
 import type { Snapshot } from "@/game/types";
 import type { VoiceStatus } from "@/game/voice";
 import { keyLabel, type GameSettings } from "@/game/settings";
 import { BUILDINGS } from "@/game/buildings";
-import { BELL_X } from "@/game/types";
 
 export function TopBar(props: {
   s: Snapshot;
@@ -51,22 +47,22 @@ export function TopBar(props: {
     {s.phase === "playing" && s.self.alive && (
       <button title="Pin a handwritten page to a wall or tree (inside a house: its interior wall)" aria-label="Pin page"
         onClick={onPinToggle}
-        className="ml-2 rounded bg-[#4a3323] px-1.5 py-0.5 text-xs text-[#f2cf91] hover:bg-[#684327]">
-        ✎<span className="hidden sm:inline"> Pin page</span>
+        className="ml-2 inline-flex items-center gap-1 rounded bg-[#4a3323] px-1.5 py-0.5 text-xs text-[#f2cf91] hover:bg-[#684327]">
+        <Pin className="h-3.5 w-3.5" /><span className="hidden sm:inline"> Pin page</span>
       </button>
     )}
     {nearestNote && s.phase === "playing" && (
       <button title={`Read the page pinned by ${nearestNote.author}`} aria-label="Read page" data-testid="read-note"
         onClick={() => onReadNote(nearestNote!)}
-        className="ml-2 rounded border border-[#d99a3d]/60 bg-[#243b3c]/90 px-1.5 py-0.5 text-xs text-[#cbeae1] hover:bg-[#2f4a4b]">
-        📖<span className="hidden sm:inline"> Read page</span>
+        className="ml-2 inline-flex items-center gap-1 rounded border border-[#d99a3d]/60 bg-[#243b3c]/90 px-1.5 py-0.5 text-xs text-[#cbeae1] hover:bg-[#2f4a4b]">
+        <BookOpen className="h-3.5 w-3.5" /><span className="hidden sm:inline"> Read page</span>
       </button>
     )}
     {s.phase === "playing" && s.self.alive && s.self.hasSupply && (
       <button title="Drop repair kit for another player" aria-label="Drop repair kit"
         onClick={onDropKit}
-        className="ml-2 rounded bg-[#4a3323] px-1.5 py-0.5 text-xs text-[#f2cf91] hover:bg-[#684327]">
-        ▣<span className="hidden sm:inline"> Drop kit · {keyLabel(controls.drop)}</span>
+        className="ml-2 inline-flex items-center gap-1 rounded bg-[#4a3323] px-1.5 py-0.5 text-xs text-[#f2cf91] hover:bg-[#684327]">
+        <Package className="h-3.5 w-3.5" /><span className="hidden sm:inline"> Drop kit · {keyLabel(controls.drop)}</span>
       </button>
     )}
   </div>
@@ -90,7 +86,7 @@ export function TopBar(props: {
       aria-label={muted ? "Unmute sound" : "Mute sound"}
       aria-pressed={muted}
       className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] focus-visible:outline-2 focus-visible:outline-[#d99a3d] sm:py-1.5"
-    >{muted ? "🔇" : "🔊"}</button>
+    >{muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}</button>
     <button onClick={onToggleVoice} disabled={voiceStatus.starting} aria-label={voiceStatus.active ? "Leave proximity voice" : "Join proximity voice"}
       aria-pressed={voiceStatus.active} title={voiceStatus.active ? `Voice: ${voiceStatus.connected} connected (${voiceStatus.p2pCount} P2P, ${voiceStatus.relayCount} Relay) · ${voiceStatus.nearby} nearby · ${voiceStatus.speaking ? "Speaking" : "Listening"} · ${keyLabel(controls.talk)} to leave` : `Join proximity voice (${keyLabel(controls.talk)}) — asks for microphone permission`}
       className={`rounded border px-1.5 py-1 sm:py-1.5 ${voiceStatus.active ? (voiceStatus.speaking ? "border-[#ffd98a] bg-[#3a2a16] text-[#ffd98a]" : "border-[#6b8e5a] bg-[#1d2a1a]/90 text-[#b8d8a4]") : "border-[#3a2733] bg-[#140d18]/80 text-[#c9b8a4]"}`}>
@@ -106,7 +102,7 @@ export function TopBar(props: {
       title="Settings"
       aria-label="Settings"
       className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a] sm:py-1.5"
-    >⚙</button>
+    ><Settings className="h-4 w-4" /></button>
     <button onClick={onLeave} disabled={leaving} aria-label="Back to towns" className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#e06a5a] disabled:opacity-50 sm:px-3 sm:py-1.5"><span className="sm:hidden">←</span><span className="hidden sm:inline">Back</span></button>
   </div>
 </div>
@@ -177,8 +173,8 @@ export function BottomControls(props: {
   <div className="flex items-end gap-2 sm:gap-3">
     <button
       onClick={onChat}
-      className="h-11 rounded-full border border-[#3a2733] bg-[#140d18]/80 px-3 text-sm text-[#d8c9b4] backdrop-blur hover:bg-[#2a1a26] sm:px-4"
-    >💬<span className="hidden sm:inline"> Speak</span></button>
+      className="inline-flex h-11 items-center gap-1.5 rounded-full border border-[#3a2733] bg-[#140d18]/80 px-3 text-sm text-[#d8c9b4] backdrop-blur hover:bg-[#2a1a26] sm:px-4"
+    ><MessageCircle className="h-4 w-4" /><span className="hidden sm:inline"> Speak</span></button>
     {nearbyKeyedDoor && s.self.alive && !s.self.caged && (
       <button onClick={onDoorLock} className="h-11 rounded-full border border-[#84624c] bg-[#33231f]/90 px-3 text-xs text-[#f2cf91]" title="Lock or unlock with this house key">{nearbyDoorLocked ? "Unlock" : "Lock"} · L</button>
     )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useLayoutEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { Renderer } from "@/game/render";
 import { BUILDINGS, DOOR_REACH, buildingHint, clampWorld, doorX, dropBuildingKeys, newDoors, interactWithBuilding, walkThroughBuildings, type DoorState } from "@/game/buildings";
-import { WardPanel, renderWardJob } from "@/game/ward-ui";
+import { WardPanel, renderWardJob, morphHtml } from "@/game/ward-ui";
 import { TimePanel } from "@/game/time-ui";
 import {
   WARD_JOBS,
@@ -153,6 +153,22 @@ type TutorialFuture = {
   supplyDrops: number[]; cartX: number; cagedNeighbor: boolean; puzzles: Map<string, WardPuzzle>;
   baselineTasks: TaskView[]; baselineDoors: DoorState[]; baselineCaged: boolean; baselineKeyX: number | null;
 };
+
+/** The practice board morphs in place so a pressed key is never torn out. */
+function WardJobSurface({ html, onMove }: { html: string; onMove: (index: number) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => { if (ref.current) morphHtml(ref.current, html); }, [html]);
+  return (
+    <div
+      className="w-full"
+      ref={ref}
+      onClick={(event) => {
+        const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-ward-move]");
+        if (button && !button.disabled) onMove(Number(button.dataset.wardMove));
+      }}
+    />
+  );
+}
 
 export default function TutorialClient() {
   const router = useRouter();
@@ -1216,13 +1232,9 @@ export default function TutorialClient() {
                   </button>
                 </div>
               ) : (
-                <div
-                  className="w-full"
-                  onClick={(event) => {
-                    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-ward-move]");
-                    if (button && !button.disabled) handlePracticeMove(Number(button.dataset.wardMove));
-                  }}
-                  dangerouslySetInnerHTML={{ __html: renderWardJob(wardView(practiceKind, WARD_JOBS[practiceKind].title, practicePuzzle, Math.max(0, practicePreviewUntil - practiceNow))) }}
+                <WardJobSurface
+                  html={renderWardJob(wardView(practiceKind, WARD_JOBS[practiceKind].title, practicePuzzle, Math.max(0, practicePreviewUntil - practiceNow)))}
+                  onMove={handlePracticeMove}
                 />
               )}
             </div>

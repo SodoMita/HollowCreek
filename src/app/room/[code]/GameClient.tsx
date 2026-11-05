@@ -18,6 +18,7 @@ import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabe
 import { SettingsDialog } from "@/game/settings-ui";
 import { NoteReader, RoleBanner, Toast } from "./hud";
 import { MidHud } from "./midhud";
+import { Minimap } from "./minimap";
 import { BottomControls, TopBar } from "./bars";
 import { ChatBox, PinPanel } from "./chat";
 import { EndOverlay, LobbyOverlay } from "./overlays";
@@ -294,6 +295,8 @@ export default function GameClient({ code }: { code: string }) {
             onMute={() => { ensureAudio(); const m = !muted; getSettingsStore().update((draft) => { draft.audio.muted = m; }); audioRef.current?.setMuted(m); }}
             onToggleVoice={toggleVoice} onToggleMic={toggleMic}
             onSettings={() => settingsDialogRef.current?.open()} onLeave={() => void leaveToTownList()} />
+
+          {s.phase === "playing" && <Minimap s={s} me={me} />}
 
           <MidHud s={s} controls={settings.controls} me={me} secsLeft={secsLeft} voteOptions={voteOptions} tasksOpen={tasksOpen} voiceStatus={voiceStatus}
             onTimepiece={activateTimepiece} onToggleTasks={() => setTasksOpen(!tasksOpen)}

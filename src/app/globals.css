@@ -15,9 +15,14 @@ html, body {
   overscroll-behavior: none;
 }
 
+/* Scrollbars, selection and focus all speak the creek's palette. */
+* { scrollbar-width: thin; scrollbar-color: #4a3040 #140d18; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: #140d18; }
 ::-webkit-scrollbar-thumb { background: #4a3040; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #8f3b1f; }
+::selection { background: #8f3b1f; color: #f3e6d0; }
+:focus-visible { outline-color: #d99a3d; }
 
 @keyframes hc-flicker {
   0%, 100% { opacity: 1; }
