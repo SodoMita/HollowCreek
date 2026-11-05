@@ -16,7 +16,7 @@ import { BELL_X } from "@/game/types";
 export function Toast({ text }: { text: string | null }) {
   if (!text) return null;
   return (
-    <div role="status" aria-live="polite" className="absolute bottom-32 left-1/2 sm:bottom-44 -translate-x-1/2 rounded bg-[#1c1210]/95 px-4 py-2 text-sm text-[#d99a3d]">{text}</div>
+    <div role="status" aria-live="polite" className="hc-toast absolute bottom-32 left-1/2 sm:bottom-44 -translate-x-1/2">{text}</div>
   );
 }
 
@@ -26,7 +26,7 @@ export function NoteReader({ note, onClose }: { note: { text: string; author: st
       <div data-testid="note-reader" onClick={(e) => e.stopPropagation()}
         className="hc-rise w-[min(92vw,460px)] -rotate-1 rounded-sm border border-[#6e5638] bg-[#f4ead2] p-5 text-[#2c2118] shadow-2xl sm:p-7">
         <div className="mb-2 flex items-center justify-between">
-          <span className="text-xs uppercase tracking-[0.25em] text-[#6e5638]">Pinned page</span>
+          <span className="hc-eyebrow text-[#6e5638]">Pinned page</span>
           <button onClick={onClose} aria-label="Close page" className="rounded px-2 py-0.5 text-[#6e5638] hover:bg-[#e0d2b2]">✕</button>
         </div>
         <p className="whitespace-pre-wrap break-words font-display text-lg leading-relaxed sm:text-xl">{note.text}</p>

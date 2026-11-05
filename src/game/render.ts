@@ -224,7 +224,7 @@ export class Renderer {
     }
     ctx.lineTo(w, ground); ctx.fill();
 
-    for (let i = 0; i < 78; i++) {
+    for (let i = 0; i < 92; i++) {
       const wx = WORLD_MIN + i * 155 + ((i * 97) % 60);
       const sx = wx - cam * 0.45;
       if (sx < -90 || sx > w + 90) continue;
@@ -250,7 +250,7 @@ export class Renderer {
 
     // --- Malye Korely street dressing: fences, door lanterns, woodpiles, windmill ---
     // Purely decorative world-anchored props; they never change gameplay coordinates.
-    const FENCE_XS = [-2760, -2180, -1460, -1250, -700, -120, 420, 760, 1560, 1860, 2560, 2960, 3320, 3780, 4180, 4420, 5100, 5260, 5980, 6280, 6900, 7180];
+    const FENCE_XS = [-4060, -3880, -3240, -2760, -2180, -1460, -1250, -700, -120, 420, 760, 1560, 1860, 2560, 2960, 3320, 3780, 4180, 4420, 5100, 5260, 5980, 6280, 6900, 7180, 7620, 8020, 8560];
     for (const fx of FENCE_XS) {
       const sx = fx - cam;
       if (sx < -160 || sx > w + 160) continue;
@@ -260,7 +260,7 @@ export class Renderer {
       const lx = doorX(b) + b.side * 46 - cam; // lantern post beside each doorway
       if (lx > -40 && lx < w + 40) drawSvg(ctx, "props/lantern-post.svg", lx, ground - 96, 30, 96);
     }
-    for (const wx of [-560, 5300]) {
+    for (const wx of [-3400, -560, 5300, 8470]) {
       const sx = wx - cam;
       if (sx > -80 && sx < w + 80) drawSvg(ctx, "props/woodpile.svg", sx - 32, ground - 44, 64, 44);
     }
@@ -272,7 +272,7 @@ export class Renderer {
       const sx = gx - cam;
       if (sx > -50 && sx < w + 50) drawSvg(ctx, "props/gravestone.svg", sx - 17, ground - 46, 34, 46);
     }
-    for (const hx of [195, 352]) { // haystacks by the harvest shed (x=280)
+    for (const hx of [-3060, -2960, 195, 352, 7540]) { // haystacks by the harvest shed (x=280) and the far meadows
       const sx = hx - cam;
       if (sx > -90 && sx < w + 90) drawSvg(ctx, "props/haystack.svg", sx - 35, ground - 52, 70, 52);
     }
@@ -310,7 +310,7 @@ export class Renderer {
     }
     if (graphics.quality !== "low") {
       ctx.strokeStyle = "rgba(107,75,50,.55)"; ctx.lineWidth = 4;
-      for (let i = 0; i < 34; i++) {
+      for (let i = 0; i < 42; i++) {
         const fx = WORLD_MIN + i * 320 - cam;
         if (fx < -80 || fx > w + 80) continue;
         const fy = ground + 48 + (i % 3) * 3;
@@ -318,16 +318,18 @@ export class Renderer {
         ctx.moveTo(fx - 5, fy - 23); ctx.lineTo(fx + 78, fy - 17); ctx.moveTo(fx - 4, fy - 9); ctx.lineTo(fx + 77, fy - 5); ctx.stroke();
       }
       ctx.fillStyle = "rgba(93,103,111,.18)";
-      for (let i = 0; i < 42; i++) {
+      for (let i = 0; i < 52; i++) {
         const sx = WORLD_MIN + i * 260 + 60 - cam;
         if (sx < 0 || sx > w) continue;
         ctx.beginPath(); ctx.ellipse(sx, ground + 27, 4 + i % 5, 2, 0, 0, Math.PI * 2); ctx.fill();
       }
     }
 
-    { // Hollow Creek crosses the road's west end; drawn after the ground so the water
-      // and plank bridge sit in the foreground, in front of the road surface
-      const sx = -2660 - cam;
+    // Hollow Creek bends around the town: it crosses the road west of the old
+    // boundary, again by the ferry hut, and once more past the hunting lodge.
+    // Drawn after the ground so water and planks sit in front of the road surface.
+    for (const bx of [-4080, -2660, 8540]) {
+      const sx = bx - cam;
       if (sx > -300 && sx < w + 300) drawSvg(ctx, "props/creek-bridge.svg", sx, ground - 6, 260, 64);
     }
 

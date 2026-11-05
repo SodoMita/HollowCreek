@@ -37,7 +37,7 @@ export function TopBar(props: {
     onToggleVoice, onToggleMic, onSettings, onLeave } = props;
   return (
 <div className="hc-hud-item hc-hud-fade absolute left-0 right-0 top-0 flex items-start justify-between gap-2 p-2 pt-[max(0.5rem,env(safe-area-inset-top))] text-xs sm:gap-3 sm:p-3 sm:text-sm">
-  <div className="min-w-0 rounded border border-[#3a2733]/70 bg-[#140d18]/80 px-2 py-1.5 backdrop-blur sm:px-3 sm:py-2">
+  <div className="hc-panel min-w-0 px-2 py-1.5 sm:px-3 sm:py-2">
     <span className="hidden font-display text-lg text-[#d99a3d] md:inline">Hollow Creek</span>
     <button
       onClick={onCopyCode}
@@ -47,7 +47,7 @@ export function TopBar(props: {
     >{s.code}</button>
     <span className="ml-2 hidden text-[#9c8b7a] sm:inline">{s.playerCount} souls</span>
     {me?.inside && <span className="ml-2 text-[#e2be83]">Inside {BUILDINGS.find((b) => b.id === me.inside)?.name}</span>}
-    {(s.self.hasTimepiece || s.time?.mode === "past") && <button onClick={onTimepiece} className="ml-2 rounded border border-[#7ba9a6] bg-[#243b3c]/90 px-2 py-1 text-xs text-[#cbeae1]">{s.time?.mode === "past" ? "Return · M" : "Timepiece · M"}</button>}
+    {(s.self.hasTimepiece || s.time?.mode === "past") && <button onClick={onTimepiece} className="hc-btn hc-btn-teal ml-2 px-2 py-1 text-xs">{s.time?.mode === "past" ? "Return · M" : "Timepiece · M"}</button>}
     {s.phase === "playing" && s.self.alive && (
       <button title="Pin a handwritten page to a wall or tree (inside a house: its interior wall)" aria-label="Pin page"
         onClick={onPinToggle}
@@ -58,7 +58,7 @@ export function TopBar(props: {
     {nearestNote && s.phase === "playing" && (
       <button title={`Read the page pinned by ${nearestNote.author}`} aria-label="Read page" data-testid="read-note"
         onClick={() => onReadNote(nearestNote!)}
-        className="ml-2 rounded border border-[#d99a3d]/60 bg-[#243b3c]/90 px-1.5 py-0.5 text-xs text-[#cbeae1] hover:bg-[#2f4a4b]">
+        className="hc-btn hc-btn-teal ml-2 px-1.5 py-0.5 text-xs">
         📖<span className="hidden sm:inline"> Read page</span>
       </button>
     )}
@@ -89,7 +89,7 @@ export function TopBar(props: {
       title={muted ? "Unmute" : "Mute"}
       aria-label={muted ? "Unmute sound" : "Mute sound"}
       aria-pressed={muted}
-      className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] focus-visible:outline-2 focus-visible:outline-[#d99a3d] sm:py-1.5"
+      className="hc-btn hc-btn-ghost px-2 py-1 sm:py-1.5"
     >{muted ? "🔇" : "🔊"}</button>
     <button onClick={onToggleVoice} disabled={voiceStatus.starting} aria-label={voiceStatus.active ? "Leave proximity voice" : "Join proximity voice"}
       aria-pressed={voiceStatus.active} title={voiceStatus.active ? `Voice: ${voiceStatus.connected} connected (${voiceStatus.p2pCount} P2P, ${voiceStatus.relayCount} Relay) · ${voiceStatus.nearby} nearby · ${voiceStatus.speaking ? "Speaking" : "Listening"} · ${keyLabel(controls.talk)} to leave` : `Join proximity voice (${keyLabel(controls.talk)}) — asks for microphone permission`}
@@ -98,16 +98,16 @@ export function TopBar(props: {
     </button>
     {voiceStatus.active && <button onClick={onToggleMic} aria-label={voiceStatus.muted ? "Unmute microphone" : "Mute microphone"}
       title={voiceStatus.muted ? "Unmute microphone" : "Mute microphone"}
-      className="rounded border border-[#3a2733] bg-[#140d18]/80 px-1.5 py-1 text-[#c9b8a4] sm:py-1.5">
+      className="hc-btn hc-btn-ghost px-1.5 py-1 sm:py-1.5">
       {voiceStatus.muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
     </button>}
     <button
       onClick={onSettings}
       title="Settings"
       aria-label="Settings"
-      className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a] sm:py-1.5"
+      className="hc-btn hc-btn-ghost px-2 py-1 sm:py-1.5"
     >⚙</button>
-    <button onClick={onLeave} disabled={leaving} aria-label="Back to towns" className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#e06a5a] disabled:opacity-50 sm:px-3 sm:py-1.5"><span className="sm:hidden">←</span><span className="hidden sm:inline">Back</span></button>
+    <button onClick={onLeave} disabled={leaving} aria-label="Back to towns" className="hc-btn hc-btn-ghost hc-btn-danger px-2 py-1 sm:px-3 sm:py-1.5"><span className="sm:hidden">←</span><span className="hidden sm:inline">Back</span></button>
   </div>
 </div>
   );
@@ -147,7 +147,7 @@ export function BottomControls(props: {
     )}
     {s.self.alive && !s.self.caged && s.phase === "playing" && (s.self.hasSupply ? (
       <button onClick={onDropKit}
-        className="self-start rounded border border-[#84624c] bg-[#33231f]/90 px-2 py-1 text-[11px] text-[#f2cf91]">
+        className="hc-btn hc-btn-amber self-start px-2 py-1 text-[11px]">
         Drop kit · {keyLabel(controls.drop)}
       </button>
     ) : (
@@ -156,7 +156,7 @@ export function BottomControls(props: {
         onPointerLeave={() => onPush(false)}
         onPointerCancel={() => onPush(false)}
         onContextMenu={(e) => e.preventDefault()}
-        className="self-start rounded border border-[#84624c] bg-[#33231f]/90 px-2 py-1 text-[11px] text-[#f2cf91]">
+        className="hc-btn hc-btn-amber self-start px-2 py-1 text-[11px]">
         Hold Push + ◀▶ {s.cartPushers > 0 ? `· ${s.cartPushers} pushing` : ""}
       </button>
     ))}
@@ -177,10 +177,10 @@ export function BottomControls(props: {
   <div className="flex items-end gap-2 sm:gap-3">
     <button
       onClick={onChat}
-      className="h-11 rounded-full border border-[#3a2733] bg-[#140d18]/80 px-3 text-sm text-[#d8c9b4] backdrop-blur hover:bg-[#2a1a26] sm:px-4"
+      className="hc-btn hc-btn-ghost h-11 rounded-full px-3 text-sm backdrop-blur sm:px-4"
     >💬<span className="hidden sm:inline"> Speak</span></button>
     {nearbyKeyedDoor && s.self.alive && !s.self.caged && (
-      <button onClick={onDoorLock} className="h-11 rounded-full border border-[#84624c] bg-[#33231f]/90 px-3 text-xs text-[#f2cf91]" title="Lock or unlock with this house key">{nearbyDoorLocked ? "Unlock" : "Lock"} · L</button>
+      <button onClick={onDoorLock} className="hc-btn hc-btn-amber h-11 rounded-full px-3 text-xs" title="Lock or unlock with this house key">{nearbyDoorLocked ? "Unlock" : "Lock"} · L</button>
     )}
     <div className="flex flex-col items-center gap-1">
       {s.hint && <span className="hc-interaction-hint max-w-36 rounded bg-[#0d0810]/80 px-2 py-0.5 text-center text-xs text-[#d99a3d] sm:max-w-44">{s.hint}</span>}

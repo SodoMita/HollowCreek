@@ -2,8 +2,10 @@
 // beyond the original 0–4200 town; their thresholds never move a player.
 import { ix } from "./types";
 
-export const WORLD_MIN = -2800;
-export const WORLD_MAX = 7400;
+// Widened in the velvet-dusk pass: the creek bends around both ends of town,
+// with a ferry hut to the west and a hunting lodge to the east.
+export const WORLD_MIN = -4200;
+export const WORLD_MAX = 8800;
 export const DOOR_REACH = 58;
 const KEY_REACH = 44;
 
@@ -22,6 +24,10 @@ export const BUILDINGS: Building[] = [
   { id: "orchard", name: "Orchard House", keyName: "iron orchard key", x: -1100, width: 330, side: 1, keySpawn: -840 },
   { id: "foreman", name: "Foreman's Office", keyName: "steel office key", x: 4700, width: 330, side: -1, keySpawn: 4440 },
   { id: "quarry", name: "Quarry Cottage", keyName: "forged cottage key", x: 5350, width: 340, side: -1, keySpawn: 5070 },
+  // No wards inside these two: they are hideouts past the edge of the old town —
+  // somewhere to lock a door behind you, stash a key, or pin a page nobody reads.
+  { id: "ferry", name: "Ferry Keeper's Hut", keyName: "rusted ferry key", x: -3620, width: 300, side: 1, keySpawn: -3330 },
+  { id: "lodge", name: "Hunting Lodge", keyName: "antler lodge key", x: 8230, width: 330, side: -1, keySpawn: 7960 },
 ];
 
 export interface DoorState {
@@ -39,7 +45,7 @@ export const doorX = (b: Building) => b.x + b.side * (b.width / 2 - 18);
 // Foreground trees keep their historic positions: the line is anchored at
 // TREE_BASE (the original WORLD_MIN), and the map grew outward from there.
 export const TREE_BASE = -1500;
-export const TREE_MIN = -8;
+export const TREE_MIN = -15;
 export const TREE_MAX = 72;
 export const treeX = (i: number) => TREE_BASE + i * 190 + ((((i * 71) % 90) + 90) % 90);
 

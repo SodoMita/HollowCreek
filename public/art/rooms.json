@@ -216,5 +216,121 @@
       "width": 32,
       "height": 36
     }
+  ],
+  "ferry": [
+    {
+      "id": "rug",
+      "asset": "furniture/rug.svg",
+      "x": -70,
+      "y": -11,
+      "width": 140,
+      "height": 11
+    },
+    {
+      "id": "shelf",
+      "asset": "furniture/shelf.svg",
+      "x": -125,
+      "y": -78,
+      "width": 56,
+      "height": 19
+    },
+    {
+      "id": "table",
+      "asset": "furniture/table.svg",
+      "x": 65,
+      "y": -42,
+      "width": 56,
+      "height": 42
+    },
+    {
+      "id": "entrance-barrel",
+      "asset": "furniture/barrel.svg",
+      "x": 176,
+      "y": -36,
+      "width": 32,
+      "height": 36
+    },
+    {
+      "id": "bed",
+      "asset": "furniture/bed.svg",
+      "x": -128,
+      "y": -40,
+      "width": 80,
+      "height": 40
+    },
+    {
+      "id": "crate",
+      "asset": "furniture/crate.svg",
+      "x": -20,
+      "y": -30,
+      "width": 40,
+      "height": 30
+    },
+    {
+      "id": "barrel",
+      "asset": "furniture/barrel.svg",
+      "x": 20,
+      "y": -36,
+      "width": 28,
+      "height": 36
+    }
+  ],
+  "lodge": [
+    {
+      "id": "rug",
+      "asset": "furniture/rug.svg",
+      "x": -70,
+      "y": -11,
+      "width": 140,
+      "height": 11
+    },
+    {
+      "id": "shelf",
+      "asset": "furniture/shelf.svg",
+      "x": 74,
+      "y": -75,
+      "width": 56,
+      "height": 19
+    },
+    {
+      "id": "crate",
+      "asset": "furniture/crate.svg",
+      "x": 83,
+      "y": -25,
+      "width": 38,
+      "height": 25
+    },
+    {
+      "id": "entrance-barrel",
+      "asset": "furniture/barrel.svg",
+      "x": -228,
+      "y": -36,
+      "width": 32,
+      "height": 36
+    },
+    {
+      "id": "hearth",
+      "asset": "furniture/hearth.svg",
+      "x": -70,
+      "y": -58,
+      "width": 64,
+      "height": 58
+    },
+    {
+      "id": "desk",
+      "asset": "furniture/desk.svg",
+      "x": 30,
+      "y": -44,
+      "width": 70,
+      "height": 44
+    },
+    {
+      "id": "frame",
+      "asset": "furniture/frame.svg",
+      "x": 60,
+      "y": -92,
+      "width": 34,
+      "height": 26
+    }
   ]
 }
