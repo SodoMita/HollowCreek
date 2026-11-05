@@ -276,6 +276,7 @@ export default function GameClient({ code }: { code: string }) {
 
 
   return (
+    <>
     <main id="main" ref={mainRef} className="fixed inset-0 h-[100dvh] w-full select-none overflow-hidden bg-[#0b0710]" style={{ touchAction: "none" }}>
       <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-2 focus:rounded focus:bg-[#8f3b1f] focus:px-3 focus:py-2 focus:text-[#f3e6d0]">Skip to the game</a>
       <canvas ref={canvasRef} className="absolute inset-0" />
@@ -296,7 +297,7 @@ export default function GameClient({ code }: { code: string }) {
             onToggleVoice={toggleVoice} onToggleMic={toggleMic}
             onSettings={() => settingsDialogRef.current?.open()} onLeave={() => void leaveToTownList()} />
 
-          {s.phase === "playing" && <Minimap s={s} me={me} />}
+          {s.phase === "playing" && !noteFocus && <Minimap s={s} me={me} />}
 
           <MidHud s={s} controls={settings.controls} me={me} secsLeft={secsLeft} voteOptions={voteOptions} tasksOpen={tasksOpen} voiceStatus={voiceStatus}
             onTimepiece={activateTimepiece} onToggleTasks={() => setTasksOpen(!tasksOpen)}
@@ -312,8 +313,6 @@ export default function GameClient({ code }: { code: string }) {
           {pinOpen && s.phase === "playing" && (
             <PinPanel text={pinText} onText={setPinText} onSubmit={() => void pinNote()} onCancel={() => { setPinOpen(false); setPinText(""); }} />
           )}
-
-          {noteFocus && <NoteReader note={noteFocus} onClose={() => setNoteFocus(null)} />}
 
           {chatOpen && (
             <ChatBox alive={s.self.alive} text={chatText} onText={setChatText} onSubmit={submitChat} inputRef={chatInputRef} />
@@ -341,5 +340,8 @@ export default function GameClient({ code }: { code: string }) {
         </>
       )}
     </main>
+    {/* outside the inert main so it stays tappable while the world is zoomed */}
+    {noteFocus && <NoteReader note={noteFocus} onClose={() => setNoteFocus(null)} />}
+    </>
   );
 }

@@ -70,7 +70,10 @@
   #topbar { top:0; left:0; right:0; display:flex; justify-content:space-between; align-items:flex-start; gap:8px; padding:8px; padding-top:max(8px,env(safe-area-inset-top)); }
   #topbar .right { display:flex; gap:6px; align-items:center; }
   #supplydrop { display:none; background:#4a3323; color:#f2cf91; font-size:11px; padding:6px 8px; }
-  #noteoverlay, #pinpanel { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(11,7,16,.6); backdrop-filter:blur(2px); z-index:30; }
+  #pinpanel { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(11,7,16,.6); backdrop-filter:blur(2px); z-index:30; }
+  #noteoverlay { position:fixed; left:50%; bottom:max(16px, env(safe-area-inset-bottom)); transform:translateX(-50%); display:none; align-items:center; gap:10px; background:rgba(22,15,24,.95); border:1px solid rgba(138,111,77,.7); border-radius:999px; padding:8px 16px; z-index:30; backdrop-filter:blur(6px); font-size:14px; box-shadow:0 8px 30px rgba(0,0,0,.5); }
+  .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+  @media (max-width:640px){ .notehintwide { display:none; } }
   .notepage { width:min(92vw,460px); background:#f4ead2; color:#2c2118; border:1px solid #8a6f4d; border-radius:3px; padding:18px 22px; transform:rotate(-1deg); box-shadow:0 18px 50px rgba(0,0,0,.55); }
   .notehead { display:flex; justify-content:space-between; align-items:center; font-size:11px; letter-spacing:.25em; text-transform:uppercase; color:#8a6f4d; margin-bottom:8px; }
   #notetext { white-space:pre-wrap; word-break:break-word; font-size:19px; line-height:1.5; font-family:Georgia,serif; }
@@ -192,7 +195,7 @@
         <button class="chip" id="timebtn" style="display:none" title="Use the timepiece or return from the past">Timepiece · M</button>
         <button class="chip" id="supplydrop" title="Drop repair kit (G)" aria-label="Drop repair kit">Drop kit</button>
         <button class="chip" id="pinbtn" style="display:none" title="Pin a handwritten page to a wall or tree (inside a house: its interior wall)" aria-label="Pin page">✎ Pin page</button>
-        <button class="chip" id="readnote" style="display:none" title="Zoom in and read this page" aria-label="Read page" data-testid="read-note">📖 Read page</button>
+        <button class="chip" id="readnote" style="display:none" title="Zoom in and read this page" aria-label="Read page" data-testid="read-note"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="m10.065 12.493-6.18 1.318a.934.934 0 0 1-1.108-.702l-.537-2.15a1.07 1.07 0 0 1 .691-1.265l13.504-4.44"/><path d="m13.56 11.747 4.332-.924"/><path d="m16 21-3.105-6.21"/><path d="M16.485 5.94a2 2 0 0 1 1.455-2.425l1.09-.272a1 1 0 0 1 1.212.727l1.515 6.06a1 1 0 0 1-.727 1.213l-1.09.272a2 2 0 0 1-2.425-1.455z"/><path d="m6.158 8.633 1.114 4.456"/><path d="m8 21 3.105-6.21"/><circle cx="12" cy="13" r="2"/></svg> Read page</button>
         <button class="chip" id="mute" aria-label="Mute score and effects">🔊</button>
         <button class="chip" id="voicebtn" aria-label="Join proximity voice" title="Join proximity voice">🎙</button>
         <button class="chip" id="micmute" aria-label="Mute microphone" title="Mute microphone">🎙</button>
@@ -228,12 +231,12 @@
     <div class="hud" id="chatbox"><input id="chatinput" maxlength="120" placeholder="Say something… it appears above your head" /></div>
     <div class="hud" id="toast"></div>
     <div id="overlay"><div class="panel" id="overlaypanel"></div></div>
-    <div class="hud" id="noteoverlay" style="display:none" data-testid="note-reader">
-      <div class="notepage">
-        <div class="notehead"><span>Pinned page</span><button class="chip" id="noteclose" aria-label="Close page">✕</button></div>
-        <p id="notetext"></p>
-        <p class="noteauthor" id="noteauthor"></p>
-      </div>
+    <div class="hud" id="noteoverlay" style="display:none" data-testid="note-reader" role="status">
+      <span class="sr-only" id="notetext"></span>
+      <span class="sr-only" id="noteauthor"></span>
+      <span aria-hidden style="color:#d99a3d;white-space:nowrap">Reading the pinned page</span>
+      <span aria-hidden class="notehintwide" style="color:#9c8b7a;white-space:nowrap">the words are on the paper · Esc to look away</span>
+      <button class="chip" id="noteclose" aria-label="Look away from the page" style="padding:2px 10px">✕</button>
     </div>
     <div class="hud" id="pinpanel" style="display:none" data-testid="pin-note-panel">
       <div class="notepage">

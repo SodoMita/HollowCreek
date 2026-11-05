@@ -2,6 +2,7 @@
 // push stream, and falls back to the adaptive 304 poll (with re-join on 404s).
 import { useEffect, type RefObject } from "react";
 import type { Snapshot } from "@/game/types";
+import { expandSnapshot, feedCursor, newWireCache, type WireSnapshot } from "@/game/wire";
 import type { WardPanel } from "@/game/ward-ui";
 import type { TimePanel } from "@/game/time-ui";
 import type { SettingsDialog } from "@/game/settings-ui";
@@ -58,6 +59,7 @@ export function useGameStream(d: GameStreamDeps) {
       let lastRev = ""; // server fingerprint of the last state we hold
       let notFound = 0; // consecutive 404s — after 3, the server lost us (restart): re-join
       let polling = false;
+      const wire = newWireCache(); // feed lines + far note text arrive once, then live here
 
       const handleSnap = (s: Snapshot, etag: string) => {
         if (!alive) return;
@@ -91,7 +93,7 @@ export function useGameStream(d: GameStreamDeps) {
         const timeout = setTimeout(() => controller.abort(), 3000);
         try {
           const revParam = lastRev ? `&rev=${encodeURIComponent(lastRev)}` : "";
-          const r = await fetch(`/api/game/state?code=${code}&playerId=${getPid()}${revParam}`, { signal: controller.signal });
+          const r = await fetch(`/api/game/state?code=${code}&playerId=${getPid()}&c=1&f=${feedCursor(wire)}${revParam}`, { signal: controller.signal });
           if (r.status === 304) { failures = 0; return; } // unchanged — skip the payload entirely
           if (r.status === 404) {
             failures++;
@@ -100,7 +102,7 @@ export function useGameStream(d: GameStreamDeps) {
           }
           if (!r.ok) { failures++; return; }
           const etag = r.headers.get("etag") ?? "";
-          const s: Snapshot = await r.json();
+          const s = expandSnapshot(await r.json() as WireSnapshot, wire);
           handleSnap(s, etag);
         } catch { failures++; } // retry with backoff below
         finally { clearTimeout(timeout); inflight = false; }
@@ -122,12 +124,12 @@ export function useGameStream(d: GameStreamDeps) {
       // Preferred path: server push over SSE. If it never delivers (or dies),
       // close it and fall back to the adaptive poll above.
       let gotPush = false;
-      es = new EventSource(`/api/game/state/stream?code=${encodeURIComponent(code)}&playerId=${encodeURIComponent(getPid())}`);
+      es = new EventSource(`/api/game/state/stream?code=${encodeURIComponent(code)}&playerId=${encodeURIComponent(getPid())}&c=1`);
       es.onmessage = (ev) => {
         try {
-          const msg = JSON.parse(ev.data) as { etag?: string; snap?: Snapshot; gone?: boolean };
+          const msg = JSON.parse(ev.data) as { etag?: string; snap?: WireSnapshot; gone?: boolean };
           if (msg.gone) { void doJoin(); return; }
-          if (msg.snap) { gotPush = true; handleSnap(msg.snap, msg.etag ?? ""); }
+          if (msg.snap) { gotPush = true; handleSnap(expandSnapshot(msg.snap, wire), msg.etag ?? ""); }
         } catch { /* malformed frame — ignore */ }
       };
       const dropToPolling = () => {

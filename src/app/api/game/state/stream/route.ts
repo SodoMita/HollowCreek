@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { loadRoom, onRoomEvent, roomEtag, snapshot } from "@/game/engine";
+import { compactSnapshot } from "@/game/wire";
 import { allow, clientKey } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,8 @@ export async function GET(req: NextRequest) {
   const room = code ? await loadRoom(code) : undefined;
   if (!room) return new Response("No such town.", { status: 404 });
 
+  const compact = req.nextUrl.searchParams.get("c") === "1";
+  let feedSince = 0; // per-connection feed cursor: each line crosses the wire once
   let lastEtag = "";
   let closed = false;
   const encoder = new TextEncoder();
@@ -40,7 +43,10 @@ export async function GET(req: NextRequest) {
         const etag = roomEtag(room, playerId, snap);
         if (etag !== lastEtag) {
           lastEtag = etag;
-          send({ etag, snap });
+          if (compact) {
+            send({ etag, snap: compactSnapshot(snap, feedSince) });
+            feedSince = snap.feed.length ? snap.feed[snap.feed.length - 1].at : feedSince;
+          } else send({ etag, snap });
         }
       };
       const unsub = onRoomEvent(code, push);
@@ -63,7 +69,7 @@ export async function GET(req: NextRequest) {
   return new Response(stream, {
     headers: {
       "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-store",
+      "cache-control": "no-store, no-transform",
       connection: "keep-alive",
       "x-accel-buffering": "no",
     },

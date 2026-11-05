@@ -11,6 +11,7 @@ import { SettingsDialog } from "../src/game/settings-ui";
 import { BELL_X, CARRY_SPEED, GHOST_SPEED, SPEED } from "../src/game/types";
 import { BUILDINGS, DOOR_REACH, doorX } from "../src/game/buildings";
 import type { RoomListing, Snapshot } from "../src/game/types";
+import { expandSnapshot, feedCursor, newWireCache, type WireSnapshot } from "../src/game/wire";
 
 // Temporary author-built sandboxes run the same unified code (see SYNC.md).
 // The menu probes them in order; room-code joins also discover the backend
@@ -77,6 +78,7 @@ function getPid(): string {
 
 let snap: Snapshot | null = null;
 let roomCode = "";
+let wireCache = newWireCache();
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let roomsTimer: ReturnType<typeof setInterval> | null = null;
 let polling = false;
@@ -253,6 +255,7 @@ function enterRoom(code: string) {
   voice.stop();
   cancelProbe();
   roomCode = code;
+  wireCache = newWireCache();
   snap = null;
   wardPanel.update(null, 1, false);
   roomError = "";
@@ -283,7 +286,7 @@ function leaveToMenu() {
       }).finally(() => { if ($("menu").style.display !== "none") void refreshRooms(); });
   }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  snap = null; roomCode = ""; overlayKey = ""; roomError = ""; pollFailures = 0;
+  snap = null; roomCode = ""; overlayKey = ""; roomError = ""; pollFailures = 0; wireCache = newWireCache();
   wardPanel.update(null, 1, false);
   $("game").style.display = "none";
   $("menu").style.display = "block";
@@ -317,12 +320,13 @@ async function poll() {
   polling = true;
   const code = roomCode;
   try {
-    const s = (await api(`/api/game/state?code=${code}&playerId=${getPid()}`, undefined, server, 5000)) as Snapshot & { error?: string };
+    const raw = (await api(`/api/game/state?code=${code}&playerId=${getPid()}&c=1&f=${feedCursor(wireCache)}`, undefined, server, 5000)) as WireSnapshot & { error?: string };
     if (code !== roomCode) return; // an old request must not paint a new room
-    if (s.error || !s.self) {
-      showRoomError(s.error ?? "The town did not return this player. Rejoin with its code.");
+    if (raw.error || !raw.self) {
+      showRoomError(raw.error ?? "The town did not return this player. Rejoin with its code.");
       return;
     }
+    const s: Snapshot = expandSnapshot(raw, wireCache);
     pollFailures = 0;
     roomError = "";
     snap = s;
@@ -567,6 +571,10 @@ function bound(action: BindableAction, e: KeyboardEvent) {
 window.addEventListener("keydown", (e) => {
   audio.start();
   if (settingsDialog.isOpen || timePanel.isOpen || !roomCode) return;
+  if (noteFocusX !== null) {
+    if (e.code === "Escape") { e.preventDefault(); $("noteoverlay").style.display = "none"; noteFocusX = null; }
+    return; // while reading, the world waits
+  }
   if (wardPanel.isOpen) {
     if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
     return; // Puzzle buttons own Tab, Enter and Space.

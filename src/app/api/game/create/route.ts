@@ -5,7 +5,7 @@ import { allow, clientKey } from "@/server/rate-limit";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  if (!allow(`create:${clientKey(req)}`, 10, 60_000)) {
+  if (!allow(`create:${clientKey(req)}`, 20, 60_000)) {
     return NextResponse.json({ error: "Too many towns from one address. Wait a minute." }, { status: 429 });
   }
   const { playerId, name } = await req.json().catch(() => ({}));

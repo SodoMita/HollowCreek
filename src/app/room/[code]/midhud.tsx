@@ -27,17 +27,17 @@ export function MidHud(props: {
   return (
     <>
 {s.phase !== "lobby" && (voiceStatus.error || voiceStatus.reconnecting) && (
-  <p role="alert" className="absolute right-2 top-12 z-20 max-w-[min(70vw,250px)] rounded border border-[#6e3433] bg-[#1c1216]/95 px-3 py-2 text-xs text-[#e29a84]">
+  <p role="alert" className="absolute bottom-[12rem] right-2 z-20 max-w-[min(70vw,250px)] rounded border border-[#6e3433] bg-[#1c1216]/95 px-3 py-2 text-xs text-[#e29a84] sm:bottom-auto sm:top-12">
     {voiceStatus.reconnecting && !voiceStatus.error ? "Voice reconnecting…" : voiceStatus.error}
     {voiceStatus.error?.includes("Enable sound") && <button onClick={onResumePlayback} className="ml-2 underline">Enable sound</button>}
   </p>
 )}
 
-{s.time?.mode === "past" && <div data-testid="past-countdown" className="hc-hud-item absolute left-1/2 top-14 z-10 -translate-x-1/2 rounded border border-[#83b9b4]/70 bg-[#172c32]/95 px-4 py-2 text-center text-xs tabular-nums text-[#d2eee5] shadow-lg"><span className="font-semibold uppercase tracking-widest">In the past</span> · {Math.max(0, Math.ceil(((s.time.endsAt ?? s.now) - s.now) / 1000))}s remaining <button onClick={onTimepiece} className="ml-2 underline">Return now</button></div>}
+{s.time?.mode === "past" && <div data-testid="past-countdown" className="hc-hud-item absolute left-1/2 top-12 z-10 -translate-x-1/2 rounded border border-[#83b9b4]/70 bg-[#172c32]/95 px-4 py-2 text-center text-xs tabular-nums text-[#d2eee5] shadow-lg sm:top-14"><span className="font-semibold uppercase tracking-widest">In the past</span> · {Math.max(0, Math.ceil(((s.time.endsAt ?? s.now) - s.now) / 1000))}s remaining <button onClick={onTimepiece} className="ml-2 underline">Return now</button></div>}
 
 {/* ---- task list ---- */}
 {s.phase !== "lobby" && s.self.alive && s.tasks.length > 0 && (
-  <div className="hc-hud-item hc-hud-fade hc-task-list absolute left-2 top-12 w-56 max-w-[70vw] rounded border border-[#3a2733]/60 bg-[#140d18]/70 p-2.5 text-xs backdrop-blur sm:left-3 sm:top-20 sm:w-60 sm:p-3">
+  <div className="hc-hud-item hc-hud-fade hc-task-list absolute left-2 top-[5.4rem] w-56 max-w-[70vw] rounded border border-[#3a2733]/60 bg-[#140d18]/70 p-2.5 text-xs backdrop-blur sm:left-3 sm:top-20 sm:w-60 sm:p-3">
     <button onClick={onToggleTasks} className="mb-1.5 flex w-full items-center justify-between uppercase tracking-widest text-[#9c8b7a]">
       <span>{s.self.role === "hollow" && s.time?.mode !== "past" ? "Town wards (pretend)" : "Town wards · shared"}</span>
       <span className="sm:hidden">{tasksOpen ? "▾" : "▸"}</span>
@@ -91,7 +91,7 @@ export function MidHud(props: {
 )}
 
 {/* ---- event feed ---- */}
-<div className="hc-hud-item hc-hud-fade hc-event-feed pointer-events-none absolute bottom-24 left-2 w-[min(70vw,360px)] space-y-1 text-xs sm:bottom-32 sm:left-3 sm:text-sm short:hidden">
+<div className="hc-hud-item hc-hud-fade hc-event-feed pointer-events-none absolute bottom-[8.75rem] left-2 w-[min(70vw,360px)] space-y-1 text-xs sm:bottom-32 sm:left-3 sm:text-sm short:hidden">
   {s.feed.slice(-5).map((f, i) => (
     <p key={f.at + "" + i} className={`rounded bg-[#0d0810]/60 px-2 py-0.5 italic text-[#c9b8a4] sm:py-1 ${i < 3 ? "hidden sm:block" : ""}`} style={{ opacity: 0.45 + (i / 5) * 0.55 }}>{f.text}</p>
   ))}

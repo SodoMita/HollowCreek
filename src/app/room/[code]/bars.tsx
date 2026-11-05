@@ -3,7 +3,7 @@
 // Presentational HUD overlays for the room screen, split out of GameClient.
 // All game logic stays in GameClient — these components only render + call back.
 
-import { BookOpen, MessageCircle, Mic, MicOff, Package, Pin, Settings, Volume2, VolumeX, Zap } from "lucide-react";
+import { MessageCircle, Mic, MicOff, Package, Pin, Settings, Telescope, Volume2, VolumeX, Zap } from "lucide-react";
 import type { Snapshot } from "@/game/types";
 import type { VoiceStatus } from "@/game/voice";
 import { keyLabel, type GameSettings } from "@/game/settings";
@@ -33,35 +33,35 @@ export function TopBar(props: {
     onToggleVoice, onToggleMic, onSettings, onLeave } = props;
   return (
 <div className="hc-hud-item hc-hud-fade absolute left-0 right-0 top-0 flex items-start justify-between gap-2 p-2 pt-[max(0.5rem,env(safe-area-inset-top))] text-xs sm:gap-3 sm:p-3 sm:text-sm">
-  <div className="min-w-0 rounded border border-[#3a2733]/70 bg-[#140d18]/80 px-2 py-1.5 backdrop-blur sm:px-3 sm:py-2">
+  <div className="min-w-0 rounded border border-[#3a2733]/70 bg-[#140d18]/80 px-1.5 py-1.5 backdrop-blur sm:px-3 sm:py-2">
     <span className="hidden font-display text-lg text-[#d99a3d] md:inline">Hollow Creek</span>
     <button
       onClick={onCopyCode}
-      className="rounded bg-[#2a1a26] px-2 py-0.5 font-mono tracking-[0.3em] text-[#e9dfcf] hover:bg-[#3a2733] focus-visible:outline-2 focus-visible:outline-[#d99a3d] md:ml-3"
+      className="rounded bg-[#2a1a26] px-1.5 py-0.5 font-mono tracking-[0.18em] text-[#e9dfcf] hover:bg-[#3a2733] focus-visible:outline-2 focus-visible:outline-[#d99a3d] sm:tracking-[0.3em] md:ml-3"
       title="Copy town code"
       aria-label={`Copy town code ${s.code}`}
     >{s.code}</button>
     <span className="ml-2 hidden text-[#9c8b7a] sm:inline">{s.playerCount} souls</span>
     {me?.inside && <span className="ml-2 text-[#e2be83]">Inside {BUILDINGS.find((b) => b.id === me.inside)?.name}</span>}
-    {(s.self.hasTimepiece || s.time?.mode === "past") && <button onClick={onTimepiece} className="ml-2 rounded border border-[#7ba9a6] bg-[#243b3c]/90 px-2 py-1 text-xs text-[#cbeae1]">{s.time?.mode === "past" ? "Return · M" : "Timepiece · M"}</button>}
+    {(s.self.hasTimepiece || s.time?.mode === "past") && <button onClick={onTimepiece} className="ml-1 rounded border border-[#7ba9a6] bg-[#243b3c]/90 px-1.5 py-1 text-[10px] text-[#cbeae1] sm:ml-2 sm:px-2 sm:text-xs">{s.time?.mode === "past" ? "Return · M" : "Timepiece · M"}</button>}
     {s.phase === "playing" && s.self.alive && (
       <button title="Pin a handwritten page to a wall or tree (inside a house: its interior wall)" aria-label="Pin page"
         onClick={onPinToggle}
-        className="ml-2 inline-flex items-center gap-1 rounded bg-[#4a3323] px-1.5 py-0.5 text-xs text-[#f2cf91] hover:bg-[#684327]">
+        className="ml-1 inline-flex items-center gap-1 rounded bg-[#4a3323] px-1.5 py-0.5 text-xs text-[#f2cf91] hover:bg-[#684327] sm:ml-2">
         <Pin className="h-3.5 w-3.5" /><span className="hidden sm:inline"> Pin page</span>
       </button>
     )}
     {nearestNote && s.phase === "playing" && (
-      <button title={`Read the page pinned by ${nearestNote.author}`} aria-label="Read page" data-testid="read-note"
+      <button title={`Peer at the page pinned by ${nearestNote.author}`} aria-label="Read page" data-testid="read-note"
         onClick={() => onReadNote(nearestNote!)}
-        className="ml-2 inline-flex items-center gap-1 rounded border border-[#d99a3d]/60 bg-[#243b3c]/90 px-1.5 py-0.5 text-xs text-[#cbeae1] hover:bg-[#2f4a4b]">
-        <BookOpen className="h-3.5 w-3.5" /><span className="hidden sm:inline"> Read page</span>
+        className="ml-1 inline-flex items-center gap-1 rounded border border-[#d99a3d]/60 bg-[#243b3c]/90 px-1.5 py-0.5 text-xs text-[#cbeae1] hover:bg-[#2f4a4b] sm:ml-2">
+        <Telescope className="h-3.5 w-3.5" /><span className="hidden sm:inline"> Read page</span>
       </button>
     )}
     {s.phase === "playing" && s.self.alive && s.self.hasSupply && (
       <button title="Drop repair kit for another player" aria-label="Drop repair kit"
         onClick={onDropKit}
-        className="ml-2 inline-flex items-center gap-1 rounded bg-[#4a3323] px-1.5 py-0.5 text-xs text-[#f2cf91] hover:bg-[#684327]">
+        className="ml-1 inline-flex items-center gap-1 rounded bg-[#4a3323] px-1.5 py-0.5 text-xs text-[#f2cf91] hover:bg-[#684327] sm:ml-2">
         <Package className="h-3.5 w-3.5" /><span className="hidden sm:inline"> Drop kit · {keyLabel(controls.drop)}</span>
       </button>
     )}
@@ -74,9 +74,9 @@ export function TopBar(props: {
       </div>
     </div>
   )}
-  <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-    <span className={`rounded px-1 py-1 font-display text-xs sm:px-3 sm:py-1.5 sm:text-lg ${!s.self.alive ? "bg-[#2a2a3a]/80 text-[#9aa]" : s.self.role === "hollow" ? "bg-[#4a1210]/90 text-[#ff6a5a]" : "bg-[#1d2a1a]/80 text-[#a8c98a]"}`}>
-      <span className="sm:hidden">{!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "Hollow" : "Crew"}</span>
+  <div className="flex shrink-0 items-center gap-0.5 sm:gap-2">
+    <span className={`rounded px-1 py-1 font-display text-[10px] sm:px-3 sm:py-1.5 sm:text-lg ${!s.self.alive ? "bg-[#2a2a3a]/80 text-[#9aa]" : s.self.role === "hollow" ? "bg-[#4a1210]/90 text-[#ff6a5a]" : "bg-[#1d2a1a]/80 text-[#a8c98a]"}`}>
+      <span className="sm:hidden">{!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "Hollow" : "Townfolk"}</span>
       <span className="hidden sm:inline">{!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "The Hollow" : "Townfolk"}</span>
       {s.self.caged && s.self.alive ? " · Caged" : ""}
     </span>
@@ -85,25 +85,25 @@ export function TopBar(props: {
       title={muted ? "Unmute" : "Mute"}
       aria-label={muted ? "Unmute sound" : "Mute sound"}
       aria-pressed={muted}
-      className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#d99a3d] focus-visible:outline-2 focus-visible:outline-[#d99a3d] sm:py-1.5"
+      className="rounded border border-[#3a2733] bg-[#140d18]/80 px-1.5 py-1 text-[#9c8b7a] hover:text-[#d99a3d] focus-visible:outline-2 focus-visible:outline-[#d99a3d] sm:px-2 sm:py-1.5"
     >{muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}</button>
     <button onClick={onToggleVoice} disabled={voiceStatus.starting} aria-label={voiceStatus.active ? "Leave proximity voice" : "Join proximity voice"}
       aria-pressed={voiceStatus.active} title={voiceStatus.active ? `Voice: ${voiceStatus.connected} connected (${voiceStatus.p2pCount} P2P, ${voiceStatus.relayCount} Relay) · ${voiceStatus.nearby} nearby · ${voiceStatus.speaking ? "Speaking" : "Listening"} · ${keyLabel(controls.talk)} to leave` : `Join proximity voice (${keyLabel(controls.talk)}) — asks for microphone permission`}
-      className={`rounded border px-1.5 py-1 sm:py-1.5 ${voiceStatus.active ? (voiceStatus.speaking ? "border-[#ffd98a] bg-[#3a2a16] text-[#ffd98a]" : "border-[#6b8e5a] bg-[#1d2a1a]/90 text-[#b8d8a4]") : "border-[#3a2733] bg-[#140d18]/80 text-[#c9b8a4]"}`}>
+      className={`rounded border px-1 py-1 sm:px-1.5 sm:py-1.5 ${voiceStatus.active ? (voiceStatus.speaking ? "border-[#ffd98a] bg-[#3a2a16] text-[#ffd98a]" : "border-[#6b8e5a] bg-[#1d2a1a]/90 text-[#b8d8a4]") : "border-[#3a2733] bg-[#140d18]/80 text-[#c9b8a4]"}`}>
       {voiceStatus.starting ? "…" : <Volume2 className={`h-4 w-4 ${voiceStatus.speaking ? "animate-pulse text-[#ffd98a]" : ""}`} />}
     </button>
     {voiceStatus.active && <button onClick={onToggleMic} aria-label={voiceStatus.muted ? "Unmute microphone" : "Mute microphone"}
       title={voiceStatus.muted ? "Unmute microphone" : "Mute microphone"}
-      className="rounded border border-[#3a2733] bg-[#140d18]/80 px-1.5 py-1 text-[#c9b8a4] sm:py-1.5">
+      className="rounded border border-[#3a2733] bg-[#140d18]/80 px-1 py-1 text-[#c9b8a4] sm:px-1.5 sm:py-1.5">
       {voiceStatus.muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
     </button>}
     <button
       onClick={onSettings}
       title="Settings"
       aria-label="Settings"
-      className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a] sm:py-1.5"
+      className="rounded border border-[#3a2733] bg-[#140d18]/80 px-1.5 py-1 text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a] sm:px-2 sm:py-1.5"
     ><Settings className="h-4 w-4" /></button>
-    <button onClick={onLeave} disabled={leaving} aria-label="Back to towns" className="rounded border border-[#3a2733] bg-[#140d18]/80 px-2 py-1 text-[#9c8b7a] hover:text-[#e06a5a] disabled:opacity-50 sm:px-3 sm:py-1.5"><span className="sm:hidden">←</span><span className="hidden sm:inline">Back</span></button>
+    <button onClick={onLeave} disabled={leaving} aria-label="Back to towns" className="rounded border border-[#3a2733] bg-[#140d18]/80 px-1.5 py-1 text-[#9c8b7a] hover:text-[#e06a5a] disabled:opacity-50 sm:px-3 sm:py-1.5"><span className="sm:hidden">←</span><span className="hidden sm:inline">Back</span></button>
   </div>
 </div>
   );
@@ -173,13 +173,13 @@ export function BottomControls(props: {
   <div className="flex items-end gap-2 sm:gap-3">
     <button
       onClick={onChat}
-      className="inline-flex h-11 items-center gap-1.5 rounded-full border border-[#3a2733] bg-[#140d18]/80 px-3 text-sm text-[#d8c9b4] backdrop-blur hover:bg-[#2a1a26] sm:px-4"
+      className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-full border border-[#3a2733] bg-[#140d18]/80 px-3 text-sm text-[#d8c9b4] backdrop-blur hover:bg-[#2a1a26] sm:px-4"
     ><MessageCircle className="h-4 w-4" /><span className="hidden sm:inline"> Speak</span></button>
     {nearbyKeyedDoor && s.self.alive && !s.self.caged && (
       <button onClick={onDoorLock} className="h-11 rounded-full border border-[#84624c] bg-[#33231f]/90 px-3 text-xs text-[#f2cf91]" title="Lock or unlock with this house key">{nearbyDoorLocked ? "Unlock" : "Lock"} · L</button>
     )}
-    <div className="flex flex-col items-center gap-1">
-      {s.hint && <span className="hc-interaction-hint max-w-36 rounded bg-[#0d0810]/80 px-2 py-0.5 text-center text-xs text-[#d99a3d] sm:max-w-44">{s.hint}</span>}
+    <div className="relative flex shrink-0 flex-col items-center gap-1">
+      {s.hint && <span className="hc-interaction-hint pointer-events-none absolute bottom-full left-1/2 mb-1 w-max max-w-[10rem] -translate-x-1/2 rounded bg-[#0d0810]/85 px-2 py-0.5 text-center text-xs text-[#d99a3d] sm:max-w-44">{s.hint}</span>}
       <button
         onPointerDown={(e) => { e.preventDefault(); onInteractDown(); }}
         onPointerUp={onInteractUp}
@@ -200,7 +200,7 @@ export function BottomControls(props: {
         >Snuff<br /><span className="text-[10px]">{keyLabel(controls.blackout)}</span></button>
       </div>
     )}
-    <div className="flex flex-col items-center gap-1">
+    <div className="flex shrink-0 flex-col items-center gap-1">
       {s.self.role === "hollow" && s.self.killCooldownMs > 0 && s.self.alive && (
         <span className="rounded bg-[#0d0810]/80 px-2 py-0.5 text-xs tabular-nums text-[#ff6a5a]">{Math.ceil(s.self.killCooldownMs / 1000)}s</span>
       )}

@@ -5,7 +5,7 @@ import { allow, clientKey } from "@/server/rate-limit";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  if (!allow(`join:${clientKey(req)}`, 30, 60_000)) {
+  if (!allow(`join:${clientKey(req)}`, 90, 60_000)) {
     return NextResponse.json({ ok: false, error: "Too many joins from one address. Wait a minute." }, { status: 429 });
   }
   const { code, playerId, name } = await req.json().catch(() => ({}));

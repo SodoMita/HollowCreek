@@ -15,7 +15,7 @@ export function Minimap({ s, me }: { s: Snapshot; me: Snapshot["players"][number
   return (
     <div
       aria-hidden
-      className={`hc-hud-item hc-hud-fade pointer-events-none absolute left-1/2 z-10 w-[min(92vw,540px)] -translate-x-1/2 ${past ? "top-[5.8rem] sm:top-[6.9rem]" : "top-[3.1rem] sm:top-[4.2rem]"}`}
+      className={`hc-hud-item hc-hud-fade pointer-events-none absolute left-1/2 z-10 w-[min(92vw,540px)] -translate-x-1/2 ${past ? "hidden sm:top-[6.9rem] sm:block" : "top-[3.1rem] sm:top-[4.2rem]"}`}
     >
       <div className="relative h-7 overflow-hidden rounded-full border border-[#3a2733]/70 bg-[#0d0810]/70 backdrop-blur-sm">
         {/* the road */}
