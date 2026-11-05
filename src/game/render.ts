@@ -16,6 +16,10 @@ interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: str
 let leafSeed = 1;
 const nextRand = () => ((leafSeed = (Math.imul(leafSeed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
 
+// World-x ranges with no backdrop houses: open fen, woods and ridge (edges of
+// the widened world are wild already — houses.json spans -2680…7280).
+const NATURE_GAPS: [number, number][] = [[-2560, -1480], [3340, 3600], [5620, 6540]];
+
 const LEAF_COLORS = ["#b4552a", "#c9762f", "#8f3b1f", "#d99a3d", "#7a4a21"];
 
 // Dusk and deep-night sky palettes (top -> horizon); lerped by nightT.
@@ -233,10 +237,14 @@ export class Renderer {
     }
 
     // --- background village: 100+ distinct houses along the whole world (visual only) ---
+    // Nature stretches break the village up: the fen west of Orchard House, the
+    // graveyard woods, and the ridge past Quarry Cottage are left to the trees,
+    // and the new ground beyond the old town limits has no houses at all.
     {
       const s = 0.66, par = 0.62;
       for (const th of TOWN_HOUSES) {
         if (th.x < WORLD_MIN + 40 || th.x > WORLD_MAX - 40) continue;
+        if (NATURE_GAPS.some(([from, to]) => th.x > from && th.x < to)) continue;
         const sx = th.x - cam * par;
         const hw = th.w * s, hh = th.h * s;
         if (sx < -hw || sx > w + hw) continue;
@@ -248,7 +256,18 @@ export class Renderer {
       }
     }
 
-    // --- Malye Korely street dressing: fences, door lanterns, woodpiles, windmill ---
+    // Dense woods where the village thins out, in the houses' parallax plane.
+    for (const [from, to] of NATURE_GAPS) {
+      const count = Math.floor((to - from) / 70);
+      for (let i = 0; i < count; i++) {
+        const wx = from + 35 + i * 70 + ((i * 37) % 28);
+        const sx = wx - cam * 0.62;
+        if (sx < -90 || sx > w + 90) continue;
+        this.drawTree(ctx, sx, ground + 2, 58 + ((i * 29) % 40), i + 300);
+      }
+    }
+
+    // --- street dressing: fences, door lanterns, woodpiles, windmills ---
     // Purely decorative world-anchored props; they never change gameplay coordinates.
     const FENCE_XS = [-4060, -3880, -3240, -2760, -2180, -1460, -1250, -700, -120, 420, 760, 1560, 1860, 2560, 2960, 3320, 3780, 4180, 4420, 5100, 5260, 5980, 6280, 6900, 7180, 7620, 8020, 8560];
     for (const fx of FENCE_XS) {
