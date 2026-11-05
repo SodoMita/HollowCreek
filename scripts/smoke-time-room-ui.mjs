@@ -76,13 +76,16 @@ try {
   const readBtn = notePage.getByTestId("read-note");
   await readBtn.waitFor({ timeout: 15000 });
   await readBtn.click();
+  // No pop-out: the words are inked on the in-world paper; an sr-only live
+  // region carries them for assistive tech and for this assertion.
   const reader = notePage.getByTestId("note-reader");
-  await reader.waitFor();
+  await reader.waitFor({ state: "attached" });
+  await notePage.waitForFunction(() => (document.querySelector('[data-testid="note-reader"]')?.textContent ?? "").includes("Read me at dusk."), { timeout: 8000 });
   const readerText = await reader.textContent();
-  assert.ok(readerText.includes("Read me at dusk."), "zoom-in reader shows the real note text");
-  assert.ok(readerText.includes(noteRoom.name), "the reader names the page's author");
-  await notePage.keyboard.press("Escape"); // ✕ hit-test is unreliable in headless-shell; Escape is the keyboard path
-  await reader.waitFor({ state: "hidden", timeout: 8000 });
+  assert.ok(readerText.includes("Read me at dusk."), "the page's real text is available while reading");
+  assert.ok(readerText.includes(noteRoom.name), "the page names its author");
+  await notePage.keyboard.press("Escape"); // any key lowers the glass
+  await notePage.waitForFunction(() => !(document.querySelector('[data-testid="note-reader"]')?.textContent ?? "").includes("Read me at dusk."), { timeout: 8000 });
   await notePage.getByRole("button", { name: "Pin page" }).click();
   const panel = notePage.getByTestId("pin-note-panel");
   await panel.waitFor();

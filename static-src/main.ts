@@ -571,10 +571,7 @@ function bound(action: BindableAction, e: KeyboardEvent) {
 window.addEventListener("keydown", (e) => {
   audio.start();
   if (settingsDialog.isOpen || timePanel.isOpen || !roomCode) return;
-  if (noteFocusX !== null) {
-    if (e.code === "Escape") { e.preventDefault(); $("noteoverlay").style.display = "none"; noteFocusX = null; }
-    return; // while reading, the world waits
-  }
+  if (noteFocusX !== null) { e.preventDefault(); lowerGlass(); return; } // any key lowers the glass
   if (wardPanel.isOpen) {
     if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
     return; // Puzzle buttons own Tab, Enter and Space.
@@ -585,6 +582,7 @@ window.addEventListener("keydown", (e) => {
   if (bound("left", e)) { keys.add("left"); computeDir(); e.preventDefault(); }
   else if (bound("right", e)) { keys.add("right"); computeDir(); e.preventDefault(); }
   else if (e.code === "KeyM" && !e.repeat) { activateTimepiece(); e.preventDefault(); }
+  else if (e.code === "KeyZ" && !e.repeat) { toggleSpyglass(); e.preventDefault(); }
   else if (e.code === "KeyL" && !e.repeat) { void send({ action: "door_lock" }); e.preventDefault(); }
   else if (bound("interact", e) && !e.repeat) { interactDown(); e.preventDefault(); }
   else if (bound("ability", e) && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
@@ -633,6 +631,9 @@ $("talkbtn").addEventListener("click", openChat);
 $("leave").addEventListener("click", leaveToMenu);
 $("supplydrop").addEventListener("click", () => void send({ action: "drop_supply" }));
 let noteFocusX: number | null = null;
+let staticZoom = false;
+function lowerGlass() { noteFocusX = null; staticZoom = false; $("noteoverlay").style.display = "none"; const b = $("spyglass"); b.setAttribute("aria-pressed", "false"); b.style.borderColor = ""; b.style.color = ""; }
+function toggleSpyglass() { noteFocusX = null; $("noteoverlay").style.display = "none"; staticZoom = !staticZoom; const b = $("spyglass"); b.setAttribute("aria-pressed", String(staticZoom)); b.style.borderColor = staticZoom ? "#d99a3d" : ""; b.style.color = staticZoom ? "#ffd98a" : ""; }
 $("pinbtn").addEventListener("click", () => { $("pinpanel").style.display = "flex"; ($("pintextarea") as HTMLTextAreaElement).focus(); });
 $("pincancel").addEventListener("click", () => { $("pinpanel").style.display = "none"; ($("pintextarea") as HTMLTextAreaElement).value = ""; });
 $("pinsubmit").addEventListener("click", () => {
@@ -650,7 +651,10 @@ $("readnote").addEventListener("click", () => {
   $("noteoverlay").style.display = "flex";
   noteFocusX = note.x; // zoom the world onto the page
 });
-$("noteclose").addEventListener("click", () => { $("noteoverlay").style.display = "none"; noteFocusX = null; });
+$("noteclose").addEventListener("click", lowerGlass);
+$("spyglass").addEventListener("click", toggleSpyglass);
+// any click on the world lowers the glass / puts the page back
+$("game").addEventListener("pointerdown", () => { if (noteFocusX !== null || staticZoom) lowerGlass(); });
 $("ruinbtn").addEventListener("click", () => void send({ action: "sabotage" }));
 $("settings").addEventListener("click", () => settingsDialog.open());
 $("menusettings").addEventListener("click", () => settingsDialog.open());
@@ -721,6 +725,7 @@ function loop(nowMs: number) {
     }
   }
   renderer.setFocus(noteFocusX);
+  renderer.setZoomOnly(staticZoom && noteFocusX === null);
   renderer.render(ctx, vw(), vh(), snap, displayX, nowMs / 1000, dt);
 }
 requestAnimationFrame(loop);

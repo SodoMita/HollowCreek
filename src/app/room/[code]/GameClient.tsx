@@ -16,7 +16,7 @@ import type { AudioDirector } from "@/game/audio";
 import type { VoiceChat, VoiceStatus } from "@/game/voice";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
-import { NoteReader, RoleBanner, Toast } from "./hud";
+import { RoleBanner, Toast } from "./hud";
 import { MidHud } from "./midhud";
 import { Minimap } from "./minimap";
 import { BottomControls, TopBar } from "./bars";
@@ -59,10 +59,26 @@ export default function GameClient({ code }: { code: string }) {
   const [pinOpen, setPinOpen] = useState(false);
   const [pinText, setPinText] = useState("");
   const [noteFocus, setNoteFocus] = useState<{ id: string; x: number; author: string; text: string } | null>(null);
+  const [spyglass, setSpyglass] = useState(false);
   const focusRef = useRef<number | null>(null);
+  const zoomRef = useRef(false);
   const noteOpenRef = useRef(false);
   const rendererRef = useRef<Renderer | null>(null);
   useEffect(() => { focusRef.current = noteFocus ? noteFocus.x : null; noteOpenRef.current = !!noteFocus; }, [noteFocus]);
+  useEffect(() => { zoomRef.current = spyglass; }, [spyglass]);
+  const toggleSpyglass = useCallback(() => { setNoteFocus(null); setSpyglass((v) => !v); }, []);
+  // Any click lowers the glass / puts the page back — no pop-out to dismiss.
+  useEffect(() => {
+    if (!noteFocus && !spyglass) return;
+    const lower = (e: PointerEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el?.closest("[data-spyglass-toggle]")) return; // the toggle itself
+      if (noteFocus) setNoteFocus(null);
+      if (spyglass && el?.tagName === "CANVAS") setSpyglass(false);
+    };
+    window.addEventListener("pointerdown", lower);
+    return () => window.removeEventListener("pointerdown", lower);
+  }, [noteFocus, spyglass]);
   const [leaving, setLeaving] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(createDefaultSettings);
 
@@ -215,10 +231,10 @@ export default function GameClient({ code }: { code: string }) {
   useGameInput({
     send, keys, lastDir, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract,
     wardPanelRef, timePanelRef, settingsDialogRef, chatOpen, pinOpen, setChatOpen, setPinOpen, setPinText, activateTimepiece,
-    chatOpenRef, noteOpenRef, closeNote: () => setNoteFocus(null), getSettingsStore, getVoice,
+    chatOpenRef, noteOpenRef, closeNote: () => setNoteFocus(null), toggleSpyglass, getSettingsStore, getVoice,
   });
 
-  useGameRender({ canvasRef, rendererRef, snapRef, displayX, focusRef, lastDir, getSettingsStore });
+  useGameRender({ canvasRef, rendererRef, snapRef, displayX, focusRef, zoomRef, lastDir, getSettingsStore });
 
   const holdMove = (dir: "left" | "right", on: boolean) => {
     if (on) keys.current.add(dir); else keys.current.delete(dir);
@@ -290,6 +306,7 @@ export default function GameClient({ code }: { code: string }) {
       {s && (
         <>
           <TopBar s={s} me={me} nearestNote={nearestNote} muted={muted} leaving={leaving} voiceStatus={voiceStatus} controls={settings.controls}
+            spyglass={spyglass} onToggleSpyglass={toggleSpyglass}
             onCopyCode={() => { void navigator.clipboard?.writeText(s.code); setToast("Town code copied"); setTimeout(() => setToast(null), 1500); }}
             onTimepiece={activateTimepiece} onPinToggle={() => setPinOpen((v) => !v)} onReadNote={setNoteFocus}
             onDropKit={() => void send({ action: "drop_supply" })}
@@ -340,8 +357,8 @@ export default function GameClient({ code }: { code: string }) {
         </>
       )}
     </main>
-    {/* outside the inert main so it stays tappable while the world is zoomed */}
-    {noteFocus && <NoteReader note={noteFocus} onClose={() => setNoteFocus(null)} />}
+    {/* the words live on the paper in-world; this is only a screen-reader line */}
+    <div aria-live="polite" data-testid="note-reader" className="sr-only">{noteFocus ? `${noteFocus.text} — pinned by ${noteFocus.author}. Press any key to look away.` : ""}</div>
     </>
   );
 }

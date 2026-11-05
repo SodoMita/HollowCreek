@@ -1,9 +1,11 @@
 // The road remains one continuous coordinate space. Houses occupy new ground
 // beyond the original 0–4200 town; their thresholds never move a player.
 import { ix } from "./types";
+import { TREE_SPACING, WORLD_MAX, WORLD_MIN } from "./units";
 
-export const WORLD_MIN = -3600;
-export const WORLD_MAX = 8600;
+// Spatial bounds live in units.ts (the single metric source); re-exported here
+// so existing `from "./buildings"` imports keep working.
+export { WORLD_MAX, WORLD_MIN };
 export const DOOR_REACH = 58;
 const KEY_REACH = 44;
 
@@ -43,7 +45,7 @@ export const doorX = (b: Building) => b.x + b.side * (b.width / 2 - 18);
 export const TREE_BASE = -1500;
 export const TREE_MIN = -8;
 export const TREE_MAX = 72;
-export const treeX = (i: number) => TREE_BASE + i * 190 + ((((i * 71) % 90) + 90) % 90);
+export const treeX = (i: number) => TREE_BASE + i * TREE_SPACING + ((((i * 71) % 90) + 90) % 90);
 
 export interface SnapAnchor { x: number; kind: "wall" | "tree"; ref: string }
 /** Nearest pinnable anchor to x: a building's wall face or a tree trunk. */

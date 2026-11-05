@@ -11,12 +11,13 @@ export interface GameRenderDeps {
   snapRef: RefObject<Snapshot | null>;
   displayX: RefObject<Map<string, number>>;
   focusRef: RefObject<number | null>;
+  zoomRef: RefObject<boolean>;
   lastDir: RefObject<number>;
   getSettingsStore: () => { value: GameSettings; subscribe: (cb: (n: GameSettings) => void) => () => void };
 }
 
 export function useGameRender(d: GameRenderDeps) {
-  const { canvasRef, rendererRef, snapRef, displayX, focusRef, lastDir, getSettingsStore } = d;
+  const { canvasRef, rendererRef, snapRef, displayX, focusRef, zoomRef, lastDir, getSettingsStore } = d;
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -71,6 +72,7 @@ export function useGameRender(d: GameRenderDeps) {
         }
       }
       renderer.setFocus(focusRef.current);
+      renderer.setZoomOnly(zoomRef.current && focusRef.current === null);
       renderer.render(ctx, vw(), vh(), s, displayX.current, nowMs / 1000, dt);
     };
     raf = requestAnimationFrame(loop);
@@ -81,5 +83,5 @@ export function useGameRender(d: GameRenderDeps) {
       window.removeEventListener("resize", debouncedResize);
       window.visualViewport?.removeEventListener("resize", debouncedResize);
     };
-  }, [getSettingsStore, canvasRef, rendererRef, snapRef, displayX, focusRef, lastDir]);
+  }, [getSettingsStore, canvasRef, rendererRef, snapRef, displayX, focusRef, zoomRef, lastDir]);
 }

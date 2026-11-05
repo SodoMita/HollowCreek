@@ -32,18 +32,18 @@ export interface GameInputDeps {
   setPinOpen: Dispatch<SetStateAction<boolean>>;
   setPinText: Dispatch<SetStateAction<string>>;
   activateTimepiece: () => void;
+  toggleSpyglass: () => void;
 }
 
 export function useGameInput(d: GameInputDeps) {
-  const { send, keys, lastDir, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract, chatOpen, pinOpen, setChatOpen, setPinOpen, setPinText, activateTimepiece, chatOpenRef, noteOpenRef, closeNote, getSettingsStore, getVoice } = d;
+  const { send, keys, lastDir, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract, chatOpen, pinOpen, setChatOpen, setPinOpen, setPinText, activateTimepiece, toggleSpyglass, chatOpenRef, noteOpenRef, closeNote, getSettingsStore, getVoice } = d;
   useEffect(() => {
     const unlockAudio = () => ensureAudio();
     const down = (e: KeyboardEvent) => {
       unlockAudio();
       if (d.settingsDialogRef.current?.isOpen || d.timePanelRef.current?.isOpen) return;
       if (noteOpenRef.current) {
-        if (e.key === "Escape") { e.preventDefault(); closeNote(); }
-        return; // the pinned page owns the keyboard until it is put back
+        e.preventDefault(); closeNote(); return; // any key lowers the glass
       }
       if (d.wardPanelRef.current?.isOpen) {
         if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
@@ -60,6 +60,7 @@ export function useGameInput(d: GameInputDeps) {
       if (bound("left")) { keys.current.add("left"); computeDir(); e.preventDefault(); }
       else if (bound("right")) { keys.current.add("right"); computeDir(); e.preventDefault(); }
       else if (e.code === "KeyM" && !e.repeat) { activateTimepiece(); e.preventDefault(); }
+      else if (e.code === "KeyZ" && !e.repeat) { toggleSpyglass(); e.preventDefault(); }
       else if (e.code === "KeyL" && !e.repeat) { void send({ action: "door_lock" }); e.preventDefault(); }
       else if (e.code === "KeyN" && !e.repeat) { setPinOpen((v) => !v); e.preventDefault(); }
       else if (bound("interact") && !e.repeat) { interactDown(); e.preventDefault(); }

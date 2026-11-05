@@ -9,6 +9,7 @@ import { BUILDINGS, TREE_MAX, TREE_MIN, treeX, WORLD_MIN, WORLD_MAX, type DoorSt
 import { drawHouseExterior, drawHouseInterior } from "./house-art";
 import { drawSvg, drawTraveler } from "./svg-assets";
 import { drawCreekGlints, drawFireflies, drawForeground, drawGrade, drawMoonRays, drawStreetDressing, makeGrainTile } from "./atmosphere";
+import { CHAPEL_SCALE, NOTE_FAR, NOTE_NEAR, ZOOM_READ } from "./units";
 
 interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: string; s: number }
 
@@ -83,6 +84,9 @@ export class Renderer {
   /** When set, the camera centers on this world x and zooms in to read a page. */
   focusX: number | null = null;
   setFocus(x: number | null) { this.focusX = x; }
+  /** The spyglass: zoom in anywhere, centred on the traveller (no page needed). */
+  zoomOnly = false;
+  setZoomOnly(on: boolean) { this.zoomOnly = on; }
   private visionR = 420;
   private doorOpenAmount = new Map<string, number>();
 
@@ -125,7 +129,7 @@ export class Renderer {
     // Zoom the world, not the DOM HUD. Gameplay and server vision stay in world units.
     // A focused page (read-note zoom) overrides both zoom and camera target.
     const focused = this.focusX !== null;
-    const zoom = focused ? Math.max(graphics.worldZoom, 3.2) : graphics.worldZoom;
+    const zoom = (focused || this.zoomOnly) ? Math.max(graphics.worldZoom, ZOOM_READ) : graphics.worldZoom;
     ctx.save(); ctx.scale(zoom, zoom); w /= zoom; h /= zoom;
     if (graphics.reducedMotion) t = 0;
     this.cacheSnap(snap);
@@ -630,7 +634,7 @@ export class Renderer {
   /** A handwritten page pinned to a wall face or leaning on a trunk.
    *  Up close the real words are legible on the paper itself — no pop-out. */
   private drawNote(ctx: CanvasRenderingContext2D, x: number, ground: number, kind: "wall" | "tree", big: boolean, t: number, note?: { author: string; text: string }) {
-    const w = big ? 84 : 18, h = big ? 108 : 24;
+    const { w, h } = big ? NOTE_NEAR : NOTE_FAR;
     const y = kind === "wall" ? ground - 118 - h : ground - 74 - h;
     const sway = Math.sin(t * 1.7 + x * 0.05) * (big ? 1.2 : 1.1);
     ctx.save();
@@ -993,7 +997,7 @@ export class Renderer {
       case "chapel": {
         // the chapel is the town's landmark — drawn at nave-and-steeple scale
         ctx.save();
-        ctx.scale(1.55, 1.55);
+        ctx.scale(CHAPEL_SCALE, CHAPEL_SCALE);
         ctx.fillStyle = "#221419";
         ctx.fillRect(-65, -90, 130, 90);
         ctx.beginPath(); ctx.moveTo(-72, -90); ctx.lineTo(0, -128); ctx.lineTo(72, -90); ctx.closePath(); ctx.fill();

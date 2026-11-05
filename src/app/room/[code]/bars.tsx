@@ -17,6 +17,8 @@ export function TopBar(props: {
   leaving: boolean;
   voiceStatus: VoiceStatus;
   controls: GameSettings["controls"];
+  spyglass: boolean;
+  onToggleSpyglass: () => void;
   onCopyCode: () => void;
   onTimepiece: () => void;
   onPinToggle: () => void;
@@ -28,7 +30,7 @@ export function TopBar(props: {
   onSettings: () => void;
   onLeave: () => void;
 }) {
-  const { s, me, nearestNote, muted, leaving, voiceStatus, controls,
+  const { s, me, nearestNote, muted, leaving, voiceStatus, controls, spyglass, onToggleSpyglass,
     onCopyCode, onTimepiece, onPinToggle, onReadNote, onDropKit, onMute,
     onToggleVoice, onToggleMic, onSettings, onLeave } = props;
   return (
@@ -80,6 +82,16 @@ export function TopBar(props: {
       <span className="hidden sm:inline">{!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "The Hollow" : "Townfolk"}</span>
       {s.self.caged && s.self.alive ? " · Caged" : ""}
     </span>
+    {s.phase !== "lobby" && (
+      <button
+        data-spyglass-toggle
+        onClick={onToggleSpyglass}
+        aria-pressed={spyglass}
+        title={spyglass ? "Lower the spyglass (Z)" : "Raise the spyglass — zoom anywhere (Z)"}
+        aria-label={spyglass ? "Lower spyglass" : "Raise spyglass"}
+        className={`rounded border px-1.5 py-1 sm:px-2 sm:py-1.5 ${spyglass ? "border-[#d99a3d] bg-[#3a2410]/90 text-[#ffd98a]" : "border-[#3a2733] bg-[#140d18]/80 text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]"}`}
+      ><Telescope className="h-4 w-4" /></button>
+    )}
     <button
       onClick={onMute}
       title={muted ? "Unmute" : "Mute"}
