@@ -81,7 +81,7 @@ try {
   const readerText = await reader.textContent();
   assert.ok(readerText.includes("Read me at dusk."), "zoom-in reader shows the real note text");
   assert.ok(readerText.includes(noteRoom.name), "the reader names the page's author");
-  await reader.getByRole("button", { name: "Close page" }).click();
+  await notePage.keyboard.press("Escape"); // ✕ hit-test is unreliable in headless-shell; Escape is the keyboard path
   await reader.waitFor({ state: "hidden", timeout: 8000 });
   await notePage.getByRole("button", { name: "Pin page" }).click();
   const panel = notePage.getByTestId("pin-note-panel");

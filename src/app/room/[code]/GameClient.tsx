@@ -214,7 +214,7 @@ export default function GameClient({ code }: { code: string }) {
   useGameInput({
     send, keys, lastDir, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract,
     wardPanelRef, timePanelRef, settingsDialogRef, chatOpen, pinOpen, setChatOpen, setPinOpen, setPinText, activateTimepiece,
-    chatOpenRef, getSettingsStore, getVoice,
+    chatOpenRef, noteOpenRef, closeNote: () => setNoteFocus(null), getSettingsStore, getVoice,
   });
 
   useGameRender({ canvasRef, rendererRef, snapRef, displayX, focusRef, lastDir, getSettingsStore });

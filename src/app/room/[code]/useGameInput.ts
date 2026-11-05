@@ -23,6 +23,8 @@ export interface GameInputDeps {
   settingsDialogRef: RefObject<SettingsDialog | null>;
   chatOpen: boolean;
   chatOpenRef: RefObject<boolean>;
+  noteOpenRef: RefObject<boolean>;
+  closeNote: () => void;
   getSettingsStore: () => { value: GameSettings };
   getVoice: () => Promise<VoiceChat>;
   pinOpen: boolean;
@@ -33,12 +35,16 @@ export interface GameInputDeps {
 }
 
 export function useGameInput(d: GameInputDeps) {
-  const { send, keys, lastDir, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract, chatOpen, pinOpen, setChatOpen, setPinOpen, setPinText, activateTimepiece, chatOpenRef, getSettingsStore, getVoice } = d;
+  const { send, keys, lastDir, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract, chatOpen, pinOpen, setChatOpen, setPinOpen, setPinText, activateTimepiece, chatOpenRef, noteOpenRef, closeNote, getSettingsStore, getVoice } = d;
   useEffect(() => {
     const unlockAudio = () => ensureAudio();
     const down = (e: KeyboardEvent) => {
       unlockAudio();
       if (d.settingsDialogRef.current?.isOpen || d.timePanelRef.current?.isOpen) return;
+      if (noteOpenRef.current) {
+        if (e.key === "Escape") { e.preventDefault(); closeNote(); }
+        return; // the pinned page owns the keyboard until it is put back
+      }
       if (d.wardPanelRef.current?.isOpen) {
         if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
         return; // Tab, Enter and Space belong to the focused puzzle buttons.
@@ -84,5 +90,5 @@ export function useGameInput(d: GameInputDeps) {
       window.removeEventListener("keydown", down); window.removeEventListener("keyup", up);
       window.removeEventListener("pointerdown", unlockAudio); window.removeEventListener("blur", releaseInputs);
     };
-  }, [send, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract, chatOpen, pinOpen, d.wardPanelRef, d.timePanelRef, d.settingsDialogRef, keys, lastDir, setChatOpen, chatOpenRef, getSettingsStore, getVoice, setPinOpen, setPinText, activateTimepiece]);
+  }, [send, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract, chatOpen, pinOpen, d.wardPanelRef, d.timePanelRef, d.settingsDialogRef, keys, lastDir, setChatOpen, chatOpenRef, noteOpenRef, closeNote, getSettingsStore, getVoice, setPinOpen, setPinText, activateTimepiece]);
 }
