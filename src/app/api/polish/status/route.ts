@@ -20,7 +20,7 @@ function polishBase(cwd: string) {
 }
 
 export async function GET() {
-  if (process.env.HOLLOW_POLISH_WORKER === "0") {
+  if (process.env.HOLLOW_POLISH_WORKER !== "1") {
     return Response.json({ enabled: false }, { headers: { "Cache-Control": "no-store" } });
   }
   try {

@@ -1,6 +1,7 @@
-// Long-running *isolated* OpenCode maintenance loop. Started by the live
-// server's health route. It never edits /app, publishes to GitHub,
-// uses a GitHub credential, or changes game mechanics.
+// Long-running *isolated* OpenCode maintenance loop. Started only when the
+// server runs with HOLLOW_POLISH_WORKER=1 (see src/server/polish-supervisor.ts).
+// It never edits /app, publishes to GitHub, uses a GitHub credential, or
+// changes game mechanics. The channel URL comes from HOLLOW_MAYFLY_URL only.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -25,13 +26,12 @@ function polishBase() {
   return tmpdir();
 }
 const base = polishBase();
-let channel = process.env.HOLLOW_MAYFLY_URL || "";
-if (!channel) {
-  const channelFile = join(root, "scripts/mayfly-channel.txt");
-  if (existsSync(channelFile)) {
-    try { channel = readFileSync(channelFile, "utf8").trim(); } catch { /* ignore */ }
-  }
+// Opt-in gate: refuse to start unless explicitly enabled, even when run by hand.
+if (process.env.HOLLOW_POLISH_WORKER !== "1") {
+  console.error("polish-loop: disabled. Set HOLLOW_POLISH_WORKER=1 to run it.");
+  process.exit(0);
 }
+const channel = process.env.HOLLOW_MAYFLY_URL || "";
 
 const cli = join(root, "node_modules/.bin/opencode");
 const clone = join(base, "work");

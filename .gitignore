@@ -5,3 +5,6 @@ node_modules/
 .tools/
 *.tsbuildinfo
 .pages/
+
+# Mayfly channel URL (contains a secret key) — never commit it
+scripts/mayfly-channel.txt
