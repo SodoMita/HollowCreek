@@ -79,7 +79,8 @@ export function useGameStream(d: GameStreamDeps) {
         if (etag) lastRev = etag;
         d.snapRef.current = s;
         if (d.pendingInputRef.current) { const retry = d.pendingInputRef.current; d.pendingInputRef.current = null; void send(retry); }
-        d.mainRef.current?.toggleAttribute("inert", !!(d.wardPanelRef.current?.isOpen || d.timePanelRef.current?.isOpen || d.settingsDialogRef.current?.isOpen || d.noteOpenRef.current));
+        // Dialogs make the scene inert; the raised spyglass does not — its "Lower the glass" button and the touch controls must stay live.
+        d.mainRef.current?.toggleAttribute("inert", !!(d.wardPanelRef.current?.isOpen || d.timePanelRef.current?.isOpen || d.settingsDialogRef.current?.isOpen));
         if (d.timePanelRef.current?.isOpen && (!s.self.hasTimepiece || s.phase !== "playing")) d.timePanelRef.current.close();
         d.wardPanelRef.current?.update(s.minigame, s.self.stamina, s.self.exhausted);
         const fp = hudFingerprint(s);

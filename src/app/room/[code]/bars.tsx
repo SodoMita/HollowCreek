@@ -57,7 +57,7 @@ export function TopBar(props: {
       </button>
     )}
     {me && (
-      <button title={glassUp ? "Lower the spyglass (Esc)" : nearestNote ? `Raise the spyglass to the page pinned by ${nearestNote.author}` : "Raise the spyglass for a closer look"}
+      <button title={glassUp ? "Lower the spyglass (Z, any key, or tap the scene)" : nearestNote ? `Raise the spyglass to the page pinned by ${nearestNote.author} (Z · wheel or pinch to zoom)` : "Raise the spyglass for a closer look (Z · wheel or pinch to zoom)"}
         aria-label={glassUp ? "Lower spyglass" : "Spyglass"} aria-pressed={glassUp} data-testid="read-note"
         onClick={() => onReadNote(glassUp ? null : nearestNote ?? { id: "", x: me.x, author: "", text: "" })}
         className={`hc-btn hc-btn-teal ml-2 px-1.5 py-0.5 text-xs ${glassUp ? "bg-[#2f4a4b]" : ""}`}>

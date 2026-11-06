@@ -16,6 +16,10 @@ interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: str
 let leafSeed = 1;
 const nextRand = () => ((leafSeed = (Math.imul(leafSeed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
 
+/** Zoom through the glass when reading a page, and the most any pinch allows. */
+export const ZOOM_READ = 3.2;
+export const ZOOM_MAX = 4;
+
 const LEAF_COLORS = ["#b4552a", "#c9762f", "#8f3b1f", "#d99a3d", "#7a4a21"];
 
 // Dusk and deep-night sky palettes (top -> horizon); lerped by nightT.
@@ -82,6 +86,14 @@ export class Renderer {
   /** When set, the camera centers on this world x and zooms in to read a page. */
   focusX: number | null = null;
   setFocus(x: number | null) { this.focusX = x; }
+  /** The spyglass / pinch zoom: a multiplier on the settings' world zoom (1 = lowered). */
+  viewZoom = 1;
+  setViewZoom(z: number) { this.viewZoom = Math.max(1, Math.min(ZOOM_MAX, z)); }
+  /** Where each figure was drawn last frame, so facing and gait follow what is
+   *  actually shown rather than the server's view of it (which arrives a round
+   *  trip later and made your own traveller walk backwards after a turn). */
+  private lastDrawnX = new Map<string, { x: number; facing: number; movingUntil: number }>();
+  private glassUp = false;
   private visionR = 420;
   private doorOpenAmount = new Map<string, number>();
 
@@ -124,7 +136,9 @@ export class Renderer {
     // Zoom the world, not the DOM HUD. Gameplay and server vision stay in world units.
     // A focused page (read-note zoom) overrides both zoom and camera target.
     const focused = this.focusX !== null;
-    const zoom = focused ? Math.max(graphics.worldZoom, 3.2) : graphics.worldZoom;
+    const glassUp = focused || this.viewZoom > 1.05; // HUD-like labels stay out of the zoomed view
+    this.glassUp = glassUp;
+    const zoom = Math.min(graphics.worldZoom * ZOOM_MAX, focused ? Math.max(graphics.worldZoom * this.viewZoom, ZOOM_READ) : graphics.worldZoom * this.viewZoom);
     ctx.save(); ctx.scale(zoom, zoom); w /= zoom; h /= zoom;
     // Through the glass the page, not the road, should sit mid-screen: lift
     // the whole view so the paper is centred (wall pages hang higher than
@@ -498,7 +512,14 @@ export class Renderer {
         ctx.fillStyle = "rgba(0,0,0,.35)";
         ctx.beginPath(); ctx.ellipse(px, ground + 2, 17, 4, 0, 0, Math.PI * 2); ctx.fill();
       }
-      this.drawFigure(ctx, px, ground + floatY, p.color, p.facing, p.moving, ghost, isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t, 1);
+      const shownX = displayX.get(p.id) ?? p.x;
+      let seen = this.lastDrawnX.get(p.id);
+      if (!seen) { seen = { x: shownX, facing: p.facing, movingUntil: 0 }; this.lastDrawnX.set(p.id, seen); }
+      const dx = shownX - seen.x;
+      if (Math.abs(dx) > 0.6) { seen.facing = dx > 0 ? 1 : -1; seen.movingUntil = t + 0.12; }
+      else if (p.moving && p.id !== snap.self.id) seen.movingUntil = Math.max(seen.movingUntil, t + 0.05);
+      seen.x = shownX;
+      this.drawFigure(ctx, px, ground + floatY, p.color, seen.facing, t < seen.movingUntil, ghost, isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t, 1);
       ctx.restore();
       // A kit stays visible on its carrier until someone delivers it.
       if (p.hasSupply) drawKit(ctx, px - 23, ground - 16 + floatY);
@@ -517,7 +538,7 @@ export class Renderer {
         ctx.restore();
       }
       // name and speech are optional HUD layers; the figures remain identifiable by color.
-      if (this.settings.interface.playerNames && !focused) {
+      if (this.settings.interface.playerNames && !glassUp) {
         ctx.font = "600 12px system-ui, sans-serif";
         ctx.textAlign = "center";
         const label = p.name + (p.echo ? " · echo" : snap.phase === "meeting" && p.voted ? " ✓" : "");
@@ -527,13 +548,13 @@ export class Renderer {
         ctx.fillStyle = p.id === snap.self.id ? "#ffd98a" : p.echo ? "#b9d9d5" : isMate ? "#ff7a6a" : "rgba(245,235,220,.96)";
         ctx.fillText(label, px, ground - 62 + floatY);
       }
-      if (p.action && p.action.until > now && !focused) {
+      if (p.action && p.action.until > now && !glassUp) {
         ctx.save(); ctx.font = "600 10px system-ui, sans-serif"; ctx.textAlign = "center";
         const label = p.action.text, width = ctx.measureText(label).width;
         ctx.fillStyle = "rgba(20,27,29,.9)"; ctx.beginPath(); ctx.roundRect(px - width / 2 - 6, ground - 98 + floatY, width + 12, 16, 5); ctx.fill();
         ctx.fillStyle = p.echo ? "#bde6dc" : "#f2d1a2"; ctx.fillText(label, px, ground - 87 + floatY); ctx.restore();
       }
-      if (p.bubble && this.settings.interface.speechBubbles && !focused) this.drawBubble(ctx, px, ground - (p.action ? 100 : 72) + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
+      if (p.bubble && this.settings.interface.speechBubbles && !glassUp) this.drawBubble(ctx, px, ground - (p.action ? 100 : 72) + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
     };
 
     for (const p of sorted) if (p.inside && !p.caged) drawPlayer(p);
@@ -557,8 +578,8 @@ export class Renderer {
     for (const c of snap.cages) this.drawCage(ctx, c.x - cam, ground, true);
     for (const p of sorted) if (!p.caged && !p.inside) drawPlayer(p);
 
-    // --- falling leaves (quantity follows the detail preset) ---
-    if (graphics.particles) {
+    // --- falling leaves (quantity follows the detail preset; none under reduced motion) ---
+    if (graphics.particles && !graphics.reducedMotion) {
       const count = this.qualityCount(100, 55, 22);
       for (let li = 0; li < count && li < this.leaves.length; li++) {
         const l = this.leaves[li];
@@ -1119,18 +1140,22 @@ export class Renderer {
       ctx.save();
       ctx.fillStyle = supplied ? "#b3d59a" : task.sabotaged ? "#d87762" : "#ffcd5a";
       ctx.shadowColor = supplied ? "#729a65" : "#ffcd5a"; this.glow(ctx, 8);
-      ctx.translate(x, ground - 235 + bob);
+      const markerY = ground - (st.kind === "chapel" ? MEETING_HOUSE.wallHeight + MEETING_HOUSE.roofRise + MEETING_HOUSE.towerBase + MEETING_HOUSE.belfryHeight + MEETING_HOUSE.spireHeight + 20 : 235);
+      ctx.translate(x, markerY + bob);
       ctx.rotate(Math.PI / 4);
       ctx.fillRect(-7, -7, 14, 14);
       ctx.restore();
-      ctx.save();
-      ctx.fillStyle = "rgba(12,8,16,.78)";
-      ctx.fillRect(x - 48, ground - 259, 96, 16);
-      ctx.font = "bold 10px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillStyle = supplied ? "#b3d59a" : task.sabotaged ? "#d87762" : "#ffcd5a";
-      ctx.fillText(supplied ? "PUZZLE" : task.sabotaged ? "SABOTAGED" : "NEEDS KIT", x, ground - (st.kind === "chapel" ? MEETING_HOUSE.wallHeight + MEETING_HOUSE.roofRise + MEETING_HOUSE.towerBase + MEETING_HOUSE.belfryHeight + MEETING_HOUSE.spireHeight + 44 : 247));
-      ctx.restore();
+      if (!this.glassUp) {
+        const signY = ground - (st.kind === "chapel" ? MEETING_HOUSE.wallHeight + MEETING_HOUSE.roofRise + MEETING_HOUSE.towerBase + MEETING_HOUSE.belfryHeight + MEETING_HOUSE.spireHeight + 44 : 247);
+        ctx.save();
+        ctx.fillStyle = "rgba(12,8,16,.78)";
+        ctx.fillRect(x - 48, signY - 12, 96, 16);
+        ctx.font = "bold 10px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillStyle = supplied ? "#b3d59a" : task.sabotaged ? "#d87762" : "#ffcd5a";
+        ctx.fillText(supplied ? "PUZZLE" : task.sabotaged ? "SABOTAGED" : "NEEDS KIT", x, signY);
+        ctx.restore();
+      }
       if (task.progress > 0) {
         ctx.fillStyle = "rgba(0,0,0,0.5)";
         ctx.fillRect(x - 30, ground - 215, 60, 8);

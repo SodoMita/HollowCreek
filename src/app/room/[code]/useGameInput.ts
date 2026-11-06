@@ -25,6 +25,7 @@ export interface GameInputDeps {
   chatOpenRef: RefObject<boolean>;
   noteOpenRef: RefObject<boolean>;
   closeNote: () => void;
+  toggleGlass: () => void;
   getSettingsStore: () => { value: GameSettings };
   getVoice: () => Promise<VoiceChat>;
   pinOpen: boolean;
@@ -35,15 +36,16 @@ export interface GameInputDeps {
 }
 
 export function useGameInput(d: GameInputDeps) {
-  const { send, keys, lastDir, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract, chatOpen, pinOpen, setChatOpen, setPinOpen, setPinText, activateTimepiece, chatOpenRef, noteOpenRef, closeNote, getSettingsStore, getVoice } = d;
+  const { send, keys, lastDir, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract, chatOpen, pinOpen, setChatOpen, setPinOpen, setPinText, activateTimepiece, chatOpenRef, noteOpenRef, closeNote, toggleGlass, getSettingsStore, getVoice } = d;
   useEffect(() => {
     const unlockAudio = () => ensureAudio();
     const down = (e: KeyboardEvent) => {
       unlockAudio();
       if (d.settingsDialogRef.current?.isOpen || d.timePanelRef.current?.isOpen) return;
       if (noteOpenRef.current) {
-        if (e.key === "Escape") { e.preventDefault(); closeNote(); }
-        return; // the pinned page owns the keyboard until it is put back
+        // The raised glass: any key lowers it (Escape included); nothing else happens on that press.
+        if (!e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); closeNote(); }
+        return;
       }
       if (d.wardPanelRef.current?.isOpen) {
         if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
@@ -57,6 +59,7 @@ export function useGameInput(d: GameInputDeps) {
       if (target && (["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName) || target.isContentEditable)) return;
       const controls = getSettingsStore().value.controls;
       const bound = (action: BindableAction) => matchesControl(controls, action, e.code);
+      if (e.code === "KeyZ" && !e.repeat) { toggleGlass(); e.preventDefault(); return; }
       if (bound("left")) { keys.current.add("left"); computeDir(); e.preventDefault(); }
       else if (bound("right")) { keys.current.add("right"); computeDir(); e.preventDefault(); }
       else if (e.code === "KeyM" && !e.repeat) { activateTimepiece(); e.preventDefault(); }
@@ -90,5 +93,5 @@ export function useGameInput(d: GameInputDeps) {
       window.removeEventListener("keydown", down); window.removeEventListener("keyup", up);
       window.removeEventListener("pointerdown", unlockAudio); window.removeEventListener("blur", releaseInputs);
     };
-  }, [send, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract, chatOpen, pinOpen, d.wardPanelRef, d.timePanelRef, d.settingsDialogRef, keys, lastDir, setChatOpen, chatOpenRef, noteOpenRef, closeNote, getSettingsStore, getVoice, setPinOpen, setPinText, activateTimepiece]);
+  }, [send, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract, chatOpen, pinOpen, d.wardPanelRef, d.timePanelRef, d.settingsDialogRef, keys, lastDir, setChatOpen, chatOpenRef, noteOpenRef, closeNote, getSettingsStore, getVoice, setPinOpen, setPinText, activateTimepiece, toggleGlass]);
 }

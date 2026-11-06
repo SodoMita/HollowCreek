@@ -4,10 +4,9 @@
 // All game logic stays in GameClient — these components only render + call back.
 
 import Link from "next/link";
-import { useEffect } from "react";
 import type { VoiceCallbacks } from "./overlays";
 import { useRouter } from "next/navigation";
-import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
+import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Telescope, Trophy, Volume2, Zap } from "lucide-react";
 import type { Snapshot } from "@/game/types";
 import type { VoiceStatus } from "@/game/voice";
 import { keyLabel, type GameSettings } from "@/game/settings";
@@ -22,19 +21,23 @@ export function Toast({ text }: { text: string | null }) {
 }
 
 export function NoteReader({ note, onClose }: { note: { text: string; author: string }; onClose: () => void }) {
-  // Nothing is drawn here: the page is read on the canvas through the spyglass.
-  // This is only an invisible click-catcher — any click or any key lowers the
-  // glass — with the page text for screen readers.
-  useEffect(() => {
-    const down = (e: KeyboardEvent) => { if (!e.ctrlKey && !e.metaKey && !e.altKey) onClose(); };
-    window.addEventListener("keydown", down, true);
-    return () => window.removeEventListener("keydown", down, true);
-  }, [onClose]);
+  // The raised glass. Nothing is drawn over the page itself — it is read on the
+  // canvas — but the glass must be easy to lower on every device: any key, a
+  // tap on the scene, or the "Lower the glass" button that sits above the
+  // touch controls. The move/interact buttons stay usable underneath.
+  // Keyboard handling (any key lowers the glass) lives in useGameInput, which
+  // owns the game's keydown; a second listener here raced it on the Z key.
   return (
-    <div className="absolute inset-0 z-20" onClick={onClose} data-testid="note-reader" role="button"
-      aria-label={note.author ? `Page pinned by ${note.author}: ${note.text}. Click to lower the spyglass.` : "Spyglass raised. Click to lower it."}>
-      <span className="sr-only">{note.text}</span>
-    </div>
+    <>
+      <div className="absolute inset-x-0 top-0 bottom-28 z-20 sm:bottom-32" onClick={onClose} data-testid="note-reader" role="button"
+        aria-label={note.author ? `Page pinned by ${note.author}: ${note.text}. Tap to lower the spyglass.` : "Spyglass raised. Tap to lower it."}>
+        <span className="sr-only">{note.text}</span>
+      </div>
+      <button type="button" onClick={onClose} data-testid="lower-glass"
+        className="hc-btn hc-btn-teal absolute bottom-[max(7.5rem,calc(env(safe-area-inset-bottom)+7rem))] left-1/2 z-30 -translate-x-1/2 px-4 py-2 text-sm shadow-lg sm:bottom-[max(8.5rem,calc(env(safe-area-inset-bottom)+8rem))]">
+        <Telescope className="h-4 w-4" /> Lower the glass
+      </button>
+    </>
   );
 }
 

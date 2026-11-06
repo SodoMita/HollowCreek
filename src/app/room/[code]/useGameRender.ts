@@ -111,9 +111,10 @@ export function useGameRender(d: GameRenderDeps) {
           next += (target - next) * Math.min(1, dt * 8);
           displayX.current.set(p.id, Math.abs(target - next) > 220 ? target : next);
         } else {
-          // Neighbours: carry them on at their last known pace until the next
-          // frame lands, then ease onto it — no 100 ms stepping.
-          const target = p.x + (p.moving ? p.facing * walkSpeed(p) * age : 0);
+          // Neighbours: carry them on at their last known pace for at most one
+          // frame interval, then ease onto the next frame — no 100 ms stepping,
+          // and never a slide after they have stopped.
+          const target = p.x + (p.moving ? p.facing * walkSpeed(p) * Math.min(age, 0.12) : 0);
           displayX.current.set(p.id, Math.abs(target - cur) > 300 ? p.x : cur + (target - cur) * Math.min(1, dt * 14));
         }
       }

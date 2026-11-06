@@ -1,7 +1,7 @@
 // Hollow Creek — standalone static client (GitHub Pages / Newgrounds).
 // Talks to the authoritative server over the same HTTP API as the Next client;
 // reuses the canvas Renderer and generative AudioDirector unchanged.
-import { Renderer } from "../src/game/render";
+import { Renderer, ZOOM_MAX, ZOOM_READ } from "../src/game/render";
 import { WardPanel } from "../src/game/ward-ui";
 import { TimePanel } from "../src/game/time-ui";
 import { AudioDirector } from "../src/game/audio";
@@ -292,7 +292,7 @@ function leaveToMenu() {
       }).finally(() => { if ($("menu").style.display !== "none") void refreshRooms(); });
   }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  snap = null; roomCode = ""; overlayKey = ""; roomError = ""; pollFailures = 0; held = null; heldRev = "";
+  snap = null; roomCode = ""; overlayKey = ""; roomError = ""; pollFailures = 0; held = null; heldRev = ""; lowerGlass();
   wardPanel.update(null, 1, false);
   $("game").style.display = "none";
   $("menu").style.display = "block";
@@ -416,8 +416,9 @@ function renderHud(s: Snapshot) {
   $("supplydrop").style.display = s.phase === "playing" && s.self.hasSupply ? "inline-block" : "none";
   const meX = me ? me.x : 0;
   const nearNote = (s.notes ?? []).filter((n) => Math.abs(n.x - meX) <= 150).sort((a, b) => Math.abs(a.x - meX) - Math.abs(b.x - meX))[0];
-  $("readnote").style.display = nearNote && s.phase === "playing" ? "inline-block" : "none";
+  $("readnote").style.display = s.phase === "playing" ? "inline-block" : "none";
   $("readnote").dataset.noteId = nearNote ? nearNote.id : "";
+  $("readnote").title = nearNote ? `Raise the spyglass to the page pinned by ${nearNote.author} (Z · wheel or pinch to zoom)` : "Raise the spyglass (Z · wheel or pinch to zoom)";
   $("pinbtn").style.display = s.phase === "playing" && s.self.alive ? "inline-block" : "none";
   $("pushbtn").style.display = s.phase === "playing" && s.self.alive && !s.self.caged && !s.self.hasSupply ? "block" : "none";
   $("pushbtn").textContent = `Hold Push + ◀▶${s.cartPushers > 0 ? ` · ${s.cartPushers}` : ""}`;
@@ -598,6 +599,8 @@ window.addEventListener("keydown", (e) => {
     return; // Puzzle buttons own Tab, Enter and Space.
   }
   if (chatOpen()) { if (e.key === "Escape") { $("chatbox").style.display = "none"; ($("chatinput") as HTMLInputElement).blur(); } return; }
+  if (viewZoom > 1.05) { if (!e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); lowerGlass(); } return; } // the raised glass: any key lowers it
+  if (e.code === "KeyZ" && !e.repeat) { e.preventDefault(); toggleGlass(); return; }
   const target = e.target as HTMLElement | null;
   if (target && (["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName) || target.isContentEditable)) return;
   if (bound("left", e)) { keys.add("left"); computeDir(); e.preventDefault(); }
@@ -660,15 +663,52 @@ $("pinsubmit").addEventListener("click", () => {
   ($("pintextarea") as HTMLTextAreaElement).value = "";
   $("pinpanel").style.display = "none";
 });
-$("readnote").addEventListener("click", () => {
+// The glass: a continuous zoom (wheel, trackpad, pinch); the chip and Z snap
+// between lowered and the reading zoom, aimed at a nearby page if there is one.
+let viewZoom = 1;
+function applyZoom(z: number) {
+  viewZoom = Math.max(1, Math.min(ZOOM_MAX, z));
+  renderer.setViewZoom(viewZoom);
+  const up = viewZoom > 1.05;
+  $("noteoverlay").style.display = up ? "block" : "none";
+  $("readnote").setAttribute("aria-pressed", up ? "true" : "false");
+  $("readnote").textContent = up ? "🔭 Lower glass" : "🔭 Spyglass";
+  if (!up) { noteFocusX = null; $("notetext").textContent = ""; $("noteauthor").textContent = ""; }
+}
+function lowerGlass() { applyZoom(1); }
+function toggleGlass() {
+  if (viewZoom > 1.05) { lowerGlass(); return; }
   const note = (snap?.notes ?? []).find((n) => n.id === ($("readnote").dataset.noteId ?? ""));
-  if (!note) return;
-  $("notetext").textContent = note.text;
-  $("noteauthor").textContent = `— pinned by ${note.author}`;
-  $("noteoverlay").style.display = "flex";
-  noteFocusX = note.x; // zoom the world onto the page
-});
-$("noteclose").addEventListener("click", () => { $("noteoverlay").style.display = "none"; noteFocusX = null; });
+  if (note) { noteFocusX = note.x; $("notetext").textContent = note.text; $("noteauthor").textContent = `— pinned by ${note.author}`; }
+  applyZoom(ZOOM_READ);
+}
+$("readnote").addEventListener("click", toggleGlass);
+$("noteclose").addEventListener("click", (e) => { e.stopPropagation(); lowerGlass(); });
+$("noteoverlay").addEventListener("click", lowerGlass);
+{
+  const canvas = $("cv") as HTMLCanvasElement;
+  canvas.addEventListener("wheel", (e) => {
+    if (!roomCode) return;
+    e.preventDefault();
+    applyZoom(viewZoom * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)));
+  }, { passive: false });
+  const pointers = new Map<number, { x: number; y: number }>();
+  let pinchStart = 0, zoomStart = 1;
+  const dist = () => { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "touch") return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) { pinchStart = dist(); zoomStart = viewZoom; }
+  });
+  window.addEventListener("pointermove", (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2 && pinchStart > 0) applyZoom(zoomStart * dist() / pinchStart);
+  });
+  const up = (e: PointerEvent) => { pointers.delete(e.pointerId); if (pointers.size < 2) pinchStart = 0; };
+  window.addEventListener("pointerup", up);
+  window.addEventListener("pointercancel", up);
+}
 $("ruinbtn").addEventListener("click", () => void send({ action: "sabotage" }));
 $("settings").addEventListener("click", () => settingsDialog.open());
 $("menusettings").addEventListener("click", () => settingsDialog.open());
@@ -743,7 +783,7 @@ function loop(nowMs: number) {
       next += (target - next) * Math.min(1, dt * 8);
       displayX.set(p.id, Math.abs(target - next) > 220 ? target : next);
     } else {
-      const target = p.x + (p.moving ? p.facing * spd * age : 0);
+      const target = p.x + (p.moving ? p.facing * spd * Math.min(age, 0.12) : 0);
       displayX.set(p.id, Math.abs(target - cur) > 300 ? p.x : cur + (target - cur) * Math.min(1, dt * 14));
     }
   }

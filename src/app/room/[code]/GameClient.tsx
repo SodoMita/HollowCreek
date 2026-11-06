@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
-import { Renderer } from "@/game/render";
+import { Renderer, ZOOM_MAX, ZOOM_READ } from "@/game/render";
 import type { NetState } from "./useGameRender";
 import { useGameStream } from "./useGameStream";
 import { useGameInput } from "./useGameInput";
@@ -18,6 +18,7 @@ import type { VoiceChat, VoiceStatus } from "@/game/voice";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
 import { NoteReader, RoleBanner, Toast } from "./hud";
+import { Minimap } from "./minimap";
 import { MidHud } from "./midhud";
 import { BottomControls, TopBar } from "./bars";
 import { ChatBox, PinPanel } from "./chat";
@@ -62,7 +63,63 @@ export default function GameClient({ code }: { code: string }) {
   const focusRef = useRef<number | null>(null);
   const noteOpenRef = useRef(false);
   const rendererRef = useRef<Renderer | null>(null);
-  useEffect(() => { focusRef.current = noteFocus ? noteFocus.x : null; noteOpenRef.current = !!noteFocus; }, [noteFocus]);
+  useEffect(() => { focusRef.current = noteFocus ? noteFocus.x : null; }, [noteFocus]);
+  // The glass: a continuous zoom (mouse wheel, trackpad, pinch) with the
+  // spyglass button / Z snapping between lowered and raised. `glassUp` is what
+  // the HUD shows; the renderer reads the live value through the ref.
+  const [glassUp, setGlassUp] = useState(false);
+  useEffect(() => { noteOpenRef.current = glassUp; }, [glassUp]);
+  const zoomRef = useRef(1);
+  const applyZoom = useCallback((z: number) => {
+    const clamped = Math.max(1, Math.min(ZOOM_MAX, z));
+    zoomRef.current = clamped;
+    rendererRef.current?.setViewZoom(clamped);
+    setGlassUp((up) => (clamped > 1.05) !== up ? clamped > 1.05 : up);
+    if (clamped <= 1.05) setNoteFocus(null);
+  }, []);
+  const lowerGlass = useCallback(() => applyZoom(1), [applyZoom]);
+  /** Spyglass button / Z: raise to the reading zoom (aimed at a nearby page if there is one), or lower. */
+  const toggleGlass = useCallback((page: { id: string; x: number; author: string; text: string } | null) => {
+    if (zoomRef.current > 1.05) { lowerGlass(); return; }
+    setNoteFocus(page);
+    applyZoom(ZOOM_READ);
+  }, [applyZoom, lowerGlass]);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const step = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015));
+      applyZoom(zoomRef.current * step);
+    };
+    // Pinch: track two pointers on the canvas; the zoom follows the distance ratio.
+    const pointers = new Map<number, { x: number; y: number }>();
+    let pinchStart = 0, zoomStart = 1;
+    const dist = () => { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+    const onDown = (e: PointerEvent) => {
+      if (e.pointerType !== "touch") return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2) { pinchStart = dist(); zoomStart = zoomRef.current; }
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2 && pinchStart > 0) applyZoom(zoomStart * dist() / pinchStart);
+    };
+    const onUp = (e: PointerEvent) => { pointers.delete(e.pointerId); if (pointers.size < 2) pinchStart = 0; };
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    canvas.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [applyZoom]);
   const [leaving, setLeaving] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(createDefaultSettings);
 
@@ -225,10 +282,15 @@ export default function GameClient({ code }: { code: string }) {
     }
   }, [send]);
 
+  const me = useMemo(() => snap?.players.find((p) => p.id === snap.self.id), [snap]);
+  const nearestNote = useMemo(() => snap && me ? (snap.notes ?? [])
+    .filter((n) => Math.abs(n.x - me.x) <= 150)
+    .sort((a, b) => Math.abs(a.x - me.x) - Math.abs(b.x - me.x))[0] : undefined, [snap, me]);
+
   useGameInput({
     send, keys, lastDir, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract,
     wardPanelRef, timePanelRef, settingsDialogRef, chatOpen, pinOpen, setChatOpen, setPinOpen, setPinText, activateTimepiece,
-    chatOpenRef, noteOpenRef, closeNote: () => setNoteFocus(null), getSettingsStore, getVoice,
+    chatOpenRef, noteOpenRef, closeNote: lowerGlass, toggleGlass: () => toggleGlass(nearestNote ?? null), getSettingsStore, getVoice,
   });
 
   useGameRender({ canvasRef, rendererRef, snapRef, displayX, focusRef, lastDir, netRef, getSettingsStore });
@@ -255,10 +317,6 @@ export default function GameClient({ code }: { code: string }) {
 
   // ------------------------------------------------------------------ UI ---
 
-  const me = useMemo(() => snap?.players.find((p) => p.id === snap.self.id), [snap]);
-  const nearestNote = useMemo(() => snap && me ? (snap.notes ?? [])
-    .filter((n) => Math.abs(n.x - me.x) <= 150)
-    .sort((a, b) => Math.abs(a.x - me.x) - Math.abs(b.x - me.x))[0] : undefined, [snap, me]);
   const pinNote = async () => {
     const text = pinText.trim();
     if (!text) return;
@@ -301,9 +359,9 @@ export default function GameClient({ code }: { code: string }) {
 
       {s && (
         <>
-          <TopBar s={s} me={me} nearestNote={nearestNote} glassUp={!!noteFocus} muted={muted} leaving={leaving} voiceStatus={voiceStatus} controls={settings.controls}
+          <TopBar s={s} me={me} nearestNote={nearestNote} glassUp={glassUp} muted={muted} leaving={leaving} voiceStatus={voiceStatus} controls={settings.controls}
             onCopyCode={() => { void navigator.clipboard?.writeText(s.code); setToast("Town code copied"); setTimeout(() => setToast(null), 1500); }}
-            onTimepiece={activateTimepiece} onPinToggle={() => setPinOpen((v) => !v)} onReadNote={setNoteFocus}
+            onTimepiece={activateTimepiece} onPinToggle={() => setPinOpen((v) => !v)} onReadNote={toggleGlass}
             onDropKit={() => void send({ action: "drop_supply" })}
             onMute={() => { ensureAudio(); const m = !muted; getSettingsStore().update((draft) => { draft.audio.muted = m; }); audioRef.current?.setMuted(m); }}
             onToggleVoice={toggleVoice} onToggleMic={toggleMic}
@@ -324,7 +382,8 @@ export default function GameClient({ code }: { code: string }) {
             <PinPanel text={pinText} onText={setPinText} onSubmit={() => void pinNote()} onCancel={() => { setPinOpen(false); setPinText(""); }} />
           )}
 
-          {noteFocus && <NoteReader note={noteFocus} onClose={() => setNoteFocus(null)} />}
+          {s.phase === "playing" && !glassUp && <Minimap s={s} me={me} />}
+          {glassUp && <NoteReader note={noteFocus ?? { text: "", author: "" }} onClose={lowerGlass} />}
 
           {chatOpen && (
             <ChatBox alive={s.self.alive} text={chatText} onText={setChatText} onSubmit={submitChat} inputRef={chatInputRef} />
