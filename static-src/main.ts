@@ -11,7 +11,7 @@ import { SettingsDialog } from "../src/game/settings-ui";
 import { BELL_X, CARRY_SPEED, GHOST_SPEED, SPEED } from "../src/game/types";
 import { BUILDINGS, DOOR_REACH, doorX } from "../src/game/buildings";
 import type { RoomListing, Snapshot } from "../src/game/types";
-import { expandSnapshot, feedCursor, newWireCache, type WireSnapshot } from "../src/game/wire";
+import { expandSnapshot, feedCursor, mergeCompact, newWireCache, type WireDelta, type WireSnapshot } from "../src/game/wire";
 
 // Temporary author-built sandboxes run the same unified code (see SYNC.md).
 // The menu probes them in order; room-code joins also discover the backend
@@ -79,6 +79,9 @@ function getPid(): string {
 let snap: Snapshot | null = null;
 let roomCode = "";
 let wireCache = newWireCache();
+let lastRevStatic = "";
+let lastPollAt = 0;
+let lastCompactStatic: WireSnapshot | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let roomsTimer: ReturnType<typeof setInterval> | null = null;
 let polling = false;
@@ -255,7 +258,7 @@ function enterRoom(code: string) {
   voice.stop();
   cancelProbe();
   roomCode = code;
-  wireCache = newWireCache();
+  wireCache = newWireCache(); lastRevStatic = ""; lastCompactStatic = null;
   snap = null;
   wardPanel.update(null, 1, false);
   roomError = "";
@@ -286,7 +289,7 @@ function leaveToMenu() {
       }).finally(() => { if ($("menu").style.display !== "none") void refreshRooms(); });
   }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  snap = null; roomCode = ""; overlayKey = ""; roomError = ""; pollFailures = 0; wireCache = newWireCache();
+  snap = null; roomCode = ""; overlayKey = ""; roomError = ""; pollFailures = 0; wireCache = newWireCache(); lastRevStatic = ""; lastCompactStatic = null;
   wardPanel.update(null, 1, false);
   $("game").style.display = "none";
   $("menu").style.display = "block";
@@ -320,13 +323,31 @@ async function poll() {
   polling = true;
   const code = roomCode;
   try {
-    const raw = (await api(`/api/game/state?code=${code}&playerId=${getPid()}&c=1&f=${feedCursor(wireCache)}`, undefined, server, 5000)) as WireSnapshot & { error?: string };
+    const ctl = new AbortController();
+    const to = setTimeout(() => ctl.abort(), 5000);
+    let res: Response;
+    try {
+      res = await fetch(`${server}/api/game/state?code=${code}&playerId=${getPid()}&c=1&f=${feedCursor(wireCache)}&rev=${encodeURIComponent(lastRevStatic)}&prev=${encodeURIComponent(lastRevStatic)}`, { signal: ctl.signal });
+    } finally { clearTimeout(to); }
     if (code !== roomCode) return; // an old request must not paint a new room
-    if (raw.error || !raw.self) {
+    if (res.status === 304) {
+      // Nothing changed: an idle town owes zero bytes. Keep countdowns alive.
+      const now = performance.now();
+      if (snap && lastPollAt) snap.now += now - lastPollAt;
+      lastPollAt = now;
+      if (snap) renderHud(snap);
+      pollFailures = 0;
+      return;
+    }
+    const raw = (await res.json()) as WireSnapshot & { error?: string; delta?: WireDelta; etag?: string };
+    if (raw.error || (!raw.self && !raw.delta)) {
       showRoomError(raw.error ?? "The town did not return this player. Rejoin with its code.");
       return;
     }
-    const s: Snapshot = expandSnapshot(raw, wireCache);
+    lastCompactStatic = raw.delta ? mergeCompact(lastCompactStatic, raw.delta) : raw;
+    lastRevStatic = res.headers.get("etag") ?? raw.etag ?? lastRevStatic;
+    lastPollAt = performance.now();
+    const s: Snapshot = expandSnapshot(lastCompactStatic, wireCache);
     pollFailures = 0;
     roomError = "";
     snap = s;

@@ -142,7 +142,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     phase: room.phase,
     round: room.round,
     now,
-    nightT,
+    nightT: Math.round(nightT * 1000) / 1000,
     self: {
       id: me.id,
       role: me.role,
@@ -153,13 +153,13 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
       doorKeys: room.doors.filter((d) => d.holder === me.id).map((d) => d.id),
       hasTimepiece: !!heldPiece(room, me.id),
       bellUsed: me.bellUsed,
-      killCooldownMs: killCd,
+      killCooldownMs: Math.ceil(killCd / 1000) * 1000,
       canKill: !!target && killCd <= 0,
-      stamina: Math.round(me.stamina * 100) / 100,
+      stamina: Math.round(me.stamina * 50) / 50,
       exhausted: me.exhausted,
-      blackoutCooldownMs: Math.max(0, room.blackoutReadyAt - now),
+      blackoutCooldownMs: Math.ceil(Math.max(0, room.blackoutReadyAt - now) / 1000) * 1000,
       canBlackout: me.role === "hollow" && me.alive && room.phase === "playing" && now >= room.blackoutReadyAt,
-      sabotageCooldownMs: Math.max(0, me.sabotageAt - now),
+      sabotageCooldownMs: Math.ceil(Math.max(0, me.sabotageAt - now) / 1000) * 1000,
       canSabotage,
       teammates: me.role === "hollow" ? ps.filter((p) => p.role === "hollow" && p.id !== me.id).map((p) => p.id) : [],
       myVote: me.vote,
@@ -205,14 +205,14 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     notes: room.notes.filter((n) => (n.house ? me.inside === n.house : !me.inside && canSee(n.x))).map((n) => ({ id: n.id, x: n.x, kind: n.kind, house: n.house, author: n.authorName, text: n.text })),
     timepieces: loosePieces(room).filter((tp) => canSee(tp.x)).map((tp) => tp.x),
     timepieceX: (() => { const tp = loosePieces(room).find((t2) => canSee(t2.x)); return tp ? tp.x : null; })(),
-    time: room.temporalShadow ? undefined : { mode: "present", earliest: room.history[0]?.at ?? room.startedAt, latest: room.history.at(-1)?.at ?? room.startedAt },
+    time: room.temporalShadow ? undefined : { mode: "present", earliest: Math.ceil((room.history[0]?.at ?? room.startedAt) / 1000) * 1000, latest: Math.floor((room.history.at(-1)?.at ?? room.startedAt) / 1000) * 1000 },
     supplyDrops: room.supplyDrops.filter((item) => canSee(item.x)).map((item) => item.x),
     cartX: ix(room.cartX),
     cartPushers: room.cartPushers,
     cages: room.cages.map((c) => ({ x: c.x, occupant: c.occupant })),
     tasks: room.pool.map((t) => {
       const st = STATIONS.find((s) => s.id === t.id)!;
-      return { id: t.id, name: st.name, x: st.x, inside: st.inside, done: t.done, delivered: t.delivered, sabotaged: t.sabotaged, progress: t.progress };
+      return { id: t.id, name: st.name, x: st.x, inside: st.inside, done: t.done, delivered: t.delivered, sabotaged: t.sabotaged, progress: Math.round(t.progress * 100) / 100 };
     }),
     minigame,
     taskBar: { done: doneTasks, total: room.pool.length },

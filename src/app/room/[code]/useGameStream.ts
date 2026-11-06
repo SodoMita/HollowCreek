@@ -2,7 +2,7 @@
 // push stream, and falls back to the adaptive 304 poll (with re-join on 404s).
 import { useEffect, type RefObject } from "react";
 import type { Snapshot } from "@/game/types";
-import { expandSnapshot, feedCursor, newWireCache, type WireSnapshot } from "@/game/wire";
+import { expandSnapshot, feedCursor, mergeCompact, newWireCache, type WireDelta, type WireSnapshot } from "@/game/wire";
 import type { WardPanel } from "@/game/ward-ui";
 import type { TimePanel } from "@/game/time-ui";
 import type { SettingsDialog } from "@/game/settings-ui";
@@ -22,6 +22,7 @@ export interface GameStreamDeps {
   timePanelRef: RefObject<TimePanel | null>;
   settingsDialogRef: RefObject<SettingsDialog | null>;
   noteOpenRef: RefObject<boolean>;
+  clockRef: RefObject<{ now: number; at: number }>;
   audioRef: RefObject<AudioDirector | null>;
   lastPhase: RefObject<string>;
   leavingRef: RefObject<boolean>;
@@ -60,12 +61,14 @@ export function useGameStream(d: GameStreamDeps) {
       let notFound = 0; // consecutive 404s — after 3, the server lost us (restart): re-join
       let polling = false;
       const wire = newWireCache(); // feed lines + far note text arrive once, then live here
+      let lastCompact: WireSnapshot | null = null; // last full/delta-merged frame
 
       const handleSnap = (s: Snapshot, etag: string) => {
         if (!alive) return;
         failures = 0;
         notFound = 0;
         if (etag) lastRev = etag;
+        d.clockRef.current = { now: s.now, at: performance.now() };
         d.snapRef.current = s;
         if (d.pendingInputRef.current) { const retry = d.pendingInputRef.current; d.pendingInputRef.current = null; void send(retry); }
         d.mainRef.current?.toggleAttribute("inert", !!(d.wardPanelRef.current?.isOpen || d.timePanelRef.current?.isOpen || d.settingsDialogRef.current?.isOpen || d.noteOpenRef.current));
@@ -92,7 +95,7 @@ export function useGameStream(d: GameStreamDeps) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 3000);
         try {
-          const revParam = lastRev ? `&rev=${encodeURIComponent(lastRev)}` : "";
+          const revParam = lastRev ? `&rev=${encodeURIComponent(lastRev)}&prev=${encodeURIComponent(lastRev)}` : "";
           const r = await fetch(`/api/game/state?code=${code}&playerId=${getPid()}&c=1&f=${feedCursor(wire)}${revParam}`, { signal: controller.signal });
           if (r.status === 304) { failures = 0; return; } // unchanged — skip the payload entirely
           if (r.status === 404) {
@@ -102,7 +105,9 @@ export function useGameStream(d: GameStreamDeps) {
           }
           if (!r.ok) { failures++; return; }
           const etag = r.headers.get("etag") ?? "";
-          const s = expandSnapshot(await r.json() as WireSnapshot, wire);
+          const json = await r.json() as WireSnapshot & { delta?: WireDelta };
+          lastCompact = json.delta ? mergeCompact(lastCompact, json.delta) : json;
+          const s = expandSnapshot(lastCompact, wire);
           handleSnap(s, etag);
         } catch { failures++; } // retry with backoff below
         finally { clearTimeout(timeout); inflight = false; }
@@ -127,9 +132,17 @@ export function useGameStream(d: GameStreamDeps) {
       es = new EventSource(`/api/game/state/stream?code=${encodeURIComponent(code)}&playerId=${encodeURIComponent(getPid())}&c=1`);
       es.onmessage = (ev) => {
         try {
-          const msg = JSON.parse(ev.data) as { etag?: string; snap?: WireSnapshot; gone?: boolean };
+          const msg = JSON.parse(ev.data) as { etag?: string; snap?: WireSnapshot; delta?: WireDelta; clock?: number; gone?: boolean };
           if (msg.gone) { void doJoin(); return; }
-          if (msg.snap) { gotPush = true; handleSnap(expandSnapshot(msg.snap, wire), msg.etag ?? ""); }
+          if (typeof msg.clock === "number") {
+            // Once-a-second clock: keep countdowns/bubbles live without a payload.
+            d.clockRef.current = { now: msg.clock, at: performance.now() };
+            const cur = d.snapRef.current;
+            if (cur) { cur.now = msg.clock; setSnap({ ...cur }); }
+            return;
+          }
+          if (msg.snap) { gotPush = true; lastCompact = msg.snap; handleSnap(expandSnapshot(msg.snap, wire), msg.etag ?? ""); }
+          else if (msg.delta && lastCompact) { gotPush = true; lastCompact = mergeCompact(lastCompact, msg.delta); handleSnap(expandSnapshot(lastCompact, wire), msg.etag ?? ""); }
         } catch { /* malformed frame — ignore */ }
       };
       const dropToPolling = () => {

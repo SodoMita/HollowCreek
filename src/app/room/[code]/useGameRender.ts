@@ -12,12 +12,13 @@ export interface GameRenderDeps {
   displayX: RefObject<Map<string, number>>;
   focusRef: RefObject<number | null>;
   zoomRef: RefObject<boolean>;
+  clockRef: RefObject<{ now: number; at: number }>;
   lastDir: RefObject<number>;
   getSettingsStore: () => { value: GameSettings; subscribe: (cb: (n: GameSettings) => void) => () => void };
 }
 
 export function useGameRender(d: GameRenderDeps) {
-  const { canvasRef, rendererRef, snapRef, displayX, focusRef, zoomRef, lastDir, getSettingsStore } = d;
+  const { canvasRef, rendererRef, snapRef, displayX, focusRef, zoomRef, clockRef, lastDir, getSettingsStore } = d;
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -58,6 +59,9 @@ export function useGameRender(d: GameRenderDeps) {
       last = nowMs;
       const s = snapRef.current;
       if (!s) return;
+      // Extrapolate the server clock locally so countdowns, bubbles and the
+      // night stay smooth between the once-a-second clock frames.
+      if (clockRef.current.at) s.now = clockRef.current.now + (nowMs - clockRef.current.at);
       for (const p of s.players) {
         const cur = displayX.current.get(p.id);
         if (cur === undefined || Math.abs(cur - p.x) > 300) { displayX.current.set(p.id, p.x); continue; }
@@ -83,5 +87,5 @@ export function useGameRender(d: GameRenderDeps) {
       window.removeEventListener("resize", debouncedResize);
       window.visualViewport?.removeEventListener("resize", debouncedResize);
     };
-  }, [getSettingsStore, canvasRef, rendererRef, snapRef, displayX, focusRef, zoomRef, lastDir]);
+  }, [getSettingsStore, canvasRef, rendererRef, snapRef, displayX, focusRef, zoomRef, clockRef, lastDir]);
 }

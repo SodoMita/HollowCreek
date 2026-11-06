@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { gzipSync } from "node:zlib";
 import { loadRoom, roomEtag, snapshot } from "@/game/engine";
-import { compactSnapshot } from "@/game/wire";
+import { compactSnapshot, deltaCompact, type WireSnapshot } from "@/game/wire";
 import { allow, clientKey } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
+
+// Per-player last compact frame, so pollers can ask for a delta (prev=<etag>).
+// Idle towns quantise to a stable etag, so the delta is usually empty.
+const lastFrames = new Map<string, { etag: string; frame: WireSnapshot }>();
 
 export async function GET(req: NextRequest) {
   if (!allow(`state:${clientKey(req)}`, 2400, 60_000)) {
@@ -24,11 +28,19 @@ export async function GET(req: NextRequest) {
     return new NextResponse(null, { status: 304, headers });
   }
   // c=1: the compact wire format — reconstructible fields never cross the network
-  const body = JSON.stringify(
-    req.nextUrl.searchParams.get("c") === "1"
-      ? compactSnapshot(snap, Number(req.nextUrl.searchParams.get("f") ?? 0) || 0)
-      : snap
-  );
+  const compact = req.nextUrl.searchParams.get("c") === "1";
+  let payload: unknown = snap;
+  if (compact) {
+    const frame = compactSnapshot(snap, Number(req.nextUrl.searchParams.get("f") ?? 0) || 0);
+    const prev = req.nextUrl.searchParams.get("prev") ?? "";
+    const cached = lastFrames.get(playerId);
+    payload = prev && cached && cached.etag === prev
+      ? { etag, delta: deltaCompact(cached.frame, frame) }
+      : { ...frame, etag };
+    if (lastFrames.size > 128) lastFrames.clear();
+    lastFrames.set(playerId, { etag, frame });
+  }
+  const body = JSON.stringify(payload);
   // Route handlers bypass Next's compressor, so gzip the hot path by hand:
   // a warm poll is ~500 bytes on the wire instead of ~4700.
   if ((req.headers.get("accept-encoding") ?? "").includes("gzip")) {

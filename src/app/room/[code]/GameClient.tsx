@@ -62,6 +62,7 @@ export default function GameClient({ code }: { code: string }) {
   const [spyglass, setSpyglass] = useState(false);
   const focusRef = useRef<number | null>(null);
   const zoomRef = useRef(false);
+  const clockRef = useRef({ now: 0, at: 0 });
   const noteOpenRef = useRef(false);
   const rendererRef = useRef<Renderer | null>(null);
   useEffect(() => { focusRef.current = noteFocus ? noteFocus.x : null; noteOpenRef.current = !!noteFocus; }, [noteFocus]);
@@ -218,7 +219,7 @@ export default function GameClient({ code }: { code: string }) {
 
   useGameStream({
     code, send, getPid, setJoinError, setSnap, setRoleBanner,
-    snapRef, pendingInputRef, mainRef, wardPanelRef, timePanelRef, settingsDialogRef, noteOpenRef, audioRef, lastPhase, leavingRef,
+    snapRef, pendingInputRef, mainRef, wardPanelRef, timePanelRef, settingsDialogRef, noteOpenRef, clockRef, audioRef, lastPhase, leavingRef,
   });
 
   // ---- input: clients only ever send intent ----
@@ -234,7 +235,7 @@ export default function GameClient({ code }: { code: string }) {
     chatOpenRef, noteOpenRef, closeNote: () => setNoteFocus(null), toggleSpyglass, getSettingsStore, getVoice,
   });
 
-  useGameRender({ canvasRef, rendererRef, snapRef, displayX, focusRef, zoomRef, lastDir, getSettingsStore });
+  useGameRender({ canvasRef, rendererRef, snapRef, displayX, focusRef, zoomRef, clockRef, lastDir, getSettingsStore });
 
   const holdMove = (dir: "left" | "right", on: boolean) => {
     if (on) keys.current.add(dir); else keys.current.delete(dir);

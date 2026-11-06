@@ -66,3 +66,58 @@ export function expandSnapshot(wire: WireSnapshot, cache: WireCache): Snapshot {
 
 /** The newest feed timestamp a client holds — its cursor for the next request. */
 export const feedCursor = (cache: WireCache): number => cache.feed.length ? cache.feed[cache.feed.length - 1].at : 0;
+
+/** A players delta: the id order plus only the travellers who actually moved.
+ *  `full` marks a membership change (someone entered/left vision). */
+export interface PlayersDelta { ids: string[]; p: Snapshot["players"]; full?: 1 }
+export type WireDelta = Omit<Partial<WireSnapshot>, "players" | "self"> & {
+  players?: PlayersDelta;
+  self?: Partial<Snapshot["self"]>;
+};
+
+/** Only what changed since the previous compact frame. `self` diffs per field
+ *  (a cooldown tick sends one number, not the whole object) and `players` diffs
+ *  per traveller (one walker sends ~60 B, not the whole crowd). Slow values are
+ *  quantised upstream, so an idle town owes only the once-a-second clock. */
+export function deltaCompact(prev: WireSnapshot | null, next: WireSnapshot): WireDelta {
+  if (!prev) return next as unknown as WireDelta;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(next) as (keyof WireSnapshot)[]) {
+    if (key === "self") {
+      const a = prev.self, b = next.self;
+      const part: Record<string, unknown> = {};
+      for (const k of Object.keys(b) as (keyof typeof b)[]) {
+        if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) part[k] = b[k];
+      }
+      if (Object.keys(part).length) out.self = part;
+    } else if (key === "players") {
+      const a = prev.players, b = next.players;
+      const ids = b.map((p) => p.id);
+      const sameSet = a.length === b.length && a.every((p, i) => p.id === b[i].id);
+      if (!sameSet) out.players = { ids, p: b, full: 1 };
+      else {
+        const changed = b.filter((p, i) => JSON.stringify(p) !== JSON.stringify(a[i]));
+        if (changed.length) out.players = { ids, p: changed };
+      }
+    } else if (JSON.stringify(prev[key]) !== JSON.stringify(next[key])) {
+      out[key] = next[key];
+    }
+  }
+  return out as WireDelta;
+}
+
+/** Client-side merge of a delta frame onto the last full compact frame. */
+export function mergeCompact(prev: WireSnapshot | null, delta: WireDelta): WireSnapshot {
+  const base = (prev ?? {}) as WireSnapshot;
+  const merged = { ...base, ...delta } as WireSnapshot;
+  if (delta.self) merged.self = { ...base.self, ...delta.self };
+  if (delta.players) {
+    if (delta.players.full || !prev) merged.players = delta.players.p;
+    else {
+      const byId = new Map(base.players.map((p) => [p.id, p]));
+      for (const p of delta.players.p) byId.set(p.id, p);
+      merged.players = delta.players.ids.map((id) => byId.get(id)!).filter(Boolean);
+    }
+  }
+  return merged;
+}
