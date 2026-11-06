@@ -93,7 +93,7 @@ export function MidHud(props: {
 {/* ---- event feed ---- */}
 <div className="hc-hud-item hc-hud-fade hc-event-feed pointer-events-none absolute bottom-[8.75rem] left-2 w-[min(70vw,360px)] space-y-1 text-xs sm:bottom-32 sm:left-3 sm:text-sm short:hidden">
   {s.feed.slice(-5).map((f, i) => (
-    <p key={f.at + "" + i} className={`rounded bg-[#0d0810]/60 px-2 py-0.5 italic text-[#c9b8a4] sm:py-1 ${i < 3 ? "hidden sm:block" : ""}`} style={{ opacity: 0.45 + (i / 5) * 0.55 }}>{f.text}</p>
+    <p key={f.at + "" + i} className={`rounded bg-[#0d0810]/60 px-2 py-0.5 italic text-[#c9b8a4] max-sm:truncate sm:py-1 ${i < 3 ? "hidden sm:block" : ""}`} style={{ opacity: 0.45 + (i / 5) * 0.55 }}>{f.text}</p>
   ))}
 </div>
 
