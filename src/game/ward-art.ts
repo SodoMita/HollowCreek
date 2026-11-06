@@ -1,4 +1,5 @@
 import type { Station } from "./types";
+import { MEETING_HOUSE } from "./units";
 import { drawSvg } from "./svg-assets";
 
 /** A small crate of boards, wire, iron and lamp oil, shared across all wards. */
@@ -103,19 +104,22 @@ export function drawBrokenWard(ctx: CanvasRenderingContext2D, kind: Station["kin
       ctx.moveTo(-26, -17); ctx.lineTo(-17, -7);
       ctx.moveTo(19, -15); ctx.lineTo(36, -7); ctx.stroke();
       break;
-    case "chapel":
+    case "chapel": {
       // A hole torn in the roof beside the tower, boards nailed over both
       // arched windows, and the belfry stands empty — no warm glow until restored.
+      const { width: W, wallHeight: H, roofRise, windowWidth: WW, windowHeight: WH } = MEETING_HOUSE;
       ctx.fillStyle = "#0a080d";
-      ctx.beginPath(); ctx.moveTo(-96, -168); ctx.lineTo(-70, -196); ctx.lineTo(-44, -176); ctx.lineTo(-30, -192);
-      ctx.lineTo(-24, -160); ctx.lineTo(-88, -158); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(-W * 0.4, -H - roofRise * 0.25); ctx.lineTo(-W * 0.29, -H - roofRise * 0.65); ctx.lineTo(-W * 0.18, -H - roofRise * 0.35);
+      ctx.lineTo(-W * 0.12, -H - roofRise * 0.6); ctx.lineTo(-W * 0.1, -H - roofRise * 0.15); ctx.lineTo(-W * 0.37, -H - roofRise * 0.12); ctx.closePath(); ctx.fill();
       ctx.strokeStyle = "#493326"; ctx.lineWidth = 5;
-      for (const wx of [-86, 58]) {
-        ctx.beginPath(); ctx.moveTo(wx - 6, -118); ctx.lineTo(wx + 34, -72); ctx.moveTo(wx - 6, -84); ctx.lineTo(wx + 34, -50); ctx.stroke();
+      const winTop = -H + (H - WH) * 0.45;
+      for (const wx of [-W / 2 + W * 0.14, W / 2 - W * 0.14 - WW]) {
+        ctx.beginPath(); ctx.moveTo(wx - 6, winTop + 2); ctx.lineTo(wx + WW + 6, winTop + WH * 0.6); ctx.moveTo(wx - 6, winTop + WH * 0.45); ctx.lineTo(wx + WW + 6, winTop + WH + 4); ctx.stroke();
       }
       ctx.strokeStyle = "#4c4146"; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(-134, -6); ctx.lineTo(-104, -40); ctx.moveTo(-124, -10); ctx.lineTo(-100, -12); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-W * 0.55, -6); ctx.lineTo(-W * 0.43, -40); ctx.moveTo(-W * 0.51, -10); ctx.lineTo(-W * 0.41, -12); ctx.stroke();
       break;
+    }
     case "mill":
       ctx.fillStyle = "#0c090b";
       ctx.beginPath(); ctx.moveTo(-30, -113); ctx.lineTo(-4, -94); ctx.lineTo(22, -112);

@@ -27,6 +27,7 @@ export default function Home() {
   const [roomsLoaded, setRoomsLoaded] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(createDefaultSettings);
   const settingsDialog = useRef<SettingsDialog | null>(null);
+  const [openingTutorial, setOpeningTutorial] = useState(false); // the click must answer at once; the lane loads a moment later
 
   useEffect(() => {
     setName(localStorage.getItem("hc_name") ?? "");
@@ -214,7 +215,8 @@ export default function Home() {
               >⚙ Settings</button>
               <Link
                 href="/tutorial"
-                className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition-colors hover:border-[#c9762f]/40 hover:text-[#ffd98a]"
+                prefetch
+                className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition-colors hover:border-[#c9762f]/40 hover:text-[#ffd98a] active:translate-y-px active:bg-[#3a2430]"
               >
                 <BookOpen className="h-3.5 w-3.5 text-[#d99a3d]" /> Tutorial
               </Link>
@@ -250,9 +252,12 @@ export default function Home() {
           </button>
           <Link
             href="/tutorial"
-            className="mt-2.5 flex w-full items-center justify-center gap-2 rounded border border-[#84624c]/80 bg-[#1f151c]/90 px-4 py-2.5 font-display text-lg tracking-wide text-[#ffd98a] transition-colors hover:bg-[#321f28]"
+            prefetch
+            onClick={() => setOpeningTutorial(true)}
+            aria-busy={openingTutorial}
+            className={`mt-2.5 flex w-full items-center justify-center gap-2 rounded border px-4 py-2.5 font-display text-lg tracking-wide transition-colors active:translate-y-px ${openingTutorial ? "border-[#d99a3d] bg-[#3a2410] text-[#ffd98a]" : "border-[#84624c]/80 bg-[#1f151c]/90 text-[#ffd98a] hover:bg-[#321f28] active:bg-[#3a2430]"}`}
           >
-            <BookOpen className="h-4 w-4 text-[#d99a3d]" /> Walk Alone · Singleplayer Tutorial
+            <BookOpen className={`h-4 w-4 text-[#d99a3d] ${openingTutorial ? "animate-pulse" : ""}`} /> {openingTutorial ? "Lighting the lantern…" : "Walk Alone · Singleplayer Tutorial"}
           </Link>
           <div className="my-5 flex items-center gap-3 text-xs text-[#8a7a82]">
             <div className="h-px flex-1 bg-[#3a2733]" /> or travel to one <div className="h-px flex-1 bg-[#3a2733]" />

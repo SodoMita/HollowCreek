@@ -8,6 +8,7 @@ import { drawBrokenWard, drawKit, drawSupplyCart } from "./ward-art";
 import { BUILDINGS, doorX, TREE_MAX, TREE_MIN, treeX, WORLD_MIN, WORLD_MAX, type DoorState } from "./buildings";
 import { drawHouseExterior, drawHouseInterior } from "./house-art";
 import { drawSvg, drawTraveler } from "./svg-assets";
+import { MEETING_HOUSE } from "./units";
 
 interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: string; s: number }
 
@@ -1005,9 +1006,9 @@ export class Renderer {
       }
       case "chapel": {
         // A white-clapboard meeting house with a square belfry and a spire —
-        // the tallest thing on the street. Weathered white reads grey-violet
-        // in the dusk; the stone steps and the door face the road.
-        const W = 240, H = 150;
+        // the tallest thing on the street. Dimensions come from units.ts.
+        const { width: W, wallHeight: H, roofRise, towerWidth, towerBase, belfryHeight, spireHeight, windowWidth: WW, windowHeight: WH, doorWidth: DW, doorHeight: DH } = MEETING_HOUSE;
+        const tw = towerWidth / 2, ridge = -H - roofRise, belfryFloor = ridge - towerBase, belfryTop = belfryFloor - belfryHeight, spireTip = belfryTop - spireHeight;
         ctx.fillStyle = "#2b2129";
         ctx.fillRect(-W / 2, -H, W, H);
         ctx.strokeStyle = "rgba(0,0,0,0.28)"; ctx.lineWidth = 1;
@@ -1016,35 +1017,37 @@ export class Renderer {
         ctx.fillStyle = "#3a2f38"; ctx.fillRect(-W / 2, -H, 6, H); ctx.fillRect(W / 2 - 6, -H, 6, H); ctx.fillRect(-W / 2, -8, W, 8);
         // gable roof facing the road, with a pediment cornice
         ctx.fillStyle = "#17111a";
-        ctx.beginPath(); ctx.moveTo(-W / 2 - 14, -H); ctx.lineTo(0, -H - 72); ctx.lineTo(W / 2 + 14, -H); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(-W / 2 - 14, -H); ctx.lineTo(0, ridge); ctx.lineTo(W / 2 + 14, -H); ctx.closePath(); ctx.fill();
         ctx.strokeStyle = "#5a4f58"; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.moveTo(-W / 2 - 14, -H); ctx.lineTo(0, -H - 72); ctx.lineTo(W / 2 + 14, -H); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-W / 2 - 14, -H); ctx.lineTo(0, ridge); ctx.lineTo(W / 2 + 14, -H); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(-W / 2 - 14, -H + 2); ctx.lineTo(W / 2 + 14, -H + 2); ctx.stroke();
         // tower astride the ridge: base, open belfry, spire, weathervane
-        ctx.fillStyle = "#2b2129"; ctx.fillRect(-26, -H - 160, 52, 100);
-        ctx.fillStyle = "#3a2f38"; ctx.fillRect(-30, -H - 164, 60, 6);
-        ctx.fillStyle = "#241a22"; ctx.fillRect(-22, -H - 214, 44, 50);
+        ctx.fillStyle = "#2b2129"; ctx.fillRect(-tw, belfryFloor, towerWidth, towerBase + 12);
+        ctx.fillStyle = "#3a2f38"; ctx.fillRect(-tw - 4, belfryFloor - 4, towerWidth + 8, 6);
+        ctx.fillStyle = "#241a22"; ctx.fillRect(-tw + 4, belfryTop, towerWidth - 8, belfryHeight);
         ctx.fillStyle = broken ? "#07050a" : "#120a0e";
-        ctx.beginPath(); ctx.moveTo(-12, -H - 168); ctx.lineTo(-12, -H - 196); ctx.arc(0, -H - 196, 12, Math.PI, 0); ctx.lineTo(12, -H - 168); ctx.closePath(); ctx.fill();
-        if (!broken) { ctx.fillStyle = "#8c6a2f"; ctx.beginPath(); ctx.arc(0, -H - 186, 6, 0, Math.PI * 2); ctx.fill(); }
-        ctx.fillStyle = "#3a2f38"; ctx.fillRect(-28, -H - 220, 56, 6);
+        const ar = tw * 0.46, arcY = belfryTop + belfryHeight * 0.45;
+        ctx.beginPath(); ctx.moveTo(-ar, belfryFloor - 4); ctx.lineTo(-ar, arcY); ctx.arc(0, arcY, ar, Math.PI, 0); ctx.lineTo(ar, belfryFloor - 4); ctx.closePath(); ctx.fill();
+        if (!broken) { ctx.fillStyle = "#8c6a2f"; ctx.beginPath(); ctx.arc(0, arcY + ar * 0.8, ar * 0.5, 0, Math.PI * 2); ctx.fill(); }
+        ctx.fillStyle = "#3a2f38"; ctx.fillRect(-tw - 2, belfryTop - 6, towerWidth + 4, 6);
         ctx.fillStyle = "#17111a";
-        ctx.beginPath(); ctx.moveTo(-28, -H - 220); ctx.lineTo(0, -H - 310); ctx.lineTo(28, -H - 220); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(-tw - 2, belfryTop - 6); ctx.lineTo(0, spireTip); ctx.lineTo(tw + 2, belfryTop - 6); ctx.closePath(); ctx.fill();
         ctx.strokeStyle = "#c9b98a"; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(0, -H - 310); ctx.lineTo(0, -H - 336); ctx.moveTo(-9, -H - 326); ctx.lineTo(9, -H - 326); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, spireTip); ctx.lineTo(0, spireTip - 26); ctx.moveTo(-9, spireTip - 16); ctx.lineTo(9, spireTip - 16); ctx.stroke();
         // tall arched windows either side of the door, a fan light over it
-        for (const wx of [-86, 58]) {
+        const winTop = -H + (H - WH) * 0.45;
+        for (const wx of [-W / 2 + W * 0.14, W / 2 - W * 0.14 - WW]) {
           ctx.fillStyle = "#1a1219";
-          ctx.beginPath(); ctx.moveTo(wx - 3, -56); ctx.lineTo(wx - 3, -112); ctx.arc(wx + 14, -112, 17, Math.PI, 0); ctx.lineTo(wx + 31, -56); ctx.closePath(); ctx.fill();
-          win(wx, -112, 28, 56);
+          ctx.beginPath(); ctx.moveTo(wx - 3, winTop + WH); ctx.lineTo(wx - 3, winTop); ctx.arc(wx + WW / 2, winTop, WW / 2 + 3, Math.PI, 0); ctx.lineTo(wx + WW + 3, winTop + WH); ctx.closePath(); ctx.fill();
+          win(wx, winTop, WW, WH);
           ctx.strokeStyle = "rgba(31,17,15,.9)"; ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.moveTo(wx + 14, -112); ctx.lineTo(wx + 14, -56); ctx.moveTo(wx, -84); ctx.lineTo(wx + 28, -84); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(wx + WW / 2, winTop); ctx.lineTo(wx + WW / 2, winTop + WH); ctx.moveTo(wx, winTop + WH / 2); ctx.lineTo(wx + WW, winTop + WH / 2); ctx.stroke();
         }
-        ctx.fillStyle = "#1a1219"; ctx.fillRect(-24, -92, 48, 92);
-        win(-19, -88, 38, 12);
-        ctx.fillStyle = "#120a0e"; ctx.fillRect(-19, -72, 38, 72);
-        ctx.strokeStyle = "#3a2f38"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, -72); ctx.lineTo(0, 0); ctx.stroke();
-        ctx.fillStyle = "#3d3a42"; ctx.fillRect(-34, -6, 68, 6); ctx.fillRect(-40, -3, 80, 3);
+        ctx.fillStyle = "#1a1219"; ctx.fillRect(-DW / 2 - 5, -DH - 20, DW + 10, DH + 20);
+        win(-DW / 2, -DH - 16, DW, 12);
+        ctx.fillStyle = "#120a0e"; ctx.fillRect(-DW / 2, -DH, DW, DH);
+        ctx.strokeStyle = "#3a2f38"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, -DH); ctx.lineTo(0, 0); ctx.stroke();
+        ctx.fillStyle = "#3d3a42"; ctx.fillRect(-DW / 2 - 15, -6, DW + 30, 6); ctx.fillRect(-DW / 2 - 21, -3, DW + 42, 3);
         break;
       }
       case "mill": {
@@ -1126,7 +1129,7 @@ export class Renderer {
       ctx.font = "bold 10px system-ui, sans-serif";
       ctx.textAlign = "center";
       ctx.fillStyle = supplied ? "#b3d59a" : task.sabotaged ? "#d87762" : "#ffcd5a";
-      ctx.fillText(supplied ? "PUZZLE" : task.sabotaged ? "SABOTAGED" : "NEEDS KIT", x, ground - (st.kind === "chapel" ? 500 : 247));
+      ctx.fillText(supplied ? "PUZZLE" : task.sabotaged ? "SABOTAGED" : "NEEDS KIT", x, ground - (st.kind === "chapel" ? MEETING_HOUSE.wallHeight + MEETING_HOUSE.roofRise + MEETING_HOUSE.towerBase + MEETING_HOUSE.belfryHeight + MEETING_HOUSE.spireHeight + 44 : 247));
       ctx.restore();
       if (task.progress > 0) {
         ctx.fillStyle = "rgba(0,0,0,0.5)";

@@ -4,6 +4,7 @@
 // All game logic stays in GameClient — these components only render + call back.
 
 import Link from "next/link";
+import { useEffect } from "react";
 import type { VoiceCallbacks } from "./overlays";
 import { useRouter } from "next/navigation";
 import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
@@ -22,8 +23,13 @@ export function Toast({ text }: { text: string | null }) {
 
 export function NoteReader({ note, onClose }: { note: { text: string; author: string }; onClose: () => void }) {
   // Nothing is drawn here: the page is read on the canvas through the spyglass.
-  // This is only an invisible click-catcher (click or Esc lowers the glass),
-  // with the page text for screen readers.
+  // This is only an invisible click-catcher — any click or any key lowers the
+  // glass — with the page text for screen readers.
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (!e.ctrlKey && !e.metaKey && !e.altKey) onClose(); };
+    window.addEventListener("keydown", down, true);
+    return () => window.removeEventListener("keydown", down, true);
+  }, [onClose]);
   return (
     <div className="absolute inset-0 z-20" onClick={onClose} data-testid="note-reader" role="button"
       aria-label={note.author ? `Page pinned by ${note.author}: ${note.text}. Click to lower the spyglass.` : "Spyglass raised. Click to lower it."}>
