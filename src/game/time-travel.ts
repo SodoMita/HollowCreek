@@ -388,7 +388,7 @@ export function pastSnapshot(room: Room, p: P, visit: TimeVisit, now: number): S
   view.now = now;
   view.bellAt = view.bellAt ? view.bellAt + shift : 0; view.flickerAt = view.flickerAt ? view.flickerAt + shift : 0; view.blackoutUntil = view.blackoutUntil ? view.blackoutUntil + shift : 0;
   if (view.meeting) view.meeting.endsAt += shift;
-  view.time = { mode: "past", earliest: room.history[0]?.at ?? visit.originAt, latest: room.history.at(-1)?.at ?? visit.originAt, cursor, endsAt: visit.endsAt };
+  view.time = { mode: "past", earliest: Math.ceil((room.history[0]?.at ?? visit.originAt) / 1000) * 1000, latest: Math.floor((room.history.at(-1)?.at ?? visit.originAt) / 1000) * 1000, cursor, endsAt: visit.endsAt };
   view.hostId = [...room.players.values()].find((item) => item.isHost)?.id ?? ""; view.playerCount = room.players.size;
   return view;
 }

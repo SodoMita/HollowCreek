@@ -9,6 +9,7 @@
 //
 import type { Snapshot } from "./types";
 import { SettingsStore } from "./settings";
+import { MusicBox } from "./music-box";
 
 const NOTE = (semis: number) => 55 * Math.pow(2, semis / 12); // A1 reference
 
@@ -45,6 +46,7 @@ export class AudioDirector {
   private danger = 0;
   private heartDanger = 0;
   private blackoutUntil = 0;
+  private box: MusicBox | null = null;
 
   constructor(private store: SettingsStore = new SettingsStore()) {
     this.mutedFlag = !!store.value?.audio?.muted;
@@ -176,6 +178,9 @@ export class AudioDirector {
         choirGain, choirOsc, windGain, windFilter, heartGain, tensionGain, noiseBuf,
       };
 
+      // The old music box only wakes for intimate moments: hands on a ward,
+      // or a walk through the recorded past. The road keeps its original score.
+      this.box = new MusicBox(ctx, musicBus);
       this.applyMix();
       this.nextMotif = ctx.currentTime + 2.5;
       this.nextBell = ctx.currentTime + 12;
@@ -211,6 +216,8 @@ export class AudioDirector {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.unsubscribe();
+    this.box?.destroy();
+    this.box = null;
     if (this.n) {
       try {
         this.n.droneOsc.forEach((o) => o.stop());
@@ -246,6 +253,7 @@ export class AudioDirector {
     this.n.tensionGain.gain.setTargetAtTime(0.25 * this.danger, t, 0.7);
     this.n.heartGain.gain.setTargetAtTime(this.store.value.audio.heartbeat ? 0.32 * actualDanger : 0, t, 0.4);
 
+    this.box?.setActive(!!snap.minigame || snap.time?.mode === "past", t);
     const blackout = Date.now() < this.blackoutUntil;
     this.n.windGain.gain.setTargetAtTime(blackout ? 0.26 : 0.16, t, 0.8);
     this.n.windFilter.frequency.setTargetAtTime(blackout ? 240 : 420 + 220 * this.danger, t, 1.1);
@@ -338,6 +346,7 @@ export class AudioDirector {
     const n = this.n;
     if (!n) return;
     const t = n.ctx.currentTime;
+    this.box?.tick(t);
     if (t >= this.nextMotif) {
       this.pluckMotif();
       this.nextMotif = t + 7 + Math.random() * 9;

@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
-import { Renderer } from "@/game/render";
+import { Renderer, ZOOM_MAX, ZOOM_READ } from "@/game/render";
+import type { NetState } from "./useGameRender";
 import { useGameStream } from "./useGameStream";
 import { useGameInput } from "./useGameInput";
 import { useGameRender } from "./useGameRender";
@@ -17,6 +18,7 @@ import type { VoiceChat, VoiceStatus } from "@/game/voice";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
 import { NoteReader, RoleBanner, Toast } from "./hud";
+import { Minimap } from "./minimap";
 import { MidHud } from "./midhud";
 import { BottomControls, TopBar } from "./bars";
 import { ChatBox, PinPanel } from "./chat";
@@ -61,7 +63,63 @@ export default function GameClient({ code }: { code: string }) {
   const focusRef = useRef<number | null>(null);
   const noteOpenRef = useRef(false);
   const rendererRef = useRef<Renderer | null>(null);
-  useEffect(() => { focusRef.current = noteFocus ? noteFocus.x : null; noteOpenRef.current = !!noteFocus; }, [noteFocus]);
+  useEffect(() => { focusRef.current = noteFocus ? noteFocus.x : null; }, [noteFocus]);
+  // The glass: a continuous zoom (mouse wheel, trackpad, pinch) with the
+  // spyglass button / Z snapping between lowered and raised. `glassUp` is what
+  // the HUD shows; the renderer reads the live value through the ref.
+  const [glassUp, setGlassUp] = useState(false);
+  useEffect(() => { noteOpenRef.current = glassUp; }, [glassUp]);
+  const zoomRef = useRef(1);
+  const applyZoom = useCallback((z: number) => {
+    const clamped = Math.max(1, Math.min(ZOOM_MAX, z));
+    zoomRef.current = clamped;
+    rendererRef.current?.setViewZoom(clamped);
+    setGlassUp((up) => (clamped > 1.05) !== up ? clamped > 1.05 : up);
+    if (clamped <= 1.05) setNoteFocus(null);
+  }, []);
+  const lowerGlass = useCallback(() => applyZoom(1), [applyZoom]);
+  /** Spyglass button / Z: raise to the reading zoom (aimed at a nearby page if there is one), or lower. */
+  const toggleGlass = useCallback((page: { id: string; x: number; author: string; text: string } | null) => {
+    if (zoomRef.current > 1.05) { lowerGlass(); return; }
+    setNoteFocus(page);
+    applyZoom(ZOOM_READ);
+  }, [applyZoom, lowerGlass]);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const step = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015));
+      applyZoom(zoomRef.current * step);
+    };
+    // Pinch: track two pointers on the canvas; the zoom follows the distance ratio.
+    const pointers = new Map<number, { x: number; y: number }>();
+    let pinchStart = 0, zoomStart = 1;
+    const dist = () => { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+    const onDown = (e: PointerEvent) => {
+      if (e.pointerType !== "touch") return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2) { pinchStart = dist(); zoomStart = zoomRef.current; }
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2 && pinchStart > 0) applyZoom(zoomStart * dist() / pinchStart);
+    };
+    const onUp = (e: PointerEvent) => { pointers.delete(e.pointerId); if (pointers.size < 2) pinchStart = 0; };
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    canvas.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [applyZoom]);
   const [leaving, setLeaving] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(createDefaultSettings);
 
@@ -70,6 +128,10 @@ export default function GameClient({ code }: { code: string }) {
   const displayX = useRef(new Map<string, number>());
   const keys = useRef(new Set<string>());
   const lastDir = useRef(0);
+  // Prediction bookkeeping: measured round trip, when the last positions
+  // arrived, and our own recent steering, so the render loop can replay the
+  // inputs the server has not acknowledged yet (see useGameRender).
+  const netRef = useRef<NetState>({ rttMs: 150, arrival: 0, inputs: [] });
   const audioRef = useRef<AudioDirector | null>(null);
   const voiceRef = useRef<VoiceChat | null>(null);
   const audioInitRef = useRef<Promise<typeof import("@/game/audio")> | null>(null);
@@ -87,6 +149,7 @@ export default function GameClient({ code }: { code: string }) {
   const send = useCallback(async (payload: Record<string, unknown>) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 2500); // hung POSTs must not pile up; next poll resyncs
+    const sentAt = performance.now();
     try {
       const res = await fetch("/api/game/input", {
         method: "POST",
@@ -95,6 +158,8 @@ export default function GameClient({ code }: { code: string }) {
         signal: controller.signal,
       });
       const data = await res.json();
+      const rtt = Math.min(1500, Math.max(20, performance.now() - sentAt));
+      netRef.current.rttMs = netRef.current.rttMs * 0.7 + rtt * 0.3;
       if (!data.ok && data.error) {
         setToast(data.error);
         setTimeout(() => setToast(null), 2200);
@@ -201,23 +266,34 @@ export default function GameClient({ code }: { code: string }) {
 
   useGameStream({
     code, send, getPid, setJoinError, setSnap, setRoleBanner,
-    snapRef, pendingInputRef, mainRef, wardPanelRef, timePanelRef, settingsDialogRef, noteOpenRef, audioRef, lastPhase, leavingRef,
+    snapRef, pendingInputRef, mainRef, wardPanelRef, timePanelRef, settingsDialogRef, noteOpenRef, audioRef, lastPhase, leavingRef, netRef,
   });
 
   // ---- input: clients only ever send intent ----
   const computeDir = useCallback(() => {
     const k = keys.current;
     const d = (k.has("right") ? 1 : 0) - (k.has("left") ? 1 : 0);
-    if (d !== lastDir.current) { lastDir.current = d; void send({ dir: d }); }
+    if (d !== lastDir.current) {
+      lastDir.current = d;
+      const log = netRef.current.inputs;
+      log.push({ t: performance.now(), dir: d });
+      if (log.length > 64) log.splice(0, log.length - 64);
+      void send({ dir: d });
+    }
   }, [send]);
+
+  const me = useMemo(() => snap?.players.find((p) => p.id === snap.self.id), [snap]);
+  const nearestNote = useMemo(() => snap && me ? (snap.notes ?? [])
+    .filter((n) => Math.abs(n.x - me.x) <= 150)
+    .sort((a, b) => Math.abs(a.x - me.x) - Math.abs(b.x - me.x))[0] : undefined, [snap, me]);
 
   useGameInput({
     send, keys, lastDir, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract,
     wardPanelRef, timePanelRef, settingsDialogRef, chatOpen, pinOpen, setChatOpen, setPinOpen, setPinText, activateTimepiece,
-    chatOpenRef, noteOpenRef, closeNote: () => setNoteFocus(null), getSettingsStore, getVoice,
+    chatOpenRef, noteOpenRef, closeNote: lowerGlass, toggleSpyglass: () => toggleGlass(nearestNote ?? null), getSettingsStore, getVoice,
   });
 
-  useGameRender({ canvasRef, rendererRef, snapRef, displayX, focusRef, lastDir, getSettingsStore });
+  useGameRender({ canvasRef, rendererRef, snapRef, displayX, focusRef, lastDir, netRef, getSettingsStore });
 
   const holdMove = (dir: "left" | "right", on: boolean) => {
     if (on) keys.current.add(dir); else keys.current.delete(dir);
@@ -241,10 +317,6 @@ export default function GameClient({ code }: { code: string }) {
 
   // ------------------------------------------------------------------ UI ---
 
-  const me = useMemo(() => snap?.players.find((p) => p.id === snap.self.id), [snap]);
-  const nearestNote = useMemo(() => snap && me ? (snap.notes ?? [])
-    .filter((n) => Math.abs(n.x - me.x) <= 150)
-    .sort((a, b) => Math.abs(a.x - me.x) - Math.abs(b.x - me.x))[0] : undefined, [snap, me]);
   const pinNote = async () => {
     const text = pinText.trim();
     if (!text) return;
@@ -287,9 +359,9 @@ export default function GameClient({ code }: { code: string }) {
 
       {s && (
         <>
-          <TopBar s={s} me={me} nearestNote={nearestNote} muted={muted} leaving={leaving} voiceStatus={voiceStatus} controls={settings.controls}
+          <TopBar s={s} me={me} nearestNote={nearestNote} spyglass={glassUp} onToggleSpyglass={() => toggleGlass(nearestNote ?? null)} muted={muted} leaving={leaving} voiceStatus={voiceStatus} controls={settings.controls}
             onCopyCode={() => { void navigator.clipboard?.writeText(s.code); setToast("Town code copied"); setTimeout(() => setToast(null), 1500); }}
-            onTimepiece={activateTimepiece} onPinToggle={() => setPinOpen((v) => !v)} onReadNote={setNoteFocus}
+            onTimepiece={activateTimepiece} onPinToggle={() => setPinOpen((v) => !v)} onReadNote={(note) => { if (zoomRef.current > 1.05) { setNoteFocus(note); return; } toggleGlass(note); }}
             onDropKit={() => void send({ action: "drop_supply" })}
             onMute={() => { ensureAudio(); const m = !muted; getSettingsStore().update((draft) => { draft.audio.muted = m; }); audioRef.current?.setMuted(m); }}
             onToggleVoice={toggleVoice} onToggleMic={toggleMic}
@@ -310,7 +382,8 @@ export default function GameClient({ code }: { code: string }) {
             <PinPanel text={pinText} onText={setPinText} onSubmit={() => void pinNote()} onCancel={() => { setPinOpen(false); setPinText(""); }} />
           )}
 
-          {noteFocus && <NoteReader note={noteFocus} onClose={() => setNoteFocus(null)} />}
+          {s.phase === "playing" && !glassUp && <Minimap s={s} me={me} />}
+          {glassUp && <NoteReader note={noteFocus ?? { text: "", author: "" }} onClose={lowerGlass} />}
 
           {chatOpen && (
             <ChatBox alive={s.self.alive} text={chatText} onText={setChatText} onSubmit={submitChat} inputRef={chatInputRef} />

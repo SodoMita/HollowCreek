@@ -5,10 +5,12 @@ import {
 import type { PublicPlayer, Snapshot, Station, TaskView } from "./types";
 import { createDefaultSettings, type GameSettings } from "./settings";
 import { drawBrokenWard, drawKit, drawSupplyCart } from "./ward-art";
-import { BUILDINGS, doorX, TREE_MAX, TREE_MIN, treeX, WORLD_MIN, WORLD_MAX, type DoorState } from "./buildings";
-import { TOWN_HOUSES } from "./town";
+import { BUILDINGS, TREE_MAX, TREE_MIN, treeX, WORLD_MIN, WORLD_MAX, type DoorState } from "./buildings";
 import { drawHouseExterior, drawHouseInterior } from "./house-art";
 import { drawSvg, drawTraveler } from "./svg-assets";
+import { drawCreekGlints, drawFireflies, drawForeground, drawGrade, drawMoonRays, drawStreetDressing, makeGrainTile } from "./atmosphere";
+import { MEETING_HOUSE, NOTE_FAR, NOTE_NEAR, ZOOM_MAX, ZOOM_READ } from "./units";
+export { ZOOM_MAX, ZOOM_READ };
 
 interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: string; s: number }
 
@@ -78,10 +80,22 @@ export class Renderer {
     return g;
   }
   private settings: GameSettings = createDefaultSettings();
+  private grainTile: HTMLCanvasElement | null | undefined;
   cameraX = 0;
   /** When set, the camera centers on this world x and zooms in to read a page. */
   focusX: number | null = null;
   setFocus(x: number | null) { this.focusX = x; }
+  /** The spyglass: zoom in anywhere, centred on the traveller (no page needed). */
+  zoomOnly = false;
+  setZoomOnly(on: boolean) { this.zoomOnly = on; }
+  /** The spyglass / pinch zoom: a multiplier on the settings' world zoom (1 = lowered). */
+  viewZoom = 1;
+  setViewZoom(z: number) { this.viewZoom = Math.max(1, Math.min(ZOOM_MAX, z)); }
+  /** Where each figure was drawn last frame, so facing and gait follow what is
+   *  actually shown rather than the server's view of it (which arrives a round
+   *  trip later and made your own traveller walk backwards after a turn). */
+  private lastDrawnX = new Map<string, { x: number; facing: number; movingUntil: number }>();
+  private glassUp = false;
   private visionR = 420;
   private doorOpenAmount = new Map<string, number>();
 
@@ -124,8 +138,19 @@ export class Renderer {
     // Zoom the world, not the DOM HUD. Gameplay and server vision stay in world units.
     // A focused page (read-note zoom) overrides both zoom and camera target.
     const focused = this.focusX !== null;
-    const zoom = focused ? Math.max(graphics.worldZoom, 2.6) : graphics.worldZoom;
+    const glassUp = focused || this.zoomOnly || this.viewZoom > 1.05; // HUD-like labels stay out of the zoomed view
+    this.glassUp = glassUp;
+    const base = graphics.worldZoom * this.viewZoom;
+    const zoom = Math.min(graphics.worldZoom * ZOOM_MAX, focused || this.zoomOnly ? Math.max(base, ZOOM_READ) : base);
     ctx.save(); ctx.scale(zoom, zoom); w /= zoom; h /= zoom;
+    // Through the glass the page, not the road, should sit mid-screen: lift the
+    // whole view so the paper is centred (wall pages hang higher than tree pages).
+    let lift = 0;
+    if (focused) {
+      const fn = (snap.notes ?? []).find((n) => n.x === this.focusX);
+      if (fn) lift = Math.max(0, (fn.kind === "wall" ? 165 : 121) - 0.28 * h);
+      ctx.translate(0, lift);
+    }
     if (graphics.reducedMotion) t = 0;
     this.cacheSnap(snap);
     const me = this.meCache;
@@ -154,7 +179,7 @@ export class Renderer {
       return g;
     });
     ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, w, ground);
+    ctx.fillRect(0, -lift, w, ground + lift);
 
     // Deterministic stars: no shimmering random layout between frames.
     const starCount = this.qualityCount(95, 48, 18);
@@ -193,6 +218,8 @@ export class Renderer {
     }
     ctx.restore();
 
+    if (graphics.glow && graphics.quality !== "low") drawMoonRays(ctx, mx, my, t, night);
+
     // Long, slow cloud banks crossing the moon and horizon.
     if (graphics.quality !== "low") {
       ctx.save();
@@ -224,58 +251,19 @@ export class Renderer {
     }
     ctx.lineTo(w, ground); ctx.fill();
 
-    for (let i = 0; i < 78; i++) {
+    for (let i = 0; i < 92; i++) {
       const wx = WORLD_MIN + i * 155 + ((i * 97) % 60);
       const sx = wx - cam * 0.45;
-      if (sx < -90 || sx > w + 90) continue;
+      if (sx < -150 || sx > w + 150) continue;
       const th = 74 + ((i * 53) % 56);
       this.drawTree(ctx, sx, ground, th, i);
+      // the fen and the ridge grow wild: doubled groves where the village ends
+      if (wx < -2650 || wx > 7350) this.drawTree(ctx, sx + 62, ground, th * 0.82, i + 7);
     }
 
-    // --- background village: 100+ distinct houses along the whole world (visual only) ---
-    {
-      const s = 0.66, par = 0.62;
-      for (const th of TOWN_HOUSES) {
-        if (th.x < WORLD_MIN + 40 || th.x > WORLD_MAX - 40) continue;
-        const sx = th.x - cam * par;
-        const hw = th.w * s, hh = th.h * s;
-        if (sx < -hw || sx > w + hw) continue;
-        ctx.save();
-        ctx.globalAlpha = 0.82;
-        if (th.flip) { ctx.translate(sx + hw / 2, 0); ctx.scale(-1, 1); ctx.translate(-(sx + hw / 2), 0); }
-        drawSvg(ctx, th.asset, sx - hw / 2, ground - hh + 6, hw, hh);
-        ctx.restore();
-      }
-    }
-
-    // --- Malye Korely street dressing: fences, door lanterns, woodpiles, windmill ---
-    // Purely decorative world-anchored props; they never change gameplay coordinates.
-    const FENCE_XS = [-2760, -2180, -1460, -1250, -700, -120, 420, 760, 1560, 1860, 2560, 2960, 3320, 3780, 4180, 4420, 5100, 5260, 5980, 6280, 6900, 7180];
-    for (const fx of FENCE_XS) {
-      const sx = fx - cam;
-      if (sx < -160 || sx > w + 160) continue;
-      drawSvg(ctx, "props/fence.svg", sx, ground - 46, 140, 46);
-    }
-    for (const b of BUILDINGS) {
-      const lx = doorX(b) + b.side * 46 - cam; // lantern post beside each doorway
-      if (lx > -40 && lx < w + 40) drawSvg(ctx, "props/lantern-post.svg", lx, ground - 96, 30, 96);
-    }
-    for (const wx of [-560, 5300]) {
-      const sx = wx - cam;
-      if (sx > -80 && sx < w + 80) drawSvg(ctx, "props/woodpile.svg", sx - 32, ground - 44, 64, 44);
-    }
-    for (const mx of [4350, 6620]) { // Pomor windmills: past the silo and at the far east end
-      const sx = mx - cam;
-      if (sx > -150 && sx < w + 150) drawSvg(ctx, "props/windmill.svg", sx - 65, ground - 160, 130, 160);
-    }
-    for (const gx of [3110, 3265, 3345]) { // grave markers around the graves ward (x=3200)
-      const sx = gx - cam;
-      if (sx > -50 && sx < w + 50) drawSvg(ctx, "props/gravestone.svg", sx - 17, ground - 46, 34, 46);
-    }
-    for (const hx of [195, 352]) { // haystacks by the harvest shed (x=280)
-      const sx = hx - cam;
-      if (sx > -90 && sx < w + 90) drawSvg(ctx, "props/haystack.svg", sx - 35, ground - 52, 70, 52);
-    }
+    // The horizon is wilderness: no backdrop village, only woods and props.
+    // --- New England street dressing lives in atmosphere.ts (props only) ---
+    drawStreetDressing(ctx, cam, w, ground);
 
     // --- ground ---
     const gg = this.grad(`ground:${ground}:${h}:${nb}`, () => {
@@ -329,6 +317,7 @@ export class Renderer {
       // and plank bridge sit in the foreground, in front of the road surface
       const sx = -2660 - cam;
       if (sx > -300 && sx < w + 300) drawSvg(ctx, "props/creek-bridge.svg", sx, ground - 6, 260, 64);
+      drawCreekGlints(ctx, cam, w, ground, t);
     }
 
     // meeting square highlight
@@ -349,8 +338,8 @@ export class Renderer {
       for (const note of snap.notes ?? []) {
         if (note.house !== b.id) continue;
         const nx = note.x - cam;
-        if (nx < -60 || nx > w + 60) continue;
-        this.drawNote(ctx, nx, ground, "wall", this.focusX === note.x, t);
+        if (nx < -100 || nx > w + 100) continue;
+        this.drawNote(ctx, nx, ground, "wall", this.focusX === note.x, t, note);
       }
     }
 
@@ -381,9 +370,9 @@ export class Renderer {
     for (const note of snap.notes ?? []) {
       if (note.house) continue; // interior pages are drawn with their house
       const sx = note.x - cam;
-      if (sx < -60 || sx > w + 60) continue;
+      if (sx < -100 || sx > w + 100) continue;
       const big = focused && this.focusX === note.x;
-      this.drawNote(ctx, sx, ground, note.kind, big, t);
+      this.drawNote(ctx, sx, ground, note.kind, big, t, note);
     }
 
     // --- bell tower ---
@@ -500,7 +489,14 @@ export class Renderer {
         ctx.fillStyle = "rgba(0,0,0,.35)";
         ctx.beginPath(); ctx.ellipse(px, ground + 2, 17, 4, 0, 0, Math.PI * 2); ctx.fill();
       }
-      this.drawFigure(ctx, px, ground + floatY, p.color, p.facing, p.moving, ghost, isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t, 1);
+      const shownX = displayX.get(p.id) ?? p.x;
+      let seen = this.lastDrawnX.get(p.id);
+      if (!seen) { seen = { x: shownX, facing: p.facing, movingUntil: 0 }; this.lastDrawnX.set(p.id, seen); }
+      const dx = shownX - seen.x;
+      if (Math.abs(dx) > 0.6) { seen.facing = dx > 0 ? 1 : -1; seen.movingUntil = t + 0.12; }
+      else if (p.moving && p.id !== snap.self.id) seen.movingUntil = Math.max(seen.movingUntil, t + 0.05);
+      seen.x = shownX;
+      this.drawFigure(ctx, px, ground + floatY, p.color, seen.facing, t < seen.movingUntil, ghost, isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t, 1);
       ctx.restore();
       // A kit stays visible on its carrier until someone delivers it.
       if (p.hasSupply) drawKit(ctx, px - 23, ground - 16 + floatY);
@@ -519,7 +515,7 @@ export class Renderer {
         ctx.restore();
       }
       // name and speech are optional HUD layers; the figures remain identifiable by color.
-      if (this.settings.interface.playerNames) {
+      if (this.settings.interface.playerNames && !glassUp) {
         ctx.font = "600 12px system-ui, sans-serif";
         ctx.textAlign = "center";
         const label = p.name + (p.echo ? " · echo" : snap.phase === "meeting" && p.voted ? " ✓" : "");
@@ -529,13 +525,13 @@ export class Renderer {
         ctx.fillStyle = p.id === snap.self.id ? "#ffd98a" : p.echo ? "#b9d9d5" : isMate ? "#ff7a6a" : "rgba(245,235,220,.96)";
         ctx.fillText(label, px, ground - 62 + floatY);
       }
-      if (p.action && p.action.until > now) {
+      if (p.action && p.action.until > now && !glassUp) {
         ctx.save(); ctx.font = "600 10px system-ui, sans-serif"; ctx.textAlign = "center";
         const label = p.action.text, width = ctx.measureText(label).width;
         ctx.fillStyle = "rgba(20,27,29,.9)"; ctx.beginPath(); ctx.roundRect(px - width / 2 - 6, ground - 98 + floatY, width + 12, 16, 5); ctx.fill();
         ctx.fillStyle = p.echo ? "#bde6dc" : "#f2d1a2"; ctx.fillText(label, px, ground - 87 + floatY); ctx.restore();
       }
-      if (p.bubble && this.settings.interface.speechBubbles) this.drawBubble(ctx, px, ground - (p.action ? 100 : 72) + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
+      if (p.bubble && this.settings.interface.speechBubbles && !glassUp) this.drawBubble(ctx, px, ground - (p.action ? 100 : 72) + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
     };
 
     for (const p of sorted) if (p.inside && !p.caged) drawPlayer(p);
@@ -560,7 +556,7 @@ export class Renderer {
     for (const p of sorted) if (!p.caged && !p.inside) drawPlayer(p);
 
     // --- falling leaves (quantity follows the detail preset) ---
-    if (graphics.particles) {
+    if (graphics.particles && !graphics.reducedMotion) {
       const count = this.qualityCount(100, 55, 22);
       for (let li = 0; li < count && li < this.leaves.length; li++) {
         const l = this.leaves[li];
@@ -581,7 +577,8 @@ export class Renderer {
       }
     }
 
-    // --- low, layered fog ---
+    // --- fireflies at dusk, then the low, layered fog ---
+    if (graphics.particles) drawFireflies(ctx, cam, w, ground, t, night, this.qualityCount(18, 12, 6), treeX);
     if (graphics.fog) {
       const layers = this.qualityCount(4, 3, 1);
       for (let i = 0; i < layers; i++) {
@@ -599,6 +596,9 @@ export class Renderer {
       }
     }
 
+    // near-field reeds sweep past faster than the road — parallax depth
+    if (graphics.quality !== "low") drawForeground(ctx, cam, w, h, t);
+
     // --- lantern-light darkness mask (server-authoritative vision radius) ---
     const targetR = snap.visionRadius;
     if (targetR < 1500) {
@@ -608,10 +608,17 @@ export class Renderer {
       const cy2 = ground - 50;
       const dark = ctx.createRadialGradient(cx2, cy2, r * 0.45, cx2, cy2, r);
       dark.addColorStop(0, "rgba(4,2,8,0)");
-      dark.addColorStop(0.75, "rgba(4,2,8,0.55)");
+      dark.addColorStop(0.55, "rgba(4,2,8,0.3)");
+      dark.addColorStop(0.78, "rgba(4,2,8,0.6)");
       dark.addColorStop(1, "rgba(3,1,6,0.965)");
       ctx.fillStyle = dark;
       ctx.fillRect(0, 0, w, h);
+      // the lantern you carry is warm; the dark beyond it is cold
+      const warm = ctx.createRadialGradient(cx2, cy2, 6, cx2, cy2, r * 0.7);
+      warm.addColorStop(0, "rgba(255,178,92,0.07)");
+      warm.addColorStop(1, "rgba(255,178,92,0)");
+      ctx.fillStyle = warm;
+      ctx.fillRect(cx2 - r, cy2 - r, r * 2, r * 2);
     } else {
       this.visionR = 420;
     }
@@ -640,35 +647,75 @@ export class Renderer {
       ctx.fillStyle = `rgba(0,0,0,${a * (1 - since / 900)})`;
       ctx.fillRect(0, 0, w, h);
     }
+
+    // cool shadows / warm lantern grade, with fine grain on high detail
+    if (graphics.quality !== "low") {
+      if (this.grainTile === undefined) this.grainTile = makeGrainTile();
+      drawGrade(ctx, w, h, night, graphics.quality === "high" && !graphics.reducedMotion ? this.grainTile : null, t);
+    }
     ctx.restore();
   }
 
   // -------------------------------------------------------------------------
 
-  /** A handwritten page pinned to a wall face or leaning on a trunk. */
-  private drawNote(ctx: CanvasRenderingContext2D, x: number, ground: number, kind: "wall" | "tree", big: boolean, t: number) {
-    const w = big ? 44 : 18, h = big ? 58 : 24;
+  /** A handwritten page pinned to a wall face or leaning on a trunk.
+   *  Up close the real words are legible on the paper itself — no pop-out. */
+  private drawNote(ctx: CanvasRenderingContext2D, x: number, ground: number, kind: "wall" | "tree", big: boolean, t: number, note?: { author: string; text: string }) {
+    const { w, h } = big ? NOTE_NEAR : NOTE_FAR;
     const y = kind === "wall" ? ground - 118 - h : ground - 74 - h;
-    const sway = Math.sin(t * 1.7 + x * 0.05) * (big ? 2.2 : 1.1);
+    const sway = Math.sin(t * 1.7 + x * 0.05) * (big ? 1.2 : 1.1);
     ctx.save();
     ctx.translate(x, y + h);
-    ctx.rotate((kind === "tree" ? 0.10 : -0.05) + sway * 0.02);
+    ctx.rotate((kind === "tree" ? 0.10 : -0.05) + sway * 0.012);
     ctx.translate(-w / 2, -h);
     ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = big ? 14 : 6; ctx.shadowOffsetY = big ? 5 : 2;
     ctx.fillStyle = big ? "#f4ead2" : "#e9dfc4";
-    ctx.strokeStyle = "#8a6f4d"; ctx.lineWidth = big ? 2 : 1;
+    ctx.strokeStyle = "#8a6f4d"; ctx.lineWidth = big ? 1.6 : 1;
     ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.fill(); ctx.stroke();
+    ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
     // folded corner
-    ctx.beginPath(); ctx.moveTo(w, 0); ctx.lineTo(w, h * 0.28); ctx.lineTo(w - w * 0.28, 0); ctx.closePath();
+    ctx.beginPath(); ctx.moveTo(w, 0); ctx.lineTo(w, h * 0.2); ctx.lineTo(w - w * 0.2, 0); ctx.closePath();
     ctx.fillStyle = "#d8c9a8"; ctx.fill(); ctx.stroke();
-    // ruled text lines
-    ctx.strokeStyle = "#7a6a52"; ctx.lineWidth = big ? 1.6 : 1;
-    const lines = big ? 6 : 3;
-    for (let i = 1; i <= lines; i++) {
-      const ly = (h / (lines + 1)) * i;
-      ctx.beginPath(); ctx.moveTo(w * 0.16, ly); ctx.lineTo(w * (0.84 - (i % 3) * 0.08), ly); ctx.stroke();
+    if (big && note?.text) {
+      ctx.fillStyle = "#43301f";
+      ctx.font = "italic 6.5px Georgia, serif";
+      ctx.textAlign = "left";
+      const lines = this.wrapNote(ctx, note.text, w - 14);
+      lines.forEach((line, i) => ctx.fillText(line, 7, 15 + i * 8));
+      ctx.font = "italic 5.5px Georgia, serif";
+      ctx.fillStyle = "#6e5638";
+      ctx.textAlign = "right";
+      ctx.fillText(`— ${note.author}`, w - 7, h - 6, w - 14);
+    } else {
+      // far away the hand is only a scribble
+      ctx.strokeStyle = "#7a6a52"; ctx.lineWidth = big ? 1.4 : 1;
+      const lines = big ? 8 : 3;
+      for (let i = 1; i <= lines; i++) {
+        const ly = (h / (lines + 1)) * i;
+        ctx.beginPath(); ctx.moveTo(w * 0.16, ly); ctx.lineTo(w * (0.84 - (i % 3) * 0.08), ly); ctx.stroke();
+      }
     }
     ctx.restore();
+  }
+
+  private noteWrap = new Map<string, string[]>();
+  private wrapNote(ctx: CanvasRenderingContext2D, text: string, width: number): string[] {
+    const hit = this.lruGet(this.noteWrap, text);
+    if (hit) return hit;
+    const lines: string[] = [];
+    let line = "";
+    for (const word of text.split(/\s+/)) {
+      const test = line ? line + " " + word : word;
+      if (ctx.measureText(test).width > width && line) {
+        lines.push(line); line = word;
+        if (lines.length === 10) break;
+      } else line = test;
+    }
+    if (lines.length < 10 && line) lines.push(line);
+    if (lines.length === 10 && ctx.measureText(lines[9] + "…").width > width) lines[9] = lines[9].slice(0, -1);
+    if (lines.length === 10) lines[9] += "…";
+    this.lruSet(this.noteWrap, text, lines, 64);
+    return lines;
   }
 
   private drawTree(ctx: CanvasRenderingContext2D, x: number, ground: number, height: number, seed: number) {
@@ -779,7 +826,7 @@ export class Renderer {
     ctx.save();
     ctx.globalAlpha = Math.max(0.15, alpha);
     ctx.font = "12px system-ui, sans-serif";
-    if (!text) return; // empty bubble: Math.max(...[]) would be -Infinity
+    if (!text) { ctx.restore(); return; } // empty bubble: keep save/restore balanced
     let wrapped = this.lruGet(this.bubbleWrap, text);
     if (!wrapped) {
       const words = text.split(" ");
@@ -975,14 +1022,49 @@ export class Renderer {
         break;
       }
       case "chapel": {
-        ctx.fillStyle = "#221419";
-        ctx.fillRect(-65, -90, 130, 90);
-        ctx.beginPath(); ctx.moveTo(-72, -90); ctx.lineTo(0, -128); ctx.lineTo(72, -90); ctx.closePath(); ctx.fill();
-        ctx.fillRect(-16, -170, 32, 84);
-        ctx.beginPath(); ctx.moveTo(-20, -168); ctx.lineTo(0, -206); ctx.lineTo(20, -168); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#c9b98a"; ctx.fillRect(-2, -228, 4, 24); ctx.fillRect(-8, -221, 16, 4);
-        win(-44, -66, 14, 28); win(30, -66, 14, 28); win(-6, -156, 12, 20);
-        ctx.fillStyle = "#120a0e"; ctx.fillRect(-12, -44, 24, 44);
+        // A white-clapboard meeting house with a square belfry and a spire —
+        // the tallest thing on the street. Dimensions come from units.ts.
+        const { width: W, wallHeight: H, roofRise, towerWidth, towerBase, belfryHeight, spireHeight, windowWidth: WW, windowHeight: WH, doorWidth: DW, doorHeight: DH } = MEETING_HOUSE;
+        const tw = towerWidth / 2, ridge = -H - roofRise, belfryFloor = ridge - towerBase, belfryTop = belfryFloor - belfryHeight, spireTip = belfryTop - spireHeight;
+        ctx.fillStyle = "#2b2129";
+        ctx.fillRect(-W / 2, -H, W, H);
+        ctx.strokeStyle = "rgba(0,0,0,0.28)"; ctx.lineWidth = 1;
+        for (let y = -H + 8; y < -2; y += 8) { ctx.beginPath(); ctx.moveTo(-W / 2, y); ctx.lineTo(W / 2, y); ctx.stroke(); }
+        // corner boards and water table
+        ctx.fillStyle = "#3a2f38"; ctx.fillRect(-W / 2, -H, 6, H); ctx.fillRect(W / 2 - 6, -H, 6, H); ctx.fillRect(-W / 2, -8, W, 8);
+        // gable roof facing the road, with a pediment cornice
+        ctx.fillStyle = "#17111a";
+        ctx.beginPath(); ctx.moveTo(-W / 2 - 14, -H); ctx.lineTo(0, ridge); ctx.lineTo(W / 2 + 14, -H); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = "#5a4f58"; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(-W / 2 - 14, -H); ctx.lineTo(0, ridge); ctx.lineTo(W / 2 + 14, -H); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-W / 2 - 14, -H + 2); ctx.lineTo(W / 2 + 14, -H + 2); ctx.stroke();
+        // tower astride the ridge: base, open belfry, spire, weathervane
+        ctx.fillStyle = "#2b2129"; ctx.fillRect(-tw, belfryFloor, towerWidth, towerBase + 12);
+        ctx.fillStyle = "#3a2f38"; ctx.fillRect(-tw - 4, belfryFloor - 4, towerWidth + 8, 6);
+        ctx.fillStyle = "#241a22"; ctx.fillRect(-tw + 4, belfryTop, towerWidth - 8, belfryHeight);
+        ctx.fillStyle = broken ? "#07050a" : "#120a0e";
+        const ar = tw * 0.46, arcY = belfryTop + belfryHeight * 0.45;
+        ctx.beginPath(); ctx.moveTo(-ar, belfryFloor - 4); ctx.lineTo(-ar, arcY); ctx.arc(0, arcY, ar, Math.PI, 0); ctx.lineTo(ar, belfryFloor - 4); ctx.closePath(); ctx.fill();
+        if (!broken) { ctx.fillStyle = "#8c6a2f"; ctx.beginPath(); ctx.arc(0, arcY + ar * 0.8, ar * 0.5, 0, Math.PI * 2); ctx.fill(); }
+        ctx.fillStyle = "#3a2f38"; ctx.fillRect(-tw - 2, belfryTop - 6, towerWidth + 4, 6);
+        ctx.fillStyle = "#17111a";
+        ctx.beginPath(); ctx.moveTo(-tw - 2, belfryTop - 6); ctx.lineTo(0, spireTip); ctx.lineTo(tw + 2, belfryTop - 6); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = "#c9b98a"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(0, spireTip); ctx.lineTo(0, spireTip - 26); ctx.moveTo(-9, spireTip - 16); ctx.lineTo(9, spireTip - 16); ctx.stroke();
+        // tall arched windows either side of the door, a fan light over it
+        const winTop = -H + (H - WH) * 0.45;
+        for (const wx of [-W / 2 + W * 0.14, W / 2 - W * 0.14 - WW]) {
+          ctx.fillStyle = "#1a1219";
+          ctx.beginPath(); ctx.moveTo(wx - 3, winTop + WH); ctx.lineTo(wx - 3, winTop); ctx.arc(wx + WW / 2, winTop, WW / 2 + 3, Math.PI, 0); ctx.lineTo(wx + WW + 3, winTop + WH); ctx.closePath(); ctx.fill();
+          win(wx, winTop, WW, WH);
+          ctx.strokeStyle = "rgba(31,17,15,.9)"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(wx + WW / 2, winTop); ctx.lineTo(wx + WW / 2, winTop + WH); ctx.moveTo(wx, winTop + WH / 2); ctx.lineTo(wx + WW, winTop + WH / 2); ctx.stroke();
+        }
+        ctx.fillStyle = "#1a1219"; ctx.fillRect(-DW / 2 - 5, -DH - 20, DW + 10, DH + 20);
+        win(-DW / 2, -DH - 16, DW, 12);
+        ctx.fillStyle = "#120a0e"; ctx.fillRect(-DW / 2, -DH, DW, DH);
+        ctx.strokeStyle = "#3a2f38"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, -DH); ctx.lineTo(0, 0); ctx.stroke();
+        ctx.fillStyle = "#3d3a42"; ctx.fillRect(-DW / 2 - 15, -6, DW + 30, 6); ctx.fillRect(-DW / 2 - 21, -3, DW + 42, 3);
         break;
       }
       case "mill": {
@@ -1051,26 +1133,30 @@ export class Renderer {
     // State marker for unfinished wards: missing kit or ready for repair.
     if (task && !task.done && snap.phase === "playing") {
       const bob = Math.sin(t * 3 + st.x) * 4;
+      // The meeting house sign hangs beside the belfry, not above the spire: the spire tip is off-screen at the default zoom.
+      const markerY = ground - (st.kind === "chapel" ? MEETING_HOUSE.wallHeight + MEETING_HOUSE.roofRise + MEETING_HOUSE.towerBase - 18 : 235);
       ctx.save();
       ctx.fillStyle = supplied ? "#b3d59a" : task.sabotaged ? "#d87762" : "#ffcd5a";
       ctx.shadowColor = supplied ? "#729a65" : "#ffcd5a"; this.glow(ctx, 8);
-      ctx.translate(x, ground - 235 + bob);
+      ctx.translate(x, markerY + bob);
       ctx.rotate(Math.PI / 4);
       ctx.fillRect(-7, -7, 14, 14);
       ctx.restore();
-      ctx.save();
-      ctx.fillStyle = "rgba(12,8,16,.78)";
-      ctx.fillRect(x - 48, ground - 259, 96, 16);
-      ctx.font = "bold 10px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillStyle = supplied ? "#b3d59a" : task.sabotaged ? "#d87762" : "#ffcd5a";
-      ctx.fillText(supplied ? "PUZZLE" : task.sabotaged ? "SABOTAGED" : "NEEDS KIT", x, ground - 247);
-      ctx.restore();
+      if (!this.glassUp) {
+        ctx.save();
+        ctx.fillStyle = "rgba(12,8,16,.78)";
+        ctx.fillRect(x - 48, markerY - 24, 96, 16);
+        ctx.font = "bold 10px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillStyle = supplied ? "#b3d59a" : task.sabotaged ? "#d87762" : "#ffcd5a";
+        ctx.fillText(supplied ? "PUZZLE" : task.sabotaged ? "SABOTAGED" : "NEEDS KIT", x, markerY - 12);
+        ctx.restore();
+      }
       if (task.progress > 0) {
         ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.fillRect(x - 30, ground - 215, 60, 8);
+        ctx.fillRect(x - 30, markerY + 20, 60, 8);
         ctx.fillStyle = "#ffcd5a";
-        ctx.fillRect(x - 29, ground - 214, 58 * task.progress, 6);
+        ctx.fillRect(x - 29, markerY + 21, 58 * task.progress, 6);
       }
     }
   }

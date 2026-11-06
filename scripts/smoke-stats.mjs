@@ -1,5 +1,8 @@
 // Smoke test: shared broken wards, physical repair kits, stamina, chronicle and stats.
 // Usage: node scripts/smoke-stats.mjs [baseUrl]
+import { build } from "esbuild";
+const out = await build({ entryPoints: ["src/game/types.ts"], bundle: true, write: false, platform: "node", format: "esm" });
+const { STATIONS } = await import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString("base64")}`);
 const B = process.argv[2] ?? "http://127.0.0.1:3000";
 const post = (p, b) => fetch(B + p, {
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b),
@@ -20,7 +23,7 @@ const initial = await Promise.all(ids.map((id) => state(code, id)));
 const s0 = initial[0];
 check("game started", s0.phase === "playing");
 check("role and match results remain sealed", s0.results === null && !s0.players.some((p) => "role" in p));
-check("street wards start broken and house jobs have local supplies", s0.tasks.length === 13 && s0.tasks.every((t) => !t.done && !t.progress && (t.inside ? t.delivered : !t.delivered)));
+check("street wards start broken and house jobs have local supplies", s0.tasks.length === STATIONS.length && s0.tasks.every((t) => !t.done && !t.progress && (STATIONS.find((st) => st.id === t.id)?.initialSupplied ? t.delivered : !t.delivered)));
 check("shared pool identical for every seat", initial.every((s) => s.tasks.map((t) => t.id).join(",") === s0.tasks.map((t) => t.id).join(",")));
 check("stamina and kit start in the right state", initial.every((s) => s.self.stamina === 1 && !s.self.hasSupply));
 

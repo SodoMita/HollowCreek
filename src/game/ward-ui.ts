@@ -51,7 +51,7 @@ function styles() {
     .hc-ward-grid button.done{border-color:#6e9d70;background:#263a2a}
     .hc-ward-glyph{display:block;font-size:28px;line-height:1.15}
     .hc-ward-grid small,.hc-ward-plot small{display:block;color:#c9ae93;font-size:11px;line-height:1.35}
-    .hc-ward-console{margin:13px 0 5px;padding:12px;border:1px solid #49353a;border-radius:8px;background:#100b13;font-size:14px;line-height:1.5}
+    .hc-ward-console{margin:13px 0 5px;padding:12px;border:1px solid #49353a;border-radius:8px;background:#100b13;font-size:14px;line-height:1.5;min-height:66px;font-variant-numeric:tabular-nums}
     .hc-ward-console b{color:#e4bb7c}
     .hc-ward-action{display:block;width:100%;margin:10px 0 0;min-height:44px;background:#513522;border-color:#b78651}
     .hc-ward-beam{height:9px;margin:10px auto 8px;border-radius:3px;background:linear-gradient(90deg,#85603a,#b38852,#5f4128)}
@@ -177,7 +177,7 @@ export function renderWardJob(view: WardGameView): string {
         <div class="hc-ward-grid three">${[0, 1, 2].map((i) => button(i, `Swap jars ${i + 1} and ${i + 2}`, `↔<small>Swap ${i + 1} / ${i + 2}</small>`)).join("")}</div>`;
     }
     case "clock": {
-      const time = (hours: number, quarters: number) => `${hours + 1}:${String(quarters * 15).padStart(2, "0")}`;
+      const time = (hours: number, quarters: number) => `${String(hours + 1).padStart(2, "0")}:${String(quarters * 15).padStart(2, "0")}`;
       return `<div class="hc-ward-console">The note says <b>${time(t[0], t[1])}</b>. The stopped clock reads <b>${time(v[0], v[1])}</b>. Align both hands, then wind it.</div>
         <div class="hc-ward-grid two">${button(0, "Move hour hand back", "− Hour")} ${button(1, "Move hour hand forward", "+ Hour")}
         ${button(2, "Move minute hand back", "− Quarter hour")} ${button(3, "Move minute hand forward", "+ Quarter hour")}</div>
@@ -244,7 +244,9 @@ export class WardPanel {
     if (signature !== this.signature) {
       const focused = wasOpen ? (document.activeElement as HTMLElement | null)?.dataset.wardMove : undefined;
       this.signature = signature;
-      this.render(view);
+      // While open, morph in place: buttons must survive a move so fast taps,
+      // focus and automation never lose the node they are pressing.
+      if (wasOpen) this.morph(view); else this.render(view);
       if (!wasOpen) {
         this.opening = true;
         this.previouslyFocused = document.activeElement as HTMLElement | null;
@@ -269,9 +271,17 @@ export class WardPanel {
     if (!control || !this.current || this.opening) return;
     this.callbacks.move(this.current.stationId, Number(control.dataset.wardMove));
   };
+  private morph(view: WardGameView) {
+    morphHtml(this.root, this.markup(view));
+  }
+
   private render(view: WardGameView) {
+    this.root.innerHTML = this.markup(view);
+  }
+
+  private markup(view: WardGameView) {
     const job = WARD_JOBS[view.kind];
-    this.root.innerHTML = `<div class="hc-ward-panel">
+    return `<div class="hc-ward-panel">
       <div class="hc-ward-top"><div><small style="color:#d99a3d">${escapeText(view.name).toUpperCase()}</small><h2>${job.title}</h2></div>
         <button type="button" class="hc-ward-close" data-ward-close aria-label="Leave repair puzzle">Leave · Esc</button></div>
       <p class="hc-ward-lead">${job.instruction}</p>
@@ -281,5 +291,43 @@ export class WardPanel {
       <p data-ward-vigor class="hc-ward-note"></p>
       <p class="hc-ward-note">No deadline to finish. Tap a part, or use Tab then Enter / Space. Esc leaves; progress stays with this ward.</p>
     </div>`;
+  }
+}
+
+/** Patch markup in place so buttons survive a move (fast taps, focus, tests). */
+export function morphHtml(el: HTMLElement, html: string) {
+  // Minimal DOM shims (unit tests) lack real node trees — rebuild there.
+  if (!("childNodes" in el) || !el.firstChild) { el.innerHTML = html; return; }
+  const tpl = document.createElement("div");
+  tpl.innerHTML = html;
+  syncChildren(el, tpl);
+}
+
+/** Minimal DOM morph: keep matching nodes alive, patch text and attributes. */
+function syncChildren(a: ParentNode, b: ParentNode) {
+  const ac = [...a.childNodes], bc = [...b.childNodes];
+  const n = Math.max(ac.length, bc.length);
+  for (let i = 0; i < n; i++) {
+    const oldNode = ac[i], newNode = bc[i];
+    if (!oldNode && newNode) { a.appendChild(newNode.cloneNode(true)); continue; }
+    if (oldNode && !newNode) { a.removeChild(oldNode); continue; }
+    if (!oldNode || !newNode) continue;
+    if (oldNode.nodeType === 3 && newNode.nodeType === 3) {
+      if (oldNode.nodeValue !== newNode.nodeValue) oldNode.nodeValue = newNode.nodeValue;
+      continue;
+    }
+    if (oldNode.nodeType !== 1 || newNode.nodeType !== 1 ||
+      (oldNode as Element).tagName !== (newNode as Element).tagName) {
+      a.replaceChild(newNode.cloneNode(true), oldNode);
+      continue;
+    }
+    const oe = oldNode as Element, ne = newNode as Element;
+    for (const attr of [...ne.attributes]) {
+      if (oe.getAttribute(attr.name) !== attr.value) oe.setAttribute(attr.name, attr.value);
+    }
+    for (const attr of [...oe.attributes]) {
+      if (!ne.hasAttribute(attr.name)) oe.removeAttribute(attr.name);
+    }
+    syncChildren(oe, ne);
   }
 }

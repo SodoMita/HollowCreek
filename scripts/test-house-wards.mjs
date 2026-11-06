@@ -9,7 +9,9 @@ const { createWardPuzzle, applyWardMove, validWardMove, wardSolved, wardProgress
 const { STATIONS } = await load("src/game/types.ts");
 const { BUILDINGS, doorX, DOOR_REACH } = await load("src/game/buildings.ts");
 const indoor = STATIONS.filter((station) => station.inside);
-assert.equal(indoor.length, 4);
+// Every keyed house hosts exactly one indoor ward — derive, never hardcode.
+assert.equal(indoor.length, BUILDINGS.length);
+assert.equal(new Set(indoor.map((station) => station.inside)).size, BUILDINGS.length);
 for (const station of indoor) {
   const b = BUILDINGS.find((building) => building.id === station.inside);
   assert.ok(b && station.initialSupplied, `${station.id} has a house and local supplies`);
@@ -60,4 +62,4 @@ for (const kind of ["hearth", "pantry", "clock", "fusebox"]) {
     total++;
   }
 }
-console.log(`${total} seeded house puzzles and all four indoor placements passed.`);
+console.log(`${total} seeded house puzzles and all ${indoor.length} indoor placements passed.`);

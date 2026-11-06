@@ -177,31 +177,27 @@ export default function Home() {
             ))}
           </div>
 
-          {/* stageshow-style product still: one quiet window, one story (the mended ward) */}
-          <div className="hc-rise-3 mt-8 max-w-lg overflow-hidden rounded-lg border border-[#3a2733] bg-[#0d0810] shadow-[0_16px_60px_rgba(0,0,0,0.55)]" data-testid="home-still" aria-hidden="true">
-            <svg viewBox="0 0 520 300" className="block h-auto w-full">
-              <rect x="0" y="0" width="520" height="300" fill="#0d0810" />
-              <circle cx="18" cy="16" r="4" fill="#4a3040" />
-              <circle cx="32" cy="16" r="4" fill="#4a3040" />
-              <circle cx="46" cy="16" r="4" fill="#8f3b1f" />
-              <text x="64" y="20" fontSize="10" fill="#8f7d6b" fontFamily="monospace">hollow creek — night watch</text>
-              <line x1="0" y1="32" x2="520" y2="32" stroke="#3a2733" strokeWidth="1" />
-              <text x="20" y="66" fontSize="13" fill="#e9dfcf" fontFamily="Georgia, serif">Ward 3 · mending</text>
-              <rect x="20" y="76" width="360" height="10" rx="5" fill="#1f151c" />
-              <rect x="20" y="76" width="295" height="10" rx="5" fill="#d99a3d" />
-              <text x="392" y="85" fontSize="10" fill="#d99a3d" fontFamily="monospace">82%</text>
-              <rect x="20" y="104" width="240" height="7" rx="3.5" fill="#241a26" />
-              <rect x="20" y="118" width="300" height="7" rx="3.5" fill="#241a26" />
-              <rect x="20" y="132" width="180" height="7" rx="3.5" fill="#241a26" />
-              <rect x="20" y="164" width="300" height="26" rx="6" fill="#1f151c" stroke="#3a2733" strokeWidth="1" />
-              <rect x="32" y="174" width="170" height="6" rx="3" fill="#3a2f3a" />
-              <rect x="20" y="206" width="128" height="24" rx="12" fill="#140d18" stroke="#84624c" strokeWidth="1" />
-              <text x="34" y="222" fontSize="11" fill="#ffd98a" fontFamily="monospace">M · visit the past</text>
-              <polygon points="368,88 368,106 373,101 377,110 380,108 376,99 383,99" fill="#e9dfcf" />
-              <rect x="0" y="252" width="520" height="48" fill="#0a0609" />
-              <rect x="20" y="266" width="200" height="7" rx="3.5" fill="#241a26" />
-              <rect x="20" y="280" width="140" height="7" rx="3.5" fill="#241a26" />
-            </svg>
+          {/* A printed broadside nailed by the road — no software chrome in 1893 */}
+          <div className="hc-rise-3 relative mt-8 max-w-lg" data-testid="home-still" aria-hidden="true">
+            <div className="relative -rotate-1 border border-[#8a6f4d] bg-gradient-to-b from-[#e9dfc4] to-[#d8c9a8] px-6 py-5 text-[#3a2a1c] shadow-[0_16px_60px_rgba(0,0,0,0.55)]" style={{ borderRadius: "2px 6px 3px 7px" }}>
+              <span className="absolute left-3 top-2 h-2 w-2 rounded-full bg-[#4a3323] shadow-[0_1px_2px_rgba(0,0,0,.6)]" />
+              <span className="absolute right-3 top-2 h-2 w-2 rounded-full bg-[#4a3323] shadow-[0_1px_2px_rgba(0,0,0,.6)]" />
+              <p className="text-center font-body text-[11px] uppercase tracking-[0.5em] text-[#6b4a2a]">Notice</p>
+              <p className="mt-1 text-center font-display text-3xl leading-tight">By Order of the Watch</p>
+              <div className="mx-auto mt-2 h-px w-3/4 bg-[#8a6f4d]/60" />
+              <p className="mt-3 text-center font-body text-sm italic leading-relaxed">
+                The wards lie broken upon the autumn road. Bring kits from the one cart;
+                mend what the Hollow ruins, and watch your neighbours.
+              </p>
+              <p className="mt-2 text-center font-body text-sm leading-relaxed">
+                When the bell tolls, walk to the square. The condemned are caged in iron,
+                not hanged — a key, a vote, or the Hollow may yet free them.
+              </p>
+              <div className="mt-3 flex items-end justify-between">
+                <p className="font-body text-xs text-[#6b4a2a]">Hollow Creek · October 1893</p>
+                <span className="grid h-10 w-10 place-items-center rounded-full bg-[#8f3b1f] font-display text-sm text-[#f3e6d0] shadow-[inset_0_0_6px_rgba(0,0,0,.5)]">HC</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -295,8 +291,7 @@ export default function Home() {
               >
                 <RefreshCw className="h-3.5 w-3.5" /> live
                 <span className="relative flex h-2 w-2">
-                  <span className="absolute h-2 w-2 animate-ping rounded-full bg-[#6b8e23] opacity-60" />
-                  <span className="h-2 w-2 rounded-full bg-[#6b8e23]" />
+                  <span className="h-2 w-2 rounded-full bg-[#d99a3d] shadow-[0_0_6px_rgba(217,154,61,.8)]" />
                 </span>
               </button>
             </div>

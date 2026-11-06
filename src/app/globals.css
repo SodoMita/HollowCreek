@@ -4,6 +4,53 @@
 @theme {
   --font-display: "Pirata One", serif;
   --font-body: "Alegreya", Georgia, serif;
+
+  /* Hollow Creek palette — one set of names for every surface (home, lobby,
+     HUD, overlays, static client). Prefer these utilities (bg-panel, text-gold,
+     border-line …) over ad-hoc hex values. */
+  --color-ink: #0b0710;          /* page background */
+  --color-panel: #140d18;        /* HUD / dialog surface */
+  --color-panel-deep: #160e18;   /* modal surface */
+  --color-line: #3a2733;         /* hairlines and quiet borders */
+  --color-parchment: #e9dfcf;    /* body text */
+  --color-parchment-dim: #c9b8a4;
+  --color-muted: #9c8b7a;        /* secondary text */
+  --color-amber: #d99a3d;        /* lantern light: focus, accents */
+  --color-gold: #ffd98a;         /* hover highlight */
+  --color-rust: #c9762f;         /* hover borders */
+  --color-ember: #8f3b1f;        /* primary action */
+  --color-ember-hot: #a84a26;
+  --color-blood: #ff4a3a;        /* the Hollow */
+  --color-moss: #a8c98a;         /* the crew */
+  --color-teal: #7ba9a6;         /* time & pages */
+  --color-teal-deep: #243b3c;
+  --color-bark: #84624c;         /* carried things: kits, cart, keys */
+  --color-bark-deep: #33231f;
+  --color-page: #f4ead2;         /* paper */
+  --color-page-ink: #2c2118;
+}
+
+/* Shared components. Every interactive chip in the game should start from
+   .hc-btn + one variant, so sizes, focus rings and hover colours stay in step. */
+@layer components {
+  .hc-btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded border transition-colors select-none;
+    @apply focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-amber;
+    @apply disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .hc-btn-ghost { @apply border-line bg-panel/80 text-parchment-dim hover:border-rust hover:text-gold; }
+  .hc-btn-primary { @apply border-ember/60 bg-ember/85 font-display text-parchment hover:bg-ember-hot; }
+  .hc-btn-amber { @apply border-bark bg-bark-deep/90 text-[#f2cf91] hover:border-amber hover:bg-[#44301f]; }
+  .hc-btn-teal { @apply border-teal bg-teal-deep/90 text-[#cbeae1] hover:bg-[#2f4a4b]; }
+  .hc-btn-danger { @apply hover:border-blood/60 hover:text-[#e06a5a]; }
+  .hc-panel { @apply rounded border border-line/70 bg-panel/80 backdrop-blur; }
+  .hc-modal { @apply rounded-xl border border-amber/50 bg-panel-deep/95 shadow-[0_12px_45px_rgba(0,0,0,0.7)] backdrop-blur; }
+  .hc-input {
+    @apply w-full rounded border border-line bg-ink px-3 py-2 text-parchment placeholder:text-muted;
+    @apply focus:border-rust focus-visible:outline-2 focus-visible:outline-amber;
+  }
+  .hc-toast { @apply rounded border border-amber/30 bg-[#1c1210]/95 px-4 py-2 text-sm text-amber shadow-lg; }
+  .hc-eyebrow { @apply text-xs uppercase tracking-[0.25em] text-muted; }
 }
 
 @custom-variant short (@media (max-height: 520px));
@@ -15,9 +62,14 @@ html, body {
   overscroll-behavior: none;
 }
 
+/* Scrollbars, selection and focus all speak the creek's palette. */
+* { scrollbar-width: thin; scrollbar-color: #4a3040 #140d18; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: #140d18; }
 ::-webkit-scrollbar-thumb { background: #4a3040; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #8f3b1f; }
+::selection { background: #8f3b1f; color: #f3e6d0; }
+:focus-visible { outline-color: #d99a3d; }
 
 @keyframes hc-flicker {
   0%, 100% { opacity: 1; }
