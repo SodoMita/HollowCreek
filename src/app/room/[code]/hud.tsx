@@ -21,14 +21,13 @@ export function Toast({ text }: { text: string | null }) {
 }
 
 export function NoteReader({ note, onClose }: { note: { text: string; author: string }; onClose: () => void }) {
-  // The page itself is read on the canvas, through the spyglass zoom. This is
-  // only an invisible click-catcher plus a caption; the text stays on the paper.
+  // Nothing is drawn here: the page is read on the canvas through the spyglass.
+  // This is only an invisible click-catcher (click or Esc lowers the glass),
+  // with the page text for screen readers.
   return (
-    <div className="absolute inset-0 z-20" onClick={onClose} data-testid="note-reader" aria-label={`Page pinned by ${note.author}: ${note.text}`} role="button">
+    <div className="absolute inset-0 z-20" onClick={onClose} data-testid="note-reader" role="button"
+      aria-label={note.author ? `Page pinned by ${note.author}: ${note.text}. Click to lower the spyglass.` : "Spyglass raised. Click to lower it."}>
       <span className="sr-only">{note.text}</span>
-      <div className="pointer-events-none absolute bottom-32 left-1/2 -translate-x-1/2 sm:bottom-44">
-        <div className="hc-toast whitespace-nowrap text-xs">spyglass on a page pinned by {note.author} · click or Esc to lower it</div>
-      </div>
     </div>
   );
 }

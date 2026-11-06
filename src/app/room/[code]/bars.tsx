@@ -24,7 +24,8 @@ export function TopBar(props: {
   onCopyCode: () => void;
   onTimepiece: () => void;
   onPinToggle: () => void;
-  onReadNote: (note: { id: string; x: number; author: string; text: string }) => void;
+  onReadNote: (note: { id: string; x: number; author: string; text: string } | null) => void;
+  glassUp: boolean;
   onDropKit: () => void;
   onMute: () => void;
   onToggleVoice: () => void;
@@ -32,7 +33,7 @@ export function TopBar(props: {
   onSettings: () => void;
   onLeave: () => void;
 }) {
-  const { s, me, nearestNote, muted, leaving, voiceStatus, controls,
+  const { s, me, nearestNote, muted, leaving, voiceStatus, controls, glassUp,
     onCopyCode, onTimepiece, onPinToggle, onReadNote, onDropKit, onMute,
     onToggleVoice, onToggleMic, onSettings, onLeave } = props;
   return (
@@ -55,11 +56,12 @@ export function TopBar(props: {
         ✎<span className="hidden sm:inline"> Pin page</span>
       </button>
     )}
-    {nearestNote && s.phase === "playing" && (
-      <button title={`Raise the spyglass to the page pinned by ${nearestNote.author}`} aria-label="Spyglass" data-testid="read-note"
-        onClick={() => onReadNote(nearestNote!)}
-        className="hc-btn hc-btn-teal ml-2 px-1.5 py-0.5 text-xs">
-        <Telescope className="h-3.5 w-3.5" /><span className="hidden sm:inline"> Spyglass</span>
+    {me && (
+      <button title={glassUp ? "Lower the spyglass (Esc)" : nearestNote ? `Raise the spyglass to the page pinned by ${nearestNote.author}` : "Raise the spyglass for a closer look"}
+        aria-label={glassUp ? "Lower spyglass" : "Spyglass"} aria-pressed={glassUp} data-testid="read-note"
+        onClick={() => onReadNote(glassUp ? null : nearestNote ?? { id: "", x: me.x, author: "", text: "" })}
+        className={`hc-btn hc-btn-teal ml-2 px-1.5 py-0.5 text-xs ${glassUp ? "bg-[#2f4a4b]" : ""}`}>
+        <Telescope className="h-3.5 w-3.5" /><span className="hidden sm:inline"> {glassUp ? "Lower glass" : "Spyglass"}</span>
       </button>
     )}
     {s.phase === "playing" && s.self.alive && s.self.hasSupply && (

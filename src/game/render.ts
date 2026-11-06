@@ -131,7 +131,7 @@ export class Renderer {
     let lift = 0;
     if (focused) {
       const fn = (snap.notes ?? []).find((n) => n.x === this.focusX);
-      lift = Math.max(0, (fn?.kind === "wall" ? 165 : 121) - 0.28 * h);
+      if (fn) lift = Math.max(0, (fn.kind === "wall" ? 165 : 121) - 0.28 * h);
       ctx.translate(0, lift);
     }
     if (graphics.reducedMotion) t = 0;

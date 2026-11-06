@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
 import { Renderer } from "@/game/render";
+import type { NetState } from "./useGameRender";
 import { useGameStream } from "./useGameStream";
 import { useGameInput } from "./useGameInput";
 import { useGameRender } from "./useGameRender";
@@ -70,6 +71,10 @@ export default function GameClient({ code }: { code: string }) {
   const displayX = useRef(new Map<string, number>());
   const keys = useRef(new Set<string>());
   const lastDir = useRef(0);
+  // Prediction bookkeeping: measured round trip, when the last positions
+  // arrived, and our own recent steering, so the render loop can replay the
+  // inputs the server has not acknowledged yet (see useGameRender).
+  const netRef = useRef<NetState>({ rttMs: 150, arrival: 0, inputs: [] });
   const audioRef = useRef<AudioDirector | null>(null);
   const voiceRef = useRef<VoiceChat | null>(null);
   const audioInitRef = useRef<Promise<typeof import("@/game/audio")> | null>(null);
@@ -87,6 +92,7 @@ export default function GameClient({ code }: { code: string }) {
   const send = useCallback(async (payload: Record<string, unknown>) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 2500); // hung POSTs must not pile up; next poll resyncs
+    const sentAt = performance.now();
     try {
       const res = await fetch("/api/game/input", {
         method: "POST",
@@ -95,6 +101,8 @@ export default function GameClient({ code }: { code: string }) {
         signal: controller.signal,
       });
       const data = await res.json();
+      const rtt = Math.min(1500, Math.max(20, performance.now() - sentAt));
+      netRef.current.rttMs = netRef.current.rttMs * 0.7 + rtt * 0.3;
       if (!data.ok && data.error) {
         setToast(data.error);
         setTimeout(() => setToast(null), 2200);
@@ -201,14 +209,20 @@ export default function GameClient({ code }: { code: string }) {
 
   useGameStream({
     code, send, getPid, setJoinError, setSnap, setRoleBanner,
-    snapRef, pendingInputRef, mainRef, wardPanelRef, timePanelRef, settingsDialogRef, noteOpenRef, audioRef, lastPhase, leavingRef,
+    snapRef, pendingInputRef, mainRef, wardPanelRef, timePanelRef, settingsDialogRef, noteOpenRef, audioRef, lastPhase, leavingRef, netRef,
   });
 
   // ---- input: clients only ever send intent ----
   const computeDir = useCallback(() => {
     const k = keys.current;
     const d = (k.has("right") ? 1 : 0) - (k.has("left") ? 1 : 0);
-    if (d !== lastDir.current) { lastDir.current = d; void send({ dir: d }); }
+    if (d !== lastDir.current) {
+      lastDir.current = d;
+      const log = netRef.current.inputs;
+      log.push({ t: performance.now(), dir: d });
+      if (log.length > 64) log.splice(0, log.length - 64);
+      void send({ dir: d });
+    }
   }, [send]);
 
   useGameInput({
@@ -217,7 +231,7 @@ export default function GameClient({ code }: { code: string }) {
     chatOpenRef, noteOpenRef, closeNote: () => setNoteFocus(null), getSettingsStore, getVoice,
   });
 
-  useGameRender({ canvasRef, rendererRef, snapRef, displayX, focusRef, lastDir, getSettingsStore });
+  useGameRender({ canvasRef, rendererRef, snapRef, displayX, focusRef, lastDir, netRef, getSettingsStore });
 
   const holdMove = (dir: "left" | "right", on: boolean) => {
     if (on) keys.current.add(dir); else keys.current.delete(dir);
@@ -287,7 +301,7 @@ export default function GameClient({ code }: { code: string }) {
 
       {s && (
         <>
-          <TopBar s={s} me={me} nearestNote={nearestNote} muted={muted} leaving={leaving} voiceStatus={voiceStatus} controls={settings.controls}
+          <TopBar s={s} me={me} nearestNote={nearestNote} glassUp={!!noteFocus} muted={muted} leaving={leaving} voiceStatus={voiceStatus} controls={settings.controls}
             onCopyCode={() => { void navigator.clipboard?.writeText(s.code); setToast("Town code copied"); setTimeout(() => setToast(null), 1500); }}
             onTimepiece={activateTimepiece} onPinToggle={() => setPinOpen((v) => !v)} onReadNote={setNoteFocus}
             onDropKit={() => void send({ action: "drop_supply" })}

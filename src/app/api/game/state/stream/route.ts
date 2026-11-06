@@ -1,17 +1,17 @@
 import { NextRequest } from "next/server";
-import { loadRoom, onRoomEvent, roomEtag, snapshot } from "@/game/engine";
+import { loadRoom, onRoomEvent } from "@/game/engine";
+import { FRAME_MS, nextFrame, slowDueIn } from "@/game/viewers";
 import { allow, clientKey } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Server-push state stream (SSE). Holds the connection open and sends frames
- * only when the room fingerprint changed — replaces the 100ms poll for
- * clients that support EventSource. Frames: `{etag, snap}` once on connect,
- * then `{etag, delta}` with only the changed top-level fields (the client
- * merges), and `{clock}` once a second while nothing else moves. Heartbeats
- * keep proxies from idling the connection out; the client falls back to
- * polling on any error.
+ * Server-push state stream (SSE). One full `{etag, now, snap}` frame on
+ * connect, then `{etag, now, delta?, patch?}` frames carrying only what
+ * changed (see src/game/wire.ts), at most ten a second. Slow values ride once
+ * a second; an idle town sends only a `{now}` tick once a second. Heartbeat
+ * comments keep proxies from idling the connection out; the client falls
+ * back to the long-poll on any error.
  */
 export async function GET(req: NextRequest) {
   if (!allow(`stream:${clientKey(req)}`, 20, 60_000)) {
@@ -23,15 +23,13 @@ export async function GET(req: NextRequest) {
   const room = code ? await loadRoom(code) : undefined;
   if (!room) return new Response("No such town.", { status: 404 });
 
-  let lastEtag = "";
-  let lastSent: Record<string, unknown> | null = null; // what this viewer holds, for deltas
-  let lastFrameAt = 0;
-  let lastClockAt = 0;
+  let holds: string | null = null; // etag of what this client holds
+  let computedAt = 0;
+  let clockAt = 0;
   let trailing: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
   const encoder = new TextEncoder();
-  const FRAME_MS = 100; // at most 10 frames/s per viewer; the client interpolates
-  const CLOCK_MS = 1000; // an idle town only sends its clock, once a second
+  const CLOCK_MS = 1000;
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -43,45 +41,33 @@ export async function GET(req: NextRequest) {
         if (closed) return;
         try { controller.enqueue(encoder.encode(":hb\n\n")); } catch { /* closed */ }
       };
-      // Room events fire every 50 ms tick; coalesce them so a viewer gets at
-      // most one frame per FRAME_MS, and that frame carries only the top-level
-      // fields that changed since the previous one (`now` always rides along).
+      const later = (ms: number) => {
+        if (trailing || closed) return;
+        trailing = setTimeout(() => { trailing = null; push(); }, Math.max(1, ms));
+      };
+      // Room events fire every 50 ms tick; snapshots are computed at most
+      // once per FRAME_MS per viewer, and only the diff goes down the wire.
       const push = () => {
         if (closed) return;
         const t = Date.now();
-        if (t - lastFrameAt < FRAME_MS) {
-          if (!trailing) trailing = setTimeout(() => { trailing = null; push(); }, FRAME_MS - (t - lastFrameAt));
-          return;
+        if (t - computedAt < FRAME_MS) { later(FRAME_MS - (t - computedAt)); return; }
+        computedAt = t;
+        const r = nextFrame(room, playerId, holds, t);
+        if (!r) { send({ gone: true, now: t }); cleanup(); return; }
+        if (r.frame) {
+          holds = r.frame.etag ?? holds;
+          clockAt = t;
+          send(r.frame);
+        } else if (t - clockAt >= CLOCK_MS) {
+          clockAt = t;
+          send({ now: r.snapNow });
         }
-        const snap = snapshot(room, playerId); // also the presence heartbeat
-        if (!snap) { send({ gone: true }); cleanup(); return; }
-        const etag = roomEtag(room, playerId, snap);
-        if (etag === lastEtag && lastSent) {
-          if (t - lastClockAt >= CLOCK_MS) { lastClockAt = t; send({ clock: snap.now }); }
-          return;
-        }
-        lastFrameAt = t;
-        lastClockAt = t;
-        const next = snap as unknown as Record<string, unknown>;
-        if (!lastSent) {
-          send({ etag, snap });
-        } else {
-          const delta: Record<string, unknown> = {};
-          for (const key of new Set([...Object.keys(lastSent), ...Object.keys(next)])) {
-            if (key === "now") continue;
-            const a = lastSent[key], b = next[key];
-            if (a === b) continue;
-            if (JSON.stringify(a) !== JSON.stringify(b)) delta[key] = b === undefined ? null : b;
-          }
-          delta.now = snap.now;
-          send({ etag, delta });
-        }
-        lastSent = next;
-        lastEtag = etag;
+        const due = slowDueIn(room, playerId, t);
+        if (due > 0) later(due); // held slow values go out on the beat even if the room sleeps
       };
       const unsub = onRoomEvent(code, push);
       const hb = setInterval(heartbeat, 15_000);
-      const tick = setInterval(push, 250); // covers time-derived fields and presence between room events
+      const tick = setInterval(push, 250); // presence heartbeat + clock between room events
       function cleanup() {
         if (closed) return;
         closed = true;

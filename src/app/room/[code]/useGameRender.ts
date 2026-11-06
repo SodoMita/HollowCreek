@@ -5,6 +5,13 @@ import { Renderer } from "@/game/render";
 import { CARRY_SPEED, GHOST_SPEED, SPEED, type Snapshot } from "@/game/types";
 import type { GameSettings } from "@/game/settings";
 
+/** Shared with the stream hook (arrival of positions) and the input layer (own steering). */
+export interface NetState {
+  rttMs: number; // smoothed input round trip
+  arrival: number; // performance.now() when positions last arrived
+  inputs: { t: number; dir: number }[]; // our steering changes, oldest first
+}
+
 export interface GameRenderDeps {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   rendererRef: RefObject<Renderer | null>;
@@ -12,11 +19,35 @@ export interface GameRenderDeps {
   displayX: RefObject<Map<string, number>>;
   focusRef: RefObject<number | null>;
   lastDir: RefObject<number>;
+  netRef: RefObject<NetState>;
   getSettingsStore: () => { value: GameSettings; subscribe: (cb: (n: GameSettings) => void) => () => void };
 }
 
+const walkSpeed = (p: { alive: boolean; hasSupply: boolean }) => (!p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : SPEED);
+
+/**
+ * Where the server will have put us once it has applied every steering change
+ * we have already sent: start from the acknowledged position and replay our
+ * own input log from (arrival − round trip) to now. Classic reconciliation
+ * without sequence numbers — good enough for 1D walking.
+ */
+function reconcile(serverX: number, spd: number, net: NetState, nowMs: number): number {
+  const since = net.arrival - net.rttMs;
+  let dir = 0;
+  for (const e of net.inputs) if (e.t <= since) dir = e.dir; else break;
+  let x = serverX;
+  let t0 = since;
+  for (const e of net.inputs) {
+    if (e.t <= since) continue;
+    x += dir * spd * (e.t - t0) / 1000;
+    t0 = e.t;
+    dir = e.dir;
+  }
+  return x + dir * spd * (nowMs - t0) / 1000;
+}
+
 export function useGameRender(d: GameRenderDeps) {
-  const { canvasRef, rendererRef, snapRef, displayX, focusRef, lastDir, getSettingsStore } = d;
+  const { canvasRef, rendererRef, snapRef, displayX, focusRef, lastDir, netRef, getSettingsStore } = d;
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -66,17 +97,24 @@ export function useGameRender(d: GameRenderDeps) {
       if (!s) return;
       if (s !== clockSnap) { clockSnap = s; clockBase = s.now; clockAt = nowMs; }
       s.now = Math.max(s.now, clockBase + (nowMs - clockAt));
+      const net = netRef.current;
+      const age = net.arrival ? Math.min(0.3, (nowMs - net.arrival) / 1000) : 0;
       for (const p of s.players) {
         const cur = displayX.current.get(p.id);
-        if (cur === undefined || Math.abs(cur - p.x) > 300) { displayX.current.set(p.id, p.x); continue; }
+        if (cur === undefined) { displayX.current.set(p.id, p.x); continue; }
         if (p.id === s.self.id && s.phase === "playing" && !s.self.caged) {
-          // Local prediction at the authoritative speed; the server poll only
-          // corrects drift, so movement no longer lags behind the input.
-          const spd = !s.self.alive ? GHOST_SPEED : s.self.hasSupply ? CARRY_SPEED : SPEED;
-          const pred = cur + lastDir.current * spd * dt;
-          displayX.current.set(p.id, Math.abs(p.x - pred) > 90 ? p.x : pred + (p.x - pred) * Math.min(1, dt * 25));
+          // Move at once on our own input; the server's position only corrects
+          // the replayed estimate, so the round trip is never felt as lag.
+          const spd = walkSpeed(p);
+          const target = reconcile(p.x, spd, net, nowMs);
+          let next = cur + lastDir.current * spd * dt;
+          next += (target - next) * Math.min(1, dt * 8);
+          displayX.current.set(p.id, Math.abs(target - next) > 220 ? target : next);
         } else {
-          displayX.current.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 16));
+          // Neighbours: carry them on at their last known pace until the next
+          // frame lands, then ease onto it — no 100 ms stepping.
+          const target = p.x + (p.moving ? p.facing * walkSpeed(p) * age : 0);
+          displayX.current.set(p.id, Math.abs(target - cur) > 300 ? p.x : cur + (target - cur) * Math.min(1, dt * 14));
         }
       }
       renderer.setFocus(focusRef.current);
@@ -90,5 +128,5 @@ export function useGameRender(d: GameRenderDeps) {
       window.removeEventListener("resize", debouncedResize);
       window.visualViewport?.removeEventListener("resize", debouncedResize);
     };
-  }, [getSettingsStore, canvasRef, rendererRef, snapRef, displayX, focusRef, lastDir]);
+  }, [getSettingsStore, canvasRef, rendererRef, snapRef, displayX, focusRef, lastDir, netRef]);
 }

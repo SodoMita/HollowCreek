@@ -1,12 +1,14 @@
 // Join + state streaming for the game screen: joins the room, prefers the SSE
-// push stream (one full frame, then deltas of changed fields and 1 Hz clock
-// frames), and falls back to the adaptive 304 poll (with re-join on 404s).
+// push stream and falls back to a long-poll; both carry wire frames (one full
+// snapshot, then deltas — src/game/wire.ts), with re-join on 404s.
 import { useEffect, type RefObject } from "react";
 import type { Snapshot } from "@/game/types";
 import type { WardPanel } from "@/game/ward-ui";
 import type { TimePanel } from "@/game/time-ui";
 import type { SettingsDialog } from "@/game/settings-ui";
 import type { AudioDirector } from "@/game/audio";
+import type { NetState } from "./useGameRender";
+import { applyFrame, frameTouchesPlayers, type WireFrame } from "@/game/wire";
 
 export interface GameStreamDeps {
   code: string;
@@ -25,6 +27,7 @@ export interface GameStreamDeps {
   audioRef: RefObject<AudioDirector | null>;
   lastPhase: RefObject<string>;
   leavingRef: RefObject<boolean>;
+  netRef: RefObject<NetState>;
 }
 
 export function useGameStream(d: GameStreamDeps) {
@@ -54,12 +57,21 @@ export function useGameStream(d: GameStreamDeps) {
       let inflight = false;
       let failures = 0;
       let delay = 100;
-      let lastFp = "";
       let lastShownNow = 0;
       let lastRev = ""; // server fingerprint of the last state we hold
       let notFound = 0; // consecutive 404s — after 3, the server lost us (restart): re-join
       let polling = false;
 
+      let lastHudFp = "";
+      let lastHudAt = 0;
+      let lastHudMeX = 0;
+      // The HUD does not show positions, so it only re-renders when something
+      // it displays changes, or four times a second for the few bits that
+      // depend on where you stand (nearest page, nearby door, cart).
+      const hudFingerprint = (s: Snapshot) => JSON.stringify({
+        ...s, now: 0, nightT: 0, danger: 0, time: 0, cartX: 0, visionRadius: 0, bellAt: 0, flickerAt: 0,
+        players: s.players.map((p) => [p.id, p.name, p.color, p.alive, p.caged, p.hasKey, p.hasSupply, p.inside, p.voted, p.isHost, p.bubble?.text, p.action?.text, p.hasTimepiece, p.doorKeys?.length, p.echo]),
+      });
       const handleSnap = (s: Snapshot, etag: string) => {
         if (!alive) return;
         failures = 0;
@@ -70,10 +82,10 @@ export function useGameStream(d: GameStreamDeps) {
         d.mainRef.current?.toggleAttribute("inert", !!(d.wardPanelRef.current?.isOpen || d.timePanelRef.current?.isOpen || d.settingsDialogRef.current?.isOpen || d.noteOpenRef.current));
         if (d.timePanelRef.current?.isOpen && (!s.self.hasTimepiece || s.phase !== "playing")) d.timePanelRef.current.close();
         d.wardPanelRef.current?.update(s.minigame, s.self.stamina, s.self.exhausted);
-        // Skip the React re-render when nothing but the clock changed (idle players cost ~nothing then).
-        const fp = JSON.stringify({ ...s, now: 0 });
-        if (fp !== lastFp || s.now - lastShownNow >= 900) {
-          lastFp = fp; lastShownNow = s.now;
+        const fp = hudFingerprint(s);
+        const meX = s.players.find((p) => p.id === s.self.id)?.x ?? 0;
+        if (fp !== lastHudFp || s.now - lastShownNow >= 900 || (meX !== lastHudMeX && s.now - lastHudAt >= 250)) {
+          lastHudFp = fp; lastShownNow = s.now; lastHudAt = s.now; lastHudMeX = meX;
           setSnap(s);
         }
         d.audioRef.current?.update(s);
@@ -84,25 +96,38 @@ export function useGameStream(d: GameStreamDeps) {
         d.lastPhase.current = s.phase;
       };
 
-      // Fallback path: the original adaptive poll (also used if SSE fails).
+      // Both transports speak wire frames: one full snapshot, then deltas
+      // merged into what we hold (src/game/wire.ts).
+      let held: Snapshot | null = null;
+      const takeFrame = (frame: WireFrame): boolean => {
+        if (frame.gone) { held = null; lastRev = ""; void doJoin(); return false; }
+        const next = applyFrame(held, frame);
+        if (!next) return false; // a delta before any full frame — the next request resyncs
+        held = next;
+        if (frameTouchesPlayers(frame)) d.netRef.current.arrival = performance.now();
+        handleSnap(held, frame.etag ?? "");
+        return true;
+      };
+
+      // Fallback path: a long-poll that returns within a second, or at once
+      // when something moves — one request a second when idle, no 100 ms chatter.
       const tick = async () => {
         if (inflight) return; // never stack overlapping state fetches
         inflight = true;
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3000);
+        const timeout = setTimeout(() => controller.abort(), 4000);
         try {
-          const revParam = lastRev ? `&rev=${encodeURIComponent(lastRev)}` : "";
-          const r = await fetch(`/api/game/state?code=${code}&playerId=${getPid()}${revParam}`, { signal: controller.signal });
-          if (r.status === 304) { failures = 0; return; } // unchanged — skip the payload entirely
+          const revParam = lastRev && held ? `&rev=${encodeURIComponent(lastRev)}` : "";
+          const r = await fetch(`/api/game/state?code=${code}&playerId=${getPid()}&delta=1&wait=1${revParam}`, { signal: controller.signal });
+          if (r.status === 304) { failures = 0; return; } // nothing happened in the last second
           if (r.status === 404) {
             failures++;
-            if (++notFound >= 3) { notFound = 0; await doJoin(); } // server restarted — reclaim the seat
+            if (++notFound >= 3) { notFound = 0; held = null; lastRev = ""; await doJoin(); } // server restarted — reclaim the seat
             return;
           }
           if (!r.ok) { failures++; return; }
-          const etag = r.headers.get("etag") ?? "";
-          const s: Snapshot = await r.json();
-          handleSnap(s, etag);
+          const frame: WireFrame = await r.json();
+          takeFrame(frame);
         } catch { failures++; } // retry with backoff below
         finally { clearTimeout(timeout); inflight = false; }
       };
@@ -112,7 +137,7 @@ export function useGameStream(d: GameStreamDeps) {
         timer = setInterval(() => {
           // adaptive: 100ms while healthy, up to 8s with jitter after repeated failures or when hidden
           const hidden = typeof document !== "undefined" && document.hidden;
-          const base = failures >= 3 || hidden ? Math.min(1000 * 2 ** Math.min(Math.max(failures - 3, 0), 3), 8000) : 100;
+          const base = failures >= 3 || hidden ? Math.min(1000 * 2 ** Math.min(Math.max(failures - 3, 0), 3), 8000) : 100; // 100 ms only re-arms a finished long-poll
           const want = Math.round(base * (0.8 + Math.random() * 0.4)); // jitter avoids thundering herd
           if (want !== delay) { delay = want; if (timer) clearInterval(timer); timer = setInterval(tick, delay); }
           void tick();
@@ -123,16 +148,11 @@ export function useGameStream(d: GameStreamDeps) {
       // Preferred path: server push over SSE. If it never delivers (or dies),
       // close it and fall back to the adaptive poll above.
       let gotPush = false;
-      let held: Snapshot | null = null; // the last full state this stream delivered; deltas merge into it
       es = new EventSource(`/api/game/state/stream?code=${encodeURIComponent(code)}&playerId=${encodeURIComponent(getPid())}`);
       es.onmessage = (ev) => {
         try {
-          const msg = JSON.parse(ev.data) as { etag?: string; snap?: Snapshot; delta?: Partial<Snapshot>; clock?: number; gone?: boolean };
-          if (msg.gone) { void doJoin(); return; }
-          if (msg.snap) { held = msg.snap; gotPush = true; handleSnap(held, msg.etag ?? ""); return; }
-          if (!held) return; // a delta before any full frame: the server always sends one first
-          if (msg.delta) { held = { ...held, ...msg.delta } as Snapshot; handleSnap(held, msg.etag ?? ""); return; }
-          if (typeof msg.clock === "number") { held = { ...held, now: msg.clock }; handleSnap(held, ""); }
+          const frame = JSON.parse(ev.data) as WireFrame;
+          if (takeFrame(frame)) gotPush = true;
         } catch { /* malformed frame — ignore */ }
       };
       const dropToPolling = () => {
@@ -161,5 +181,5 @@ export function useGameStream(d: GameStreamDeps) {
       if (!d.leavingRef.current) void send({ dir: 0, interactHeld: false, cartHeld: false });
       bye();
     };
-  }, [code, send, getPid, setJoinError, setSnap, setRoleBanner, d.audioRef, d.lastPhase, d.leavingRef, d.mainRef, d.noteOpenRef, d.pendingInputRef, d.settingsDialogRef, d.snapRef, d.timePanelRef, d.wardPanelRef]);
+  }, [code, send, getPid, setJoinError, setSnap, setRoleBanner, d.audioRef, d.lastPhase, d.leavingRef, d.mainRef, d.noteOpenRef, d.pendingInputRef, d.settingsDialogRef, d.snapRef, d.timePanelRef, d.wardPanelRef, d.netRef]);
 }

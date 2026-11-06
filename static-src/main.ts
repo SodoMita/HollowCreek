@@ -11,6 +11,7 @@ import { SettingsDialog } from "../src/game/settings-ui";
 import { BELL_X, CARRY_SPEED, GHOST_SPEED, SPEED } from "../src/game/types";
 import { BUILDINGS, DOOR_REACH, doorX } from "../src/game/buildings";
 import type { RoomListing, Snapshot } from "../src/game/types";
+import { applyFrame, frameTouchesPlayers, type WireFrame } from "../src/game/wire";
 
 // Temporary author-built sandboxes run the same unified code (see SYNC.md).
 // The menu probes them in order; room-code joins also discover the backend
@@ -87,6 +88,11 @@ let overlayKey = "";
 const keys = new Set<string>();
 let lastDir = 0;
 const displayX = new Map<string, number>();
+// Prediction bookkeeping: measured round trip, arrival of the last positions,
+// and our own steering log, replayed over the unacknowledged interval.
+const net = { rttMs: 150, arrival: 0, inputs: [] as { t: number; dir: number }[] };
+let held: Snapshot | null = null; // what the server thinks we hold (deltas merge into it)
+let heldRev = "";
 const settingsStore = new SettingsStore();
 const audio = new AudioDirector(settingsStore);
 let lastVoiceKey = "";
@@ -149,8 +155,10 @@ function toast(msg: string) {
   setTimeout(() => { t.style.display = "none"; }, 2200);
 }
 async function send(payload: Record<string, unknown>) {
+  const sentAt = performance.now();
   try {
     const d = await api("/api/game/input", { code: roomCode, playerId: getPid(), ...payload });
+    net.rttMs = net.rttMs * 0.7 + Math.min(1500, Math.max(20, performance.now() - sentAt)) * 0.3;
     if (d && d.ok === false && d.error) toast(d.error);
   } catch { /* next poll resyncs */ }
 }
@@ -253,6 +261,7 @@ function enterRoom(code: string) {
   voice.stop();
   cancelProbe();
   roomCode = code;
+  held = null; heldRev = ""; net.inputs.length = 0; net.arrival = 0;
   snap = null;
   wardPanel.update(null, 1, false);
   roomError = "";
@@ -283,7 +292,7 @@ function leaveToMenu() {
       }).finally(() => { if ($("menu").style.display !== "none") void refreshRooms(); });
   }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  snap = null; roomCode = ""; overlayKey = ""; roomError = ""; pollFailures = 0;
+  snap = null; roomCode = ""; overlayKey = ""; roomError = ""; pollFailures = 0; held = null; heldRev = "";
   wardPanel.update(null, 1, false);
   $("game").style.display = "none";
   $("menu").style.display = "block";
@@ -317,12 +326,24 @@ async function poll() {
   polling = true;
   const code = roomCode;
   try {
-    const s = (await api(`/api/game/state?code=${code}&playerId=${getPid()}`, undefined, server, 5000)) as Snapshot & { error?: string };
+    // Long-poll wire frames: one full snapshot, then only what changed; the
+    // server answers within a second even when nothing moves (304).
+    const rev = held && heldRev ? `&rev=${encodeURIComponent(heldRev)}` : "";
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 6000);
+    let res: Response;
+    try { res = await fetch(`${server}/api/game/state?code=${code}&playerId=${getPid()}&delta=1&wait=1${rev}`, { signal: ctl.signal }); }
+    finally { clearTimeout(timer); }
     if (code !== roomCode) return; // an old request must not paint a new room
-    if (s.error || !s.self) {
-      showRoomError(s.error ?? "The town did not return this player. Rejoin with its code.");
-      return;
-    }
+    if (res.status === 304) { pollFailures = 0; return; }
+    const frame = (await res.json()) as WireFrame & { error?: string };
+    if (frame.error) { showRoomError(frame.error); return; }
+    if (frame.gone) { held = null; heldRev = ""; return; }
+    const s = applyFrame(held, frame);
+    if (!s || !s.self) { held = null; heldRev = ""; return; } // out of sync — the next request fetches a full snapshot
+    held = s;
+    heldRev = frame.etag ?? heldRev;
+    if (frameTouchesPlayers(frame)) net.arrival = performance.now();
     pollFailures = 0;
     roomError = "";
     snap = s;
@@ -546,7 +567,12 @@ function interactUp() {
 }
 function computeDir() {
   const d = (keys.has("right") ? 1 : 0) - (keys.has("left") ? 1 : 0);
-  if (d !== lastDir) { lastDir = d; void send({ dir: d }); }
+  if (d !== lastDir) {
+    lastDir = d;
+    net.inputs.push({ t: performance.now(), dir: d });
+    if (net.inputs.length > 64) net.inputs.splice(0, net.inputs.length - 64);
+    void send({ dir: d });
+  }
 }
 function chatOpen() { return $("chatbox").style.display === "block"; }
 function openChat() {
@@ -699,17 +725,26 @@ function loop(nowMs: number) {
   const dt = Math.min(0.05, (nowMs - last) / 1000);
   last = nowMs;
   if (!snap || $("game").style.display === "none") return;
+  const age = net.arrival ? Math.min(0.3, (nowMs - net.arrival) / 1000) : 0;
   for (const p of snap.players) {
     const cur = displayX.get(p.id);
-    if (cur === undefined || Math.abs(cur - p.x) > 300) { displayX.set(p.id, p.x); continue; }
+    if (cur === undefined) { displayX.set(p.id, p.x); continue; }
+    const spd = !p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : SPEED;
     if (p.id === snap.self.id && snap.phase === "playing" && !snap.self.caged) {
-      // Local prediction at the authoritative speed; the server poll only
-      // corrects drift, so movement no longer lags behind the input.
-      const spd = !snap.self.alive ? GHOST_SPEED : snap.self.hasSupply ? CARRY_SPEED : SPEED;
-      const pred = cur + lastDir * spd * dt;
-      displayX.set(p.id, Math.abs(p.x - pred) > 90 ? p.x : pred + (p.x - pred) * Math.min(1, dt * 25));
+      // Move at once on our own input; the server only corrects the replayed
+      // estimate (acknowledged x + our steering since arrival − round trip).
+      const since = net.arrival - net.rttMs;
+      let dir = 0;
+      for (const e of net.inputs) if (e.t <= since) dir = e.dir; else break;
+      let target = p.x, t0 = since;
+      for (const e of net.inputs) { if (e.t <= since) continue; target += dir * spd * (e.t - t0) / 1000; t0 = e.t; dir = e.dir; }
+      target += dir * spd * (nowMs - t0) / 1000;
+      let next = cur + lastDir * spd * dt;
+      next += (target - next) * Math.min(1, dt * 8);
+      displayX.set(p.id, Math.abs(target - next) > 220 ? target : next);
     } else {
-      displayX.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 16));
+      const target = p.x + (p.moving ? p.facing * spd * age : 0);
+      displayX.set(p.id, Math.abs(target - cur) > 300 ? p.x : cur + (target - cur) * Math.min(1, dt * 14));
     }
   }
   renderer.setFocus(noteFocusX);
