@@ -1,123 +1,150 @@
-// Compact wire format for the 10Hz state stream. The full Snapshot stays the
-// internal contract; on the wire we drop everything the client can reconstruct
-// (station names/positions, building ids, repeated feed lines, far note text)
-// so a poll costs a few hundred bytes instead of several kilobytes.
-import { BUILDINGS } from "./buildings";
-import { STATIONS, type Snapshot } from "./types";
+// Wire format for the state stream, shared by the server routes and both clients.
+//
+// A viewer receives one full snapshot, then frames that carry only what changed:
+//   delta  — changed top-level fields, as full values
+//   patch  — for the id-keyed arrays (players, tasks, doors): the changed
+//            fields of each changed item, as {id, ...fields}; for `self`: its
+//            changed fields. The client merges them in place. A membership or
+//            order change resends the whole list in `delta` instead.
+//   now    — the room clock, always present (a frame with nothing else is a tick)
+//
+// Fields are also classed fast or slow. Slow values (vigor, cooldowns, the
+// night's progress, dread, ward progress, the recorded-time range) drift every
+// tick but are only *shown* coarsely, so the server holds them back and sends
+// them at most once per second — unless a fast change ships in the same frame.
+import type { Snapshot } from "./types";
 
-export type WireSnapshot = Omit<Snapshot, "tasks" | "doors" | "feed" | "notes" | "cages"> & {
-  /** [station index, done, delivered, sabotaged, progress %] */
-  tk: [number, number, number, number, number][];
-  /** [building index, locked|open flags, keyX] — holder is server-only */
-  dr: [number, number, number | null][];
-  /** only feed lines newer than the client's cursor */
-  fd: { text: string; at: number }[];
-  /** note text is sent only within reading range; the client caches the rest */
-  nt: { id: string; x: number; kind: "wall" | "tree"; house: string | null; author: string; text: string }[];
-  /** [x, occupant id during meetings, else 1/null] */
-  cg: [number, string | number | null][];
-};
-
-const stationIndex = new Map(STATIONS.map((s, i) => [s.id, i]));
-const buildingIndex = new Map(BUILDINGS.map((b, i) => [b.id, i]));
-
-export function compactSnapshot(snap: Snapshot, feedSince: number): WireSnapshot {
-  const meX = snap.players.find((p) => p.id === snap.self.id)?.x ?? 0;
-  const { tasks, doors, feed, notes, cages, ...rest } = snap;
-  return {
-    ...rest,
-    tk: tasks.map((t) => [stationIndex.get(t.id) ?? 0, t.done ? 1 : 0, t.delivered ? 1 : 0, t.sabotaged ? 1 : 0, Math.round(t.progress * 100)]),
-    dr: (doors ?? []).map((d) => [buildingIndex.get(d.id) ?? 0, (d.locked ? 1 : 0) | (d.open ? 2 : 0), d.keyX]),
-    fd: feed.filter((f) => f.at > feedSince),
-    nt: (notes ?? []).map((n) => ({ id: n.id, x: n.x, kind: n.kind, house: n.house, author: n.author, text: Math.abs(n.x - meX) <= 170 ? n.text : "" })),
-    cg: cages.map((c) => [c.x, snap.phase === "meeting" ? c.occupant : c.occupant ? 1 : null]),
+export interface WireFrame {
+  etag?: string;
+  now: number;
+  snap?: Snapshot;
+  delta?: Partial<Record<keyof Snapshot, unknown>>;
+  patch?: {
+    players?: Snapshot["players"];
+    tasks?: Snapshot["tasks"];
+    doors?: NonNullable<Snapshot["doors"]>;
+    self?: Partial<Snapshot["self"]>;
   };
+  gone?: boolean;
 }
 
-export interface WireCache {
-  feed: { text: string; at: number }[];
-  noteText: Map<string, string>;
-}
-export const newWireCache = (): WireCache => ({ feed: [], noteText: new Map() });
+export const ID_ARRAYS = ["players", "tasks", "doors"] as const;
+type IdArrayKey = (typeof ID_ARRAYS)[number];
+const SLOW_TOP = new Set<string>(["nightT", "time", "danger"]);
+const SLOW_SELF = new Set<string>(["stamina", "killCooldownMs", "blackoutCooldownMs", "sabotageCooldownMs"]);
+const SLOW_TASK = new Set<string>(["progress"]);
 
-export function expandSnapshot(wire: WireSnapshot, cache: WireCache): Snapshot {
-  if (wire.fd.length) {
-    const seen = new Set(cache.feed.map((f) => f.at + "\u0000" + f.text));
-    for (const f of wire.fd) if (!seen.has(f.at + "\u0000" + f.text)) cache.feed.push(f);
-    cache.feed.sort((a, b) => a.at - b.at);
-    if (cache.feed.length > 8) cache.feed = cache.feed.slice(-8);
+/** What a viewer holds, pre-serialised per field so each diff only stringifies the new side. */
+export interface EncodedView {
+  etag: string;
+  snap: Snapshot;
+  top: Record<string, string>;
+  self: Record<string, string>;
+  items: Record<IdArrayKey, Map<string, string>>;
+  order: Record<IdArrayKey, string>;
+}
+
+const j = (v: unknown) => JSON.stringify(v ?? null);
+
+export function encodeView(snap: Snapshot, etag: string): EncodedView {
+  const top: Record<string, string> = {};
+  for (const [k, v] of Object.entries(snap)) {
+    if (k === "now" || k === "self" || (ID_ARRAYS as readonly string[]).includes(k)) continue;
+    top[k] = j(v);
   }
-  for (const n of wire.nt) if (n.text) cache.noteText.set(n.id, n.text);
-  if (cache.noteText.size > 128) cache.noteText.clear();
-  const { tk, dr, fd, nt, cg, ...rest } = wire;
-  void fd;
-  return {
-    ...rest,
-    tasks: tk.map(([i, done, delivered, sabotaged, progress]) => {
-      const st = STATIONS[i];
-      return { id: st.id, name: st.name, x: st.x, inside: st.inside, done: !!done, delivered: !!delivered, sabotaged: !!sabotaged, progress: progress / 100 };
-    }),
-    doors: dr.map(([i, flags, keyX]) => ({ id: BUILDINGS[i].id, locked: !!(flags & 1), open: !!(flags & 2), keyX, holder: null })),
-    feed: [...cache.feed],
-    notes: nt.map((n) => ({ ...n, text: n.text || cache.noteText.get(n.id) || "" })),
-    cages: cg.map(([x, occupant]) => ({ x, occupant: typeof occupant === "string" ? occupant : null })),
-  };
+  const self: Record<string, string> = {};
+  for (const [k, v] of Object.entries(snap.self)) self[k] = j(v);
+  const items = {} as Record<IdArrayKey, Map<string, string>>;
+  const order = {} as Record<IdArrayKey, string>;
+  for (const key of ID_ARRAYS) {
+    const list = (snap[key] ?? []) as { id: string }[];
+    items[key] = new Map(list.map((it) => [it.id, j(it)]));
+    order[key] = list.map((it) => it.id).join("\u0001");
+  }
+  return { etag, snap, top, self, items, order };
 }
 
-/** The newest feed timestamp a client holds — its cursor for the next request. */
-export const feedCursor = (cache: WireCache): number => cache.feed.length ? cache.feed[cache.feed.length - 1].at : 0;
+export interface ViewDiff {
+  any: boolean;
+  fast: boolean;
+  delta: NonNullable<WireFrame["delta"]>;
+  patch: NonNullable<WireFrame["patch"]>;
+}
 
-/** A players delta: the id order plus only the travellers who actually moved.
- *  `full` marks a membership change (someone entered/left vision). */
-export interface PlayersDelta { ids: string[]; p: Snapshot["players"]; full?: 1 }
-export type WireDelta = Omit<Partial<WireSnapshot>, "players" | "self"> & {
-  players?: PlayersDelta;
-  self?: Partial<Snapshot["self"]>;
-};
+/** Everything in `next` that differs from what the viewer holds, and whether any of it is fast. */
+export function diffView(prev: EncodedView, next: EncodedView): ViewDiff {
+  const delta: NonNullable<WireFrame["delta"]> = {};
+  const patch: NonNullable<WireFrame["patch"]> = {};
+  let any = false;
+  let fast = false;
+  const snap = next.snap as unknown as Record<string, unknown>;
+  for (const k of new Set([...Object.keys(prev.top), ...Object.keys(next.top)])) {
+    if (prev.top[k] === next.top[k]) continue;
+    delta[k as keyof Snapshot] = snap[k] ?? null;
+    any = true;
+    if (!SLOW_TOP.has(k)) fast = true;
+  }
+  const selfChanged = Object.keys(next.self).filter((k) => prev.self[k] !== next.self[k]);
+  if (selfChanged.length) {
+    any = true;
+    if (selfChanged.some((k) => !SLOW_SELF.has(k))) fast = true;
+    const s = next.snap.self as unknown as Record<string, unknown>;
+    patch.self = Object.fromEntries(selfChanged.map((k) => [k, s[k]])) as Partial<Snapshot["self"]>;
+  }
+  for (const key of ID_ARRAYS) {
+    if (prev.order[key] !== next.order[key]) {
+      delta[key] = snap[key] ?? null; // membership or order changed: resend the list
+      any = true;
+      fast = true;
+      continue;
+    }
+    // Same members: send each changed item as {id, ...changedFields} only.
+    const partials: Record<string, unknown>[] = [];
+    for (const it of (snap[key] ?? []) as Record<string, unknown>[]) {
+      const id = it.id as string;
+      const prevJson = prev.items[key].get(id);
+      if (prevJson === next.items[key].get(id)) continue;
+      const before = JSON.parse(prevJson!) as Record<string, unknown>;
+      const part: Record<string, unknown> = { id };
+      for (const f of new Set([...Object.keys(before), ...Object.keys(it)])) {
+        if (f === "id" || j(it[f]) === j(before[f])) continue;
+        part[f] = it[f] === undefined ? null : it[f];
+        if (key !== "tasks" || !SLOW_TASK.has(f)) fast = true; // a ward's bare progress figure can wait for the slow beat
+      }
+      partials.push(part);
+    }
+    if (!partials.length) continue;
+    any = true;
+    (patch as Record<string, unknown>)[key] = partials;
+  }
+  return { any, fast, delta, patch };
+}
 
-/** Only what changed since the previous compact frame. `self` diffs per field
- *  (a cooldown tick sends one number, not the whole object) and `players` diffs
- *  per traveller (one walker sends ~60 B, not the whole crowd). Slow values are
- *  quantised upstream, so an idle town owes only the once-a-second clock. */
-export function deltaCompact(prev: WireSnapshot | null, next: WireSnapshot): WireDelta {
-  if (!prev) return next as unknown as WireDelta;
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(next) as (keyof WireSnapshot)[]) {
-    if (key === "self") {
-      const a = prev.self, b = next.self;
-      const part: Record<string, unknown> = {};
-      for (const k of Object.keys(b) as (keyof typeof b)[]) {
-        if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) part[k] = b[k];
-      }
-      if (Object.keys(part).length) out.self = part;
-    } else if (key === "players") {
-      const a = prev.players, b = next.players;
-      const ids = b.map((p) => p.id);
-      const sameSet = a.length === b.length && a.every((p, i) => p.id === b[i].id);
-      if (!sameSet) out.players = { ids, p: b, full: 1 };
-      else {
-        const changed = b.filter((p, i) => JSON.stringify(p) !== JSON.stringify(a[i]));
-        if (changed.length) out.players = { ids, p: changed };
-      }
-    } else if (JSON.stringify(prev[key]) !== JSON.stringify(next[key])) {
-      out[key] = next[key];
+/** Merge a frame into the snapshot the client holds. Returns null when a delta arrives before any full frame. */
+export function applyFrame(held: Snapshot | null, frame: WireFrame): Snapshot | null {
+  if (frame.snap) return frame.snap;
+  if (!held) return null;
+  const next = { ...held, now: frame.now } as Snapshot & Record<string, unknown>;
+  // Nulls stay nulls: consumers test `keyX !== null`, `winner === "hollow"` and
+  // the like; the only optional field that can be absent (`time`) is read with `?.`.
+  if (frame.delta) for (const [k, v] of Object.entries(frame.delta)) next[k] = v;
+  if (frame.patch) {
+    if (frame.patch.self) next.self = { ...held.self, ...frame.patch.self };
+    for (const key of ID_ARRAYS) {
+      const items = frame.patch[key] as { id: string }[] | undefined;
+      if (!items) continue;
+      const byId = new Map(items.map((it) => [it.id, it as Record<string, unknown>]));
+      (next as Record<string, unknown>)[key] = ((next[key] ?? []) as { id: string }[]).map((it) => {
+        const part = byId.get(it.id);
+        if (!part) return it;
+        return { ...it, ...part };
+      });
     }
   }
-  return out as WireDelta;
+  return next as Snapshot;
 }
 
-/** Client-side merge of a delta frame onto the last full compact frame. */
-export function mergeCompact(prev: WireSnapshot | null, delta: WireDelta): WireSnapshot {
-  const base = (prev ?? {}) as WireSnapshot;
-  const merged = { ...base, ...delta } as WireSnapshot;
-  if (delta.self) merged.self = { ...base.self, ...delta.self };
-  if (delta.players) {
-    if (delta.players.full || !prev) merged.players = delta.players.p;
-    else {
-      const byId = new Map(base.players.map((p) => [p.id, p]));
-      for (const p of delta.players.p) byId.set(p.id, p);
-      merged.players = delta.players.ids.map((id) => byId.get(id)!).filter(Boolean);
-    }
-  }
-  return merged;
+/** True when a frame carried positions, so clients can timestamp their prediction baseline. */
+export function frameTouchesPlayers(frame: WireFrame): boolean {
+  return !!frame.snap || !!frame.patch?.players || frame.delta?.players !== undefined;
 }

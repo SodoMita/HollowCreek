@@ -9,7 +9,8 @@ import { BUILDINGS, TREE_MAX, TREE_MIN, treeX, WORLD_MIN, WORLD_MAX, type DoorSt
 import { drawHouseExterior, drawHouseInterior } from "./house-art";
 import { drawSvg, drawTraveler } from "./svg-assets";
 import { drawCreekGlints, drawFireflies, drawForeground, drawGrade, drawMoonRays, drawStreetDressing, makeGrainTile } from "./atmosphere";
-import { CHAPEL_SCALE, NOTE_FAR, NOTE_NEAR, ZOOM_READ } from "./units";
+import { MEETING_HOUSE, NOTE_FAR, NOTE_NEAR, ZOOM_MAX, ZOOM_READ } from "./units";
+export { ZOOM_MAX, ZOOM_READ };
 
 interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: string; s: number }
 
@@ -87,6 +88,14 @@ export class Renderer {
   /** The spyglass: zoom in anywhere, centred on the traveller (no page needed). */
   zoomOnly = false;
   setZoomOnly(on: boolean) { this.zoomOnly = on; }
+  /** The spyglass / pinch zoom: a multiplier on the settings' world zoom (1 = lowered). */
+  viewZoom = 1;
+  setViewZoom(z: number) { this.viewZoom = Math.max(1, Math.min(ZOOM_MAX, z)); }
+  /** Where each figure was drawn last frame, so facing and gait follow what is
+   *  actually shown rather than the server's view of it (which arrives a round
+   *  trip later and made your own traveller walk backwards after a turn). */
+  private lastDrawnX = new Map<string, { x: number; facing: number; movingUntil: number }>();
+  private glassUp = false;
   private visionR = 420;
   private doorOpenAmount = new Map<string, number>();
 
@@ -129,8 +138,19 @@ export class Renderer {
     // Zoom the world, not the DOM HUD. Gameplay and server vision stay in world units.
     // A focused page (read-note zoom) overrides both zoom and camera target.
     const focused = this.focusX !== null;
-    const zoom = (focused || this.zoomOnly) ? Math.max(graphics.worldZoom, ZOOM_READ) : graphics.worldZoom;
+    const glassUp = focused || this.zoomOnly || this.viewZoom > 1.05; // HUD-like labels stay out of the zoomed view
+    this.glassUp = glassUp;
+    const base = graphics.worldZoom * this.viewZoom;
+    const zoom = Math.min(graphics.worldZoom * ZOOM_MAX, focused || this.zoomOnly ? Math.max(base, ZOOM_READ) : base);
     ctx.save(); ctx.scale(zoom, zoom); w /= zoom; h /= zoom;
+    // Through the glass the page, not the road, should sit mid-screen: lift the
+    // whole view so the paper is centred (wall pages hang higher than tree pages).
+    let lift = 0;
+    if (focused) {
+      const fn = (snap.notes ?? []).find((n) => n.x === this.focusX);
+      if (fn) lift = Math.max(0, (fn.kind === "wall" ? 165 : 121) - 0.28 * h);
+      ctx.translate(0, lift);
+    }
     if (graphics.reducedMotion) t = 0;
     this.cacheSnap(snap);
     const me = this.meCache;
@@ -159,7 +179,7 @@ export class Renderer {
       return g;
     });
     ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, w, ground);
+    ctx.fillRect(0, -lift, w, ground + lift);
 
     // Deterministic stars: no shimmering random layout between frames.
     const starCount = this.qualityCount(95, 48, 18);
@@ -469,7 +489,14 @@ export class Renderer {
         ctx.fillStyle = "rgba(0,0,0,.35)";
         ctx.beginPath(); ctx.ellipse(px, ground + 2, 17, 4, 0, 0, Math.PI * 2); ctx.fill();
       }
-      this.drawFigure(ctx, px, ground + floatY, p.color, p.facing, p.moving, ghost, isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t, 1);
+      const shownX = displayX.get(p.id) ?? p.x;
+      let seen = this.lastDrawnX.get(p.id);
+      if (!seen) { seen = { x: shownX, facing: p.facing, movingUntil: 0 }; this.lastDrawnX.set(p.id, seen); }
+      const dx = shownX - seen.x;
+      if (Math.abs(dx) > 0.6) { seen.facing = dx > 0 ? 1 : -1; seen.movingUntil = t + 0.12; }
+      else if (p.moving && p.id !== snap.self.id) seen.movingUntil = Math.max(seen.movingUntil, t + 0.05);
+      seen.x = shownX;
+      this.drawFigure(ctx, px, ground + floatY, p.color, seen.facing, t < seen.movingUntil, ghost, isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t, 1);
       ctx.restore();
       // A kit stays visible on its carrier until someone delivers it.
       if (p.hasSupply) drawKit(ctx, px - 23, ground - 16 + floatY);
@@ -488,7 +515,7 @@ export class Renderer {
         ctx.restore();
       }
       // name and speech are optional HUD layers; the figures remain identifiable by color.
-      if (this.settings.interface.playerNames) {
+      if (this.settings.interface.playerNames && !glassUp) {
         ctx.font = "600 12px system-ui, sans-serif";
         ctx.textAlign = "center";
         const label = p.name + (p.echo ? " · echo" : snap.phase === "meeting" && p.voted ? " ✓" : "");
@@ -498,13 +525,13 @@ export class Renderer {
         ctx.fillStyle = p.id === snap.self.id ? "#ffd98a" : p.echo ? "#b9d9d5" : isMate ? "#ff7a6a" : "rgba(245,235,220,.96)";
         ctx.fillText(label, px, ground - 62 + floatY);
       }
-      if (p.action && p.action.until > now) {
+      if (p.action && p.action.until > now && !glassUp) {
         ctx.save(); ctx.font = "600 10px system-ui, sans-serif"; ctx.textAlign = "center";
         const label = p.action.text, width = ctx.measureText(label).width;
         ctx.fillStyle = "rgba(20,27,29,.9)"; ctx.beginPath(); ctx.roundRect(px - width / 2 - 6, ground - 98 + floatY, width + 12, 16, 5); ctx.fill();
         ctx.fillStyle = p.echo ? "#bde6dc" : "#f2d1a2"; ctx.fillText(label, px, ground - 87 + floatY); ctx.restore();
       }
-      if (p.bubble && this.settings.interface.speechBubbles) this.drawBubble(ctx, px, ground - (p.action ? 100 : 72) + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
+      if (p.bubble && this.settings.interface.speechBubbles && !glassUp) this.drawBubble(ctx, px, ground - (p.action ? 100 : 72) + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
     };
 
     for (const p of sorted) if (p.inside && !p.caged) drawPlayer(p);
@@ -529,7 +556,7 @@ export class Renderer {
     for (const p of sorted) if (!p.caged && !p.inside) drawPlayer(p);
 
     // --- falling leaves (quantity follows the detail preset) ---
-    if (graphics.particles) {
+    if (graphics.particles && !graphics.reducedMotion) {
       const count = this.qualityCount(100, 55, 22);
       for (let li = 0; li < count && li < this.leaves.length; li++) {
         const l = this.leaves[li];
@@ -995,18 +1022,49 @@ export class Renderer {
         break;
       }
       case "chapel": {
-        // the chapel is the town's landmark — drawn at nave-and-steeple scale
-        ctx.save();
-        ctx.scale(CHAPEL_SCALE, CHAPEL_SCALE);
-        ctx.fillStyle = "#221419";
-        ctx.fillRect(-65, -90, 130, 90);
-        ctx.beginPath(); ctx.moveTo(-72, -90); ctx.lineTo(0, -128); ctx.lineTo(72, -90); ctx.closePath(); ctx.fill();
-        ctx.fillRect(-16, -170, 32, 84);
-        ctx.beginPath(); ctx.moveTo(-20, -168); ctx.lineTo(0, -206); ctx.lineTo(20, -168); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#c9b98a"; ctx.fillRect(-2, -228, 4, 24); ctx.fillRect(-8, -221, 16, 4);
-        win(-44, -66, 14, 28); win(30, -66, 14, 28); win(-6, -156, 12, 20);
-        ctx.fillStyle = "#120a0e"; ctx.fillRect(-12, -44, 24, 44);
-        ctx.restore();
+        // A white-clapboard meeting house with a square belfry and a spire —
+        // the tallest thing on the street. Dimensions come from units.ts.
+        const { width: W, wallHeight: H, roofRise, towerWidth, towerBase, belfryHeight, spireHeight, windowWidth: WW, windowHeight: WH, doorWidth: DW, doorHeight: DH } = MEETING_HOUSE;
+        const tw = towerWidth / 2, ridge = -H - roofRise, belfryFloor = ridge - towerBase, belfryTop = belfryFloor - belfryHeight, spireTip = belfryTop - spireHeight;
+        ctx.fillStyle = "#2b2129";
+        ctx.fillRect(-W / 2, -H, W, H);
+        ctx.strokeStyle = "rgba(0,0,0,0.28)"; ctx.lineWidth = 1;
+        for (let y = -H + 8; y < -2; y += 8) { ctx.beginPath(); ctx.moveTo(-W / 2, y); ctx.lineTo(W / 2, y); ctx.stroke(); }
+        // corner boards and water table
+        ctx.fillStyle = "#3a2f38"; ctx.fillRect(-W / 2, -H, 6, H); ctx.fillRect(W / 2 - 6, -H, 6, H); ctx.fillRect(-W / 2, -8, W, 8);
+        // gable roof facing the road, with a pediment cornice
+        ctx.fillStyle = "#17111a";
+        ctx.beginPath(); ctx.moveTo(-W / 2 - 14, -H); ctx.lineTo(0, ridge); ctx.lineTo(W / 2 + 14, -H); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = "#5a4f58"; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(-W / 2 - 14, -H); ctx.lineTo(0, ridge); ctx.lineTo(W / 2 + 14, -H); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-W / 2 - 14, -H + 2); ctx.lineTo(W / 2 + 14, -H + 2); ctx.stroke();
+        // tower astride the ridge: base, open belfry, spire, weathervane
+        ctx.fillStyle = "#2b2129"; ctx.fillRect(-tw, belfryFloor, towerWidth, towerBase + 12);
+        ctx.fillStyle = "#3a2f38"; ctx.fillRect(-tw - 4, belfryFloor - 4, towerWidth + 8, 6);
+        ctx.fillStyle = "#241a22"; ctx.fillRect(-tw + 4, belfryTop, towerWidth - 8, belfryHeight);
+        ctx.fillStyle = broken ? "#07050a" : "#120a0e";
+        const ar = tw * 0.46, arcY = belfryTop + belfryHeight * 0.45;
+        ctx.beginPath(); ctx.moveTo(-ar, belfryFloor - 4); ctx.lineTo(-ar, arcY); ctx.arc(0, arcY, ar, Math.PI, 0); ctx.lineTo(ar, belfryFloor - 4); ctx.closePath(); ctx.fill();
+        if (!broken) { ctx.fillStyle = "#8c6a2f"; ctx.beginPath(); ctx.arc(0, arcY + ar * 0.8, ar * 0.5, 0, Math.PI * 2); ctx.fill(); }
+        ctx.fillStyle = "#3a2f38"; ctx.fillRect(-tw - 2, belfryTop - 6, towerWidth + 4, 6);
+        ctx.fillStyle = "#17111a";
+        ctx.beginPath(); ctx.moveTo(-tw - 2, belfryTop - 6); ctx.lineTo(0, spireTip); ctx.lineTo(tw + 2, belfryTop - 6); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = "#c9b98a"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(0, spireTip); ctx.lineTo(0, spireTip - 26); ctx.moveTo(-9, spireTip - 16); ctx.lineTo(9, spireTip - 16); ctx.stroke();
+        // tall arched windows either side of the door, a fan light over it
+        const winTop = -H + (H - WH) * 0.45;
+        for (const wx of [-W / 2 + W * 0.14, W / 2 - W * 0.14 - WW]) {
+          ctx.fillStyle = "#1a1219";
+          ctx.beginPath(); ctx.moveTo(wx - 3, winTop + WH); ctx.lineTo(wx - 3, winTop); ctx.arc(wx + WW / 2, winTop, WW / 2 + 3, Math.PI, 0); ctx.lineTo(wx + WW + 3, winTop + WH); ctx.closePath(); ctx.fill();
+          win(wx, winTop, WW, WH);
+          ctx.strokeStyle = "rgba(31,17,15,.9)"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(wx + WW / 2, winTop); ctx.lineTo(wx + WW / 2, winTop + WH); ctx.moveTo(wx, winTop + WH / 2); ctx.lineTo(wx + WW, winTop + WH / 2); ctx.stroke();
+        }
+        ctx.fillStyle = "#1a1219"; ctx.fillRect(-DW / 2 - 5, -DH - 20, DW + 10, DH + 20);
+        win(-DW / 2, -DH - 16, DW, 12);
+        ctx.fillStyle = "#120a0e"; ctx.fillRect(-DW / 2, -DH, DW, DH);
+        ctx.strokeStyle = "#3a2f38"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, -DH); ctx.lineTo(0, 0); ctx.stroke();
+        ctx.fillStyle = "#3d3a42"; ctx.fillRect(-DW / 2 - 15, -6, DW + 30, 6); ctx.fillRect(-DW / 2 - 21, -3, DW + 42, 3);
         break;
       }
       case "mill": {
@@ -1075,7 +1133,8 @@ export class Renderer {
     // State marker for unfinished wards: missing kit or ready for repair.
     if (task && !task.done && snap.phase === "playing") {
       const bob = Math.sin(t * 3 + st.x) * 4;
-      const markerY = st.kind === "chapel" ? ground - 372 : ground - 235;
+      // The meeting house sign hangs beside the belfry, not above the spire: the spire tip is off-screen at the default zoom.
+      const markerY = ground - (st.kind === "chapel" ? MEETING_HOUSE.wallHeight + MEETING_HOUSE.roofRise + MEETING_HOUSE.towerBase - 18 : 235);
       ctx.save();
       ctx.fillStyle = supplied ? "#b3d59a" : task.sabotaged ? "#d87762" : "#ffcd5a";
       ctx.shadowColor = supplied ? "#729a65" : "#ffcd5a"; this.glow(ctx, 8);
@@ -1083,14 +1142,16 @@ export class Renderer {
       ctx.rotate(Math.PI / 4);
       ctx.fillRect(-7, -7, 14, 14);
       ctx.restore();
-      ctx.save();
-      ctx.fillStyle = "rgba(12,8,16,.78)";
-      ctx.fillRect(x - 48, markerY - 24, 96, 16);
-      ctx.font = "bold 10px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillStyle = supplied ? "#b3d59a" : task.sabotaged ? "#d87762" : "#ffcd5a";
-      ctx.fillText(supplied ? "PUZZLE" : task.sabotaged ? "SABOTAGED" : "NEEDS KIT", x, markerY - 12);
-      ctx.restore();
+      if (!this.glassUp) {
+        ctx.save();
+        ctx.fillStyle = "rgba(12,8,16,.78)";
+        ctx.fillRect(x - 48, markerY - 24, 96, 16);
+        ctx.font = "bold 10px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillStyle = supplied ? "#b3d59a" : task.sabotaged ? "#d87762" : "#ffcd5a";
+        ctx.fillText(supplied ? "PUZZLE" : task.sabotaged ? "SABOTAGED" : "NEEDS KIT", x, markerY - 12);
+        ctx.restore();
+      }
       if (task.progress > 0) {
         ctx.fillStyle = "rgba(0,0,0,0.5)";
         ctx.fillRect(x - 30, markerY + 20, 60, 8);

@@ -6,7 +6,7 @@
 import Link from "next/link";
 import type { VoiceCallbacks } from "./overlays";
 import { useRouter } from "next/navigation";
-import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
+import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Telescope, Trophy, Volume2, Zap } from "lucide-react";
 import type { Snapshot } from "@/game/types";
 import type { VoiceStatus } from "@/game/voice";
 import { keyLabel, type GameSettings } from "@/game/settings";
@@ -16,22 +16,28 @@ import { BELL_X } from "@/game/types";
 export function Toast({ text }: { text: string | null }) {
   if (!text) return null;
   return (
-    <div role="status" aria-live="polite" className="absolute bottom-32 left-1/2 sm:bottom-44 -translate-x-1/2 rounded bg-[#1c1210]/95 px-4 py-2 text-sm text-[#d99a3d]">{text}</div>
+    <div role="status" aria-live="polite" className="hc-toast absolute bottom-32 left-1/2 sm:bottom-44 -translate-x-1/2">{text}</div>
   );
 }
 
-/** Reading happens on the paper itself, in the world. This is only a quiet
- *  status chip (with the words for screen readers) — never a pop-out page. */
 export function NoteReader({ note, onClose }: { note: { text: string; author: string }; onClose: () => void }) {
+  // The raised glass. Nothing is drawn over the page itself — it is read on the
+  // canvas — but the glass must be easy to lower on every device: any key, a
+  // tap on the scene, or the "Lower the glass" button that sits above the
+  // touch controls. The move/interact buttons stay usable underneath.
+  // Keyboard handling (any key lowers the glass) lives in useGameInput, which
+  // owns the game's keydown; a second listener here raced it on the Z key.
   return (
-    <div data-testid="note-reader" role="status"
-      className="hc-hud-item fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full border border-[#8a6f4d]/70 bg-[#160f18]/95 px-4 py-2 text-sm text-[#e9dfcf] shadow-[0_8px_30px_rgba(0,0,0,0.5)] backdrop-blur">
-      <span className="sr-only">{note.text} — pinned by {note.author}</span>
-      <span aria-hidden className="whitespace-nowrap text-[#d99a3d]">Reading the pinned page</span>
-      <span aria-hidden className="hidden whitespace-nowrap text-[#9c8b7a] sm:inline">the words are on the paper · Esc to look away</span>
-      <button onClick={onClose} aria-label="Look away from the page"
-        className="rounded-full border border-[#3a2733] px-2 py-0.5 text-xs text-[#c9b8a4] hover:border-[#d99a3d] hover:text-[#ffd98a]">✕</button>
-    </div>
+    <>
+      <div className="absolute inset-x-0 top-0 bottom-28 z-20 sm:bottom-32" onClick={onClose} data-testid="note-reader" role="button"
+        aria-label={note.author ? `Page pinned by ${note.author}: ${note.text}. Tap to lower the spyglass.` : "Spyglass raised. Tap to lower it."}>
+        <span className="sr-only">{note.text}</span>
+      </div>
+      <button type="button" onClick={onClose} data-testid="lower-glass"
+        className="hc-btn hc-btn-teal absolute bottom-[max(7.5rem,calc(env(safe-area-inset-bottom)+7rem))] left-1/2 z-30 -translate-x-1/2 px-4 py-2 text-sm shadow-lg sm:bottom-[max(8.5rem,calc(env(safe-area-inset-bottom)+8rem))]">
+        <Telescope className="h-4 w-4" /> Lower the glass
+      </button>
+    </>
   );
 }
 

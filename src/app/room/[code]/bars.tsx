@@ -87,7 +87,7 @@ export function TopBar(props: {
         data-spyglass-toggle
         onClick={onToggleSpyglass}
         aria-pressed={spyglass}
-        title={spyglass ? "Lower the spyglass (Z)" : "Raise the spyglass — zoom anywhere (Z)"}
+        title={spyglass ? "Lower the spyglass (Z, any key, or tap the scene)" : "Raise the spyglass — zoom anywhere (Z · wheel or pinch)"}
         aria-label={spyglass ? "Lower spyglass" : "Raise spyglass"}
         className={`rounded border px-1.5 py-1 sm:px-2 sm:py-1.5 ${spyglass ? "border-[#d99a3d] bg-[#3a2410]/90 text-[#ffd98a]" : "border-[#3a2733] bg-[#140d18]/80 text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]"}`}
       ><Telescope className="h-4 w-4" /></button>

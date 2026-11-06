@@ -1,16 +1,17 @@
 import { NextRequest } from "next/server";
-import { loadRoom, onRoomEvent, roomEtag, snapshot } from "@/game/engine";
-import { roomNow } from "@/game/chronicle";
-import { compactSnapshot, deltaCompact, type WireSnapshot } from "@/game/wire";
+import { loadRoom, onRoomEvent } from "@/game/engine";
+import { FRAME_MS, nextFrame, slowDueIn } from "@/game/viewers";
 import { allow, clientKey } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Server-push state stream (SSE). Holds the connection open and sends a fresh
- * snapshot only when the room fingerprint changed — replaces the 100ms poll
- * for clients that support EventSource. Heartbeats keep proxies from idling
- * the connection out; the client falls back to polling on any error.
+ * Server-push state stream (SSE). One full `{etag, now, snap}` frame on
+ * connect, then `{etag, now, delta?, patch?}` frames carrying only what
+ * changed (see src/game/wire.ts), at most ten a second. Slow values ride once
+ * a second; an idle town sends only a `{now}` tick once a second. Heartbeat
+ * comments keep proxies from idling the connection out; the client falls
+ * back to the long-poll on any error.
  */
 export async function GET(req: NextRequest) {
   if (!allow(`stream:${clientKey(req)}`, 20, 60_000)) {
@@ -22,12 +23,13 @@ export async function GET(req: NextRequest) {
   const room = code ? await loadRoom(code) : undefined;
   if (!room) return new Response("No such town.", { status: 404 });
 
-  const compact = req.nextUrl.searchParams.get("c") === "1";
-  let feedSince = 0; // per-connection feed cursor: each line crosses the wire once
-  let lastEtag = "";
-  let lastCompact: WireSnapshot | null = null; // previous frame, for delta encoding
+  let holds: string | null = null; // etag of what this client holds
+  let computedAt = 0;
+  let clockAt = 0;
+  let trailing: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
   const encoder = new TextEncoder();
+  const CLOCK_MS = 1000;
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -39,45 +41,44 @@ export async function GET(req: NextRequest) {
         if (closed) return;
         try { controller.enqueue(encoder.encode(":hb\n\n")); } catch { /* closed */ }
       };
+      const later = (ms: number) => {
+        if (trailing || closed) return;
+        trailing = setTimeout(() => { trailing = null; push(); }, Math.max(1, ms));
+      };
+      // Room events fire every 50 ms tick; snapshots are computed at most
+      // once per FRAME_MS per viewer, and only the diff goes down the wire.
       const push = () => {
-        const snap = snapshot(room, playerId);
-        if (!snap) { send({ gone: true }); cleanup(); return; }
-        const etag = roomEtag(room, playerId, snap);
-        if (etag === lastEtag) return; // nothing meaningful changed — send nothing
-        lastEtag = etag;
-        if (compact) {
-          const frame = compactSnapshot(snap, feedSince);
-          feedSince = snap.feed.length ? snap.feed[snap.feed.length - 1].at : feedSince;
-          // First frame is whole; afterwards only the keys that actually moved.
-          if (lastCompact) send({ etag, delta: deltaCompact(lastCompact, frame) });
-          else send({ etag, snap: frame });
-          lastCompact = frame;
-        } else send({ etag, snap });
+        if (closed) return;
+        const t = Date.now();
+        if (t - computedAt < FRAME_MS) { later(FRAME_MS - (t - computedAt)); return; }
+        computedAt = t;
+        const r = nextFrame(room, playerId, holds, t);
+        if (!r) { send({ gone: true, now: t }); cleanup(); return; }
+        if (r.frame) {
+          holds = r.frame.etag ?? holds;
+          clockAt = t;
+          send(r.frame);
+        } else if (t - clockAt >= CLOCK_MS) {
+          clockAt = t;
+          send({ now: r.snapNow });
+        }
+        const due = slowDueIn(room, playerId, t);
+        if (due > 0) later(due); // held slow values go out on the beat even if the room sleeps
       };
-      // Room events fire at the 20Hz tick; coalesce pushes to <=10Hz.
-      let queued = false;
-      const schedule = () => {
-        if (queued || closed) return;
-        queued = true;
-        setTimeout(() => { queued = false; push(); }, 100);
-      };
-      const unsub = onRoomEvent(code, schedule);
+      const unsub = onRoomEvent(code, push);
       const hb = setInterval(heartbeat, 15_000);
-      const tick = setInterval(push, 100); // time-derived fields between room events
-      // The clock is the only thing an idle town owes the client: once a second.
-      const clock = setInterval(() => send({ clock: roomNow(room) }), 1000);
+      const tick = setInterval(push, 250); // presence heartbeat + clock between room events
       function cleanup() {
         if (closed) return;
         closed = true;
         clearInterval(hb);
         clearInterval(tick);
-        clearInterval(clock);
+        if (trailing) clearTimeout(trailing);
         unsub();
         try { controller.close(); } catch { /* already closed */ }
       }
       req.signal.addEventListener("abort", cleanup);
-      push(); // initial snapshot immediately
-      send({ clock: roomNow(room) });
+      push(); // initial full snapshot immediately
     },
     cancel() { closed = true; },
   });
@@ -85,7 +86,7 @@ export async function GET(req: NextRequest) {
   return new Response(stream, {
     headers: {
       "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-store, no-transform",
+      "cache-control": "no-store",
       connection: "keep-alive",
       "x-accel-buffering": "no",
     },

@@ -91,5 +91,5 @@ export function useGameInput(d: GameInputDeps) {
       window.removeEventListener("keydown", down); window.removeEventListener("keyup", up);
       window.removeEventListener("pointerdown", unlockAudio); window.removeEventListener("blur", releaseInputs);
     };
-  }, [send, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract, chatOpen, pinOpen, d.wardPanelRef, d.timePanelRef, d.settingsDialogRef, keys, lastDir, setChatOpen, chatOpenRef, noteOpenRef, closeNote, getSettingsStore, getVoice, setPinOpen, setPinText, activateTimepiece]);
+  }, [send, computeDir, ensureAudio, releaseInputs, interactDown, interactUp, openChat, stopInteract, chatOpen, pinOpen, d.wardPanelRef, d.timePanelRef, d.settingsDialogRef, keys, lastDir, setChatOpen, chatOpenRef, noteOpenRef, closeNote, getSettingsStore, getVoice, setPinOpen, setPinText, activateTimepiece, toggleSpyglass]);
 }
