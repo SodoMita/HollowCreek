@@ -31,7 +31,9 @@ export function NoteReader({ note, onClose }: { note: { text: string; author: st
     <>
       <div className="absolute inset-x-0 top-0 bottom-28 z-20 sm:bottom-32" onClick={onClose} data-testid="note-reader" role="button"
         aria-label={note.author ? `Page pinned by ${note.author}: ${note.text}. Tap to lower the spyglass.` : "Spyglass raised. Tap to lower it."}>
-        <span className="sr-only">{note.text}</span>
+        {/* The words and the author are on the paper in-world; this line carries
+            them for assistive tech (and for scripts/smoke-time-room-ui.mjs). */}
+        <span className="sr-only">{note.text}{note.author ? ` — pinned by ${note.author}` : ""}</span>
       </div>
       <button type="button" onClick={onClose} data-testid="lower-glass"
         className="hc-btn hc-btn-teal absolute bottom-[max(7.5rem,calc(env(safe-area-inset-bottom)+7rem))] left-1/2 z-30 -translate-x-1/2 px-4 py-2 text-sm shadow-lg sm:bottom-[max(8.5rem,calc(env(safe-area-inset-bottom)+8rem))]">

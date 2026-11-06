@@ -49,7 +49,12 @@ try {
   await page.getByTestId("past-countdown").getByRole("button", { name: "Return now" }).click();
   await page.getByTestId("past-countdown").waitFor({ state: "hidden" });
   const status = await page.getByText("Repaired Wards:").locator("..").innerText();
-  assert.match(status, /1\s*\/\s*13/);
+  // Derive the count instead of hardcoding it: the town grows when wards are
+  // added (13 → 17 in the velvet-dusk pass). One repaired ward is the contract.
+  const counter = status.match(/(\d+)\s*\/\s*(\d+)/);
+  assert.ok(counter, `the ward counter reads "done / total" (got ${JSON.stringify(status)})`);
+  assert.equal(Number(counter[1]), 1, "exactly one ward is repaired after the visit carries forward");
+  assert.ok(Number(counter[2]) >= 13, `the town still has every ward it had (got ${counter[2]})`);
   assert.equal(await page.getByRole("button", { name: /Timepiece · M/ }).count(), 0);
   console.log("PASS past repair carries forward and the timepiece is consumed");
   assert.deepEqual(errors, []);
