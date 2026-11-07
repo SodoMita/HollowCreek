@@ -1,13 +1,6 @@
-// Canvas renderer for Hollow Creek — pure drawing, no game logic.
-//
-// This module is the orchestrator. It owns the state that survives between
-// frames (camera, glass zoom, lookup caches, figure motion, door swing, falling
-// leaves, the vision radius) and calls one drawing function per subject, back to
-// front. The subjects live beside it: sky, horizon, ground, houses, stations,
-// landmarks, players and effects. Per-frame values travel in a Frame object.
-//
-// Public surface (used by GameClient, useGameRender, TutorialClient, static-src/main.ts):
-// Renderer, ZOOM_MAX, ZOOM_READ, CAGE_POSITIONS.
+// Canvas renderer: pure drawing, no game logic. Owns state that survives between frames
+// (camera, zoom, caches, figure motion, door swing, leaves) and calls one draw function per subject, back to front.
+// Public surface: Renderer, ZOOM_MAX, ZOOM_READ, CAGE_POSITIONS.
 import { CAGE_XS, BELL_X, WORLD_W, type PublicPlayer, type Snapshot, type TaskView } from "../types";
 import { WORLD_MAX, WORLD_MIN, type DoorState } from "../buildings";
 import type { GameSettings } from "../settings";
@@ -18,7 +11,7 @@ import { drawSky } from "./sky";
 import { drawHorizon } from "./horizon";
 import { drawGround, drawCreek, drawMeetingSquare } from "./ground";
 import { drawHouseExteriors, drawHouseInteriors } from "./houses";
-import { drawStations, drawCartAndKits } from "./stations";
+import { drawStations, drawCartAndKits } from "./station";
 import { drawPinnedNotes } from "./note";
 import { drawBellTower, drawCage, drawDoorKeys, drawKey, drawTimepieces } from "./landmarks";
 import { drawBody, drawPlayer, type Motion } from "./player";

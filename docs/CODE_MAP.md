@@ -143,7 +143,7 @@ HollowCreek/
         ├── stats.ts · chronicle-access.ts ....................... stats bump, sealed-ledger rule
         ├── hooks.ts ............................................ engine↔module bridge (cycle breaker)
         ├── rng.ts · fingerprint.ts · focus-trap.ts .............. utilities
-        ├── render/ (19 modules: index, station, chapel, landmarks, …) · structures.ts
+        ├── render/ (16 modules: index, station, landmarks, player, env, …) · structures.ts
         ├── atmosphere.ts · svg-assets.ts ........................ canvas drawing (no logic), SVG loader
         ├── audio.ts · music-box.ts ............................. generative score (browser)
         └── settings.ts · settings-ui.ts · time-ui.ts ........... client prefs + dialogs
@@ -237,9 +237,9 @@ See `docs/time-travel.md` for the design.
 
 | Module | Lines | What it is | Imports |
 |---|---:|---|---|
-| `render/index.ts` | 171 | `Renderer`: the canvas orchestrator. Sky, street, stations, cages, bodies, players, notes, spyglass zoom (`setViewZoom`). Each layer is a module in `render/` (palette, env, frame, sky, tree, horizon, ground, note, houses, stations, station, chapel, marker, landmarks, bubble, figure, player, effects); every file is under 10 KB. Split from the old 56 KB `render.ts` (trap T5, `5e86fd6`). | atmosphere, buildings, house-art, settings, svg-assets, types, units, ward-art, structures |
-| `render/structures.ts` | 30 | `STRUCTURE_BOX` and `drawStructure(ctx, name, variant?)`: places `public/art/structures/<name>[-broken\|-trim].svg` in world units. | svg-assets, units |
-| `render/station.ts` | 108 | One ward station. Places the structure art and draws only state-driven parts in code: lit windows, lantern glow, radio lamp, turning mill sails. | ward-art, structures, chapel, marker |
+| `render/index.ts` | 164 | `Renderer`: the canvas orchestrator. Sky, street, stations, cages, bodies, players, notes, spyglass zoom (`setViewZoom`). Each layer is a module in `render/` (env (incl. palettes), frame, sky, tree, horizon, ground, note, houses, station (incl. chapel, stations, cart, kits), marker, landmarks, player (incl. speech bubble), figure, effects, structures); every file is under 10 KB. Split from the old 56 KB `render.ts` (trap T5, `5e86fd6`). | atmosphere, buildings, house-art, settings, svg-assets, types, units, ward-art, structures |
+| `render/structures.ts` | 27 | `STRUCTURE_BOX` and `drawStructure(ctx, name, variant?)`: places `public/art/structures/<name>[-broken\|-trim].svg` in world units. | svg-assets, units |
+| `render/station.ts` | 149 | Ward stations, chapel, supply cart and kits. Places the structure art and draws only state-driven parts in code: lit windows, lantern glow, radio lamp, turning mill sails. | ward-art, structures, chapel, marker |
 | `atmosphere.ts` | 179 | Pure layers: moon rays, fireflies, creek glints, parallax reeds, grade, grain, street dressing. | buildings, svg-assets |
 | `ward-art.ts` | 54 | `drawKit`, `drawSupplyCart`. The broken-ward damage overlays moved into `public/art/structures/*-broken.svg` (`drawBrokenWard` removed). | svg-assets |
 | `svg-assets.ts` | 94 | Same-origin SVG loader with a cache; `drawSvg`, `drawTraveler`, `roomItems`. Static exports set `hc-art-base`. | — |
@@ -417,7 +417,7 @@ depth. Counts are for local modules only.
 | `game/time-travel.ts` | 12 | 395 |
 | `game/persistence.ts` | 8 | 182 |
 | `game/engine.ts` | 21 | 190 |
-| `game/render/index.ts` | 8 | 171 |
+| `game/render/index.ts` | 8 | 164 |
 | `app/room/[code]/GameClient.tsx` | 19 | 414 |
 
 **Cycles.** A strongly connected component (SCC) scan finds two cycles:

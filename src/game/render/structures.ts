@@ -1,7 +1,4 @@
-// Placement of the hand-authored structure art in public/art/structures/.
-// Each SVG uses world units with the road point at (0, 0), so it is drawn at its
-// box inside a context already translated to (station x, ground). The box lists
-// the SVG's viewBox: x, y, width, height.
+// Placement boxes for the structure art in public/art/structures/ (world units, road point at 0,0).
 import { drawSvg } from "../svg-assets";
 
 export const STRUCTURE_BOX = {

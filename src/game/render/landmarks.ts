@@ -1,6 +1,4 @@
-// Standing props on the road: the bell tower, cages, the key, timepieces and the
-// per-house door keys. The bell tower and cages are SVG art; the key and door keys are SVG with a canvas fallback.
-// Each is drawn in its own function so the orchestrator reads as a list.
+// Standing props on the road: bell tower, cages, keys and timepieces.
 import { drawSvg } from "../svg-assets";
 import { drawStructure } from "./structures";
 import type { DrawEnv } from "./env";

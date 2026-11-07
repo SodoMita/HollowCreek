@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Renderer } from "@/game/render";
 import { BUILDINGS, DOOR_REACH, buildingHint, clampWorld, doorX, dropBuildingKeys, newDoors, interactWithBuilding, walkThroughBuildings } from "@/game/buildings";
 import { WardPanel } from "@/game/ward-ui";
@@ -10,11 +9,9 @@ import {
   WARD_JOBS,
   applyWardMove,
   createWardPuzzle,
-  wardKindFor,
   wardProgress,
   wardSolved,
   wardView,
-  type WardGameView,
   type WardKind,
   type WardPuzzle,
 } from "@/game/wards";
@@ -23,23 +20,18 @@ import {
   SettingsStore,
   applyDocumentPreferences,
   createDefaultSettings,
-  keyLabel,
   matchesControl,
-  type BindableAction,
   type GameSettings,
 } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
 import {
   BELL_X,
   CAGE_UNLOCK_RANGE,
-  CART_MAX_SPEED,
   CART_PUSH_RANGE,
   CART_SOLO_SPEED,
   CARRY_SPEED,
   CARRY_VIGOR_DRAIN,
   INTERACT_RANGE,
-  MEETING_FROM,
-  MEETING_TO,
   SPEED,
   STAMINA_IDLE_REGEN,
   STATIONS,
@@ -48,7 +40,6 @@ import {
   TIMEPIECE_X,
   TIME_VISIT_MS,
   HISTORY_SAMPLE_MS,
-  WORLD_W,
   type Snapshot,
   type TaskView,
 } from "@/game/types";
@@ -56,16 +47,15 @@ import {
 import { mergeReturnedDoors, mergeReturnedTasks } from "./tutorial-time";
 import { buildTutorialSnapshot } from "./tutorial-snapshot";
 import { CHAPTERS } from "./chapters";
-import { TutorialOverlay } from "./TutorialOverlay";
+import { TutorialOverlay, type TutorialOverlayProps } from "./TutorialOverlay";
 import type { TutorialFrame, TutorialFuture, TutorialVisit } from "./tutorial-types";
 
 
 export default function TutorialClient() {
-  const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Settings & audio
-  const [settings, setSettings] = useState<GameSettings>(createDefaultSettings);
+  const [, setSettings] = useState<GameSettings>(createDefaultSettings);
   const [muted, setMuted] = useState(false);
   const settingsStoreRef = useRef<SettingsStore | null>(null);
   const settingsDialogRef = useRef<SettingsDialog | null>(null);
@@ -111,11 +101,11 @@ export default function TutorialClient() {
   const [supplyDrops, setSupplyDrops] = useState<number[]>([]);
   const [keyX, setKeyX] = useState<number | null>(1550);
   const [cagedNeighbor, setCagedNeighbor] = useState(true);
-  const [blackoutUntil, setBlackoutUntil] = useState(0);
+  const [blackoutUntil] = useState(0);
   const [danger, setDanger] = useState(0);
   const [bellAt, setBellAt] = useState(0);
   const [meetingActive, setMeetingActive] = useState(false);
-  const [myVote, setMyVote] = useState<string | null>(null);
+  const [myVote] = useState<string | null>(null);
   const [activeWardId, setActiveWardId] = useState<string | null>(null);
 
   // Simulated ward task pool (9 stations)
@@ -678,49 +668,50 @@ export default function TutorialClient() {
   const nearbyIndoorJob = tasks.find((t) => t.inside && t.inside === inside && !t.done && Math.abs(t.x - playerX) < INTERACT_RANGE);
   const actionHint = !inside && timepieceX !== null && Math.abs(timepieceX - playerX) < 55 ? "E — take the timepiece" : buildingHint(doors, "me", playerX, inside) ?? (nearbyIndoorJob ? `E — ${nearbyIndoorJob.delivered ? "repair" : "deliver a kit to"} ${nearbyIndoorJob.name}` : null);
 
+  const overlayProps: TutorialOverlayProps = {
+    actionHint,
+    activateTimepiece,
+    activeChap,
+    audioRef,
+    canvasRef,
+    cartX,
+    completedChapters,
+    currentChapter,
+    ensureAudio,
+    exhausted,
+    getSettingsStore,
+    handleBuilding,
+    handleDropSupply,
+    handleHollowRuin,
+    handleInteract,
+    handlePracticeMove,
+    hasKey,
+    hasSupply,
+    hasTimepiece,
+    inside,
+    keyX,
+    keys,
+    muted,
+    nearDoorState,
+    nearKeyedDoor,
+    openPracticeWard,
+    playerX,
+    practiceKind,
+    practiceModalOpen,
+    practiceNow,
+    practicePreviewUntil,
+    practicePuzzle,
+    setCartHeld,
+    setCurrentChapter,
+    setPracticeModalOpen,
+    settingsDialogRef,
+    stamina,
+    tasks,
+    timeNow,
+    timeVisit,
+    toast,
+  };
   return (
-    <TutorialOverlay
-      actionHint={actionHint}
-      activateTimepiece={activateTimepiece}
-      activeChap={activeChap}
-      audioRef={audioRef}
-      canvasRef={canvasRef}
-      cartX={cartX}
-      completedChapters={completedChapters}
-      currentChapter={currentChapter}
-      ensureAudio={ensureAudio}
-      exhausted={exhausted}
-      getSettingsStore={getSettingsStore}
-      handleBuilding={handleBuilding}
-      handleDropSupply={handleDropSupply}
-      handleHollowRuin={handleHollowRuin}
-      handleInteract={handleInteract}
-      handlePracticeMove={handlePracticeMove}
-      hasKey={hasKey}
-      hasSupply={hasSupply}
-      hasTimepiece={hasTimepiece}
-      inside={inside}
-      keyX={keyX}
-      keys={keys}
-      muted={muted}
-      nearDoorState={nearDoorState}
-      nearKeyedDoor={nearKeyedDoor}
-      openPracticeWard={openPracticeWard}
-      playerX={playerX}
-      practiceKind={practiceKind}
-      practiceModalOpen={practiceModalOpen}
-      practiceNow={practiceNow}
-      practicePreviewUntil={practicePreviewUntil}
-      practicePuzzle={practicePuzzle}
-      setCartHeld={setCartHeld}
-      setCurrentChapter={setCurrentChapter}
-      setPracticeModalOpen={setPracticeModalOpen}
-      settingsDialogRef={settingsDialogRef}
-      stamina={stamina}
-      tasks={tasks}
-      timeNow={timeNow}
-      timeVisit={timeVisit}
-      toast={toast}
-    />
+    <TutorialOverlay {...overlayProps} />
   );
 }
