@@ -143,7 +143,8 @@ HollowCreek/
         ├── stats.ts · chronicle-access.ts ....................... stats bump, sealed-ledger rule
         ├── hooks.ts ............................................ engine↔module bridge (cycle breaker)
         ├── rng.ts · fingerprint.ts · focus-trap.ts .............. utilities
-        ├── render.ts · atmosphere.ts · svg-assets.ts ............ canvas drawing (no logic)
+        ├── render/ (19 modules: index, station, chapel, landmarks, …) · structures.ts
+        ├── atmosphere.ts · svg-assets.ts ........................ canvas drawing (no logic), SVG loader
         ├── audio.ts · music-box.ts ............................. generative score (browser)
         └── settings.ts · settings-ui.ts · time-ui.ts ........... client prefs + dialogs
 ```
@@ -236,9 +237,11 @@ See `docs/time-travel.md` for the design.
 
 | Module | Lines | What it is | Imports |
 |---|---:|---|---|
-| `render.ts` | 1164 | `Renderer`: the canvas. Sky (`nightT` palettes), street, stations, cages, bodies, players (`drawPlayer` derives facing from displayed motion), notes (`drawNote`, inked on paper), spyglass zoom (`setViewZoom`). **56 KB, over the 50 KB limit** (trap T5). Exports `CAGE_POSITIONS`. | atmosphere, buildings, house-art, settings, svg-assets, types, units, ward-art |
+| `render/index.ts` | 171 | `Renderer`: the canvas orchestrator. Sky, street, stations, cages, bodies, players, notes, spyglass zoom (`setViewZoom`). Each layer is a module in `render/` (palette, env, frame, sky, tree, horizon, ground, note, houses, stations, station, chapel, marker, landmarks, bubble, figure, player, effects); every file is under 10 KB. Split from the old 56 KB `render.ts` (trap T5, `5e86fd6`). | atmosphere, buildings, house-art, settings, svg-assets, types, units, ward-art, structures |
+| `render/structures.ts` | 30 | `STRUCTURE_BOX` and `drawStructure(ctx, name, variant?)`: places `public/art/structures/<name>[-broken\|-trim].svg` in world units. | svg-assets, units |
+| `render/station.ts` | 108 | One ward station. Places the structure art and draws only state-driven parts in code: lit windows, lantern glow, radio lamp, turning mill sails. | ward-art, structures, chapel, marker |
 | `atmosphere.ts` | 179 | Pure layers: moon rays, fireflies, creek glints, parallax reeds, grade, grain, street dressing. | buildings, svg-assets |
-| `ward-art.ts` | 160 | `drawKit`, `drawSupplyCart`, `drawBrokenWard`. | svg-assets, types, units |
+| `ward-art.ts` | 54 | `drawKit`, `drawSupplyCart`. The broken-ward damage overlays moved into `public/art/structures/*-broken.svg` (`drawBrokenWard` removed). | svg-assets |
 | `svg-assets.ts` | 94 | Same-origin SVG loader with a cache; `drawSvg`, `drawTraveler`, `roomItems`. Static exports set `hc-art-base`. | — |
 
 ### 4.6 Repair workbench UI (shared by both clients)
@@ -414,7 +417,7 @@ depth. Counts are for local modules only.
 | `game/time-travel.ts` | 12 | 395 |
 | `game/persistence.ts` | 8 | 182 |
 | `game/engine.ts` | 21 | 190 |
-| `game/render.ts` | 8 | 1164 |
+| `game/render/index.ts` | 8 | 171 |
 | `app/room/[code]/GameClient.tsx` | 19 | 414 |
 
 **Cycles.** A strongly connected component (SCC) scan finds two cycles:
@@ -492,7 +495,7 @@ human or a later branch.
 | T2 | Opt-out polish worker, channel key committed in a public repo. | `scripts/mayfly-channel.txt`, `polish-supervisor.ts`, `polish-loop.mjs` | **fixed** on branch (opt-in, env-only, untracked; key still in history) |
 | T3 | Standalone `/play` menu lists three expired E2B sandboxes as `SERVERS`, so Singleplayer can't be reached from the published build. | `static-src/main.ts` L19–23 | open (needs a permanent backend URL and a rebuild) |
 | T4 | `WORLD_W = 4200` in `types.ts` is the *old town span* (spawn bounds), while `units.ts` `WORLD_SPAN = 12200`. Names collide. | `types.ts`, `actions.ts`, `rules.ts` | open (HANDOFF P4) |
-| T5 | `render.ts` (56 KB) and `TutorialClient.tsx` (53 KB) exceed the AGENTS.md 50 KB rule. `drawStation` and the tutorial chapters are the obvious split points. | `src/game/render.ts`, `src/app/tutorial/TutorialClient.tsx` | open (HANDOFF P3) |
+| T5 | Was: `render.ts` (56 KB) and `TutorialClient.tsx` (53 KB) exceeded the AGENTS.md 50 KB rule. **Resolved:** `render.ts` is split into `render/` (`5e86fd6`); `TutorialClient.tsx` is split into `tutorial-*.ts`, `chapters.ts`, `TutorialOverlay.tsx`, `WardJobSurface.tsx` (`5ae46b7`). | `src/game/render/`, `src/app/tutorial/` | resolved (HANDOFF P3) |
 | T6 | 13-module engine import cycle; `hooks.ts` header claims "no import cycles". | §7 | open (document, not refactor) |
 | T7 | Dead backdrop village. `src/game/town.ts` is deleted (human-approved). `public/art/town/` and the `test-house-assets.mjs` asserts are left as they are. | `public/art/town/`, `scripts/test-house-assets.mjs` | partly resolved: town.ts deleted; art left in place |
 | T8 | `test-house-assets.mjs` fails on main (external `../../malye-korely/` dir, asserts ≥100 town houses). | `scripts/test-house-assets.mjs` | open |
@@ -500,7 +503,7 @@ human or a later branch.
 | T10 | Create rate limit is 20 towns per minute per IP. Running the smoke suite back to back trips it ("Too many towns from one address") and looks like a game bug. | `api/game/create`, `server/rate-limit.ts` | open (note in DEPLOY) |
 | T11 | Duplicated header comment ("Presentational HUD overlays … split out of GameClient") copy-pasted into five HUD files; the description does not match `hud.tsx`, `chat.tsx` or `minimap.tsx`. | `bars.tsx`, `chat.tsx`, `hud.tsx`, `midhud.tsx`, `overlays.tsx` | open (cosmetic) |
 | T12 | `public/play/game.js` (≈126 KB minified) is committed build output. Two agents editing `static-src/main.ts` will conflict on it. | `public/play/` | open |
-| T13 | `Renderer.zoomOnly` / `setZoomOnly` have no callers (superseded by `viewZoom`). | `src/game/render.ts` | open (HANDOFF P5.7) |
+| T13 | `Renderer.zoomOnly` / `setZoomOnly` had no callers (superseded by `viewZoom`). **Resolved:** removed in `5e86fd6`. | `src/game/render/` | resolved (HANDOFF P5.7) |
 | T14 | Node: the project targets Node 22 (`ci.yml`, DEPLOY). Node 20 also runs everything here, but use 22 for parity. | `.github/workflows/ci.yml` | note |
 | T15 | Sandbox ports: local Next servers should use 3100, not 3000, when a platform preview holds 3000. | HANDOFF, "Read this first" notes | note |
 

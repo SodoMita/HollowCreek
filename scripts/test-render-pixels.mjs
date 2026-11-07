@@ -7,6 +7,7 @@
 //   node scripts/test-render-pixels.mjs src/game/render.ts > before.txt
 //   node scripts/test-render-pixels.mjs src/game/render/index.ts > after.txt
 //   diff before.txt after.txt && echo IDENTICAL
+//   RENDER_PNG_DIR=shots node scripts/test-render-pixels.mjs ...   (also saves one PNG per scenario)
 //
 // Determinism: Math.random is seeded per scenario, art is served locally and
 // settled before the measured frames, and every frame is hashed from the
@@ -218,6 +219,11 @@ async function main() {
     }, { name, seed });
     if (errors.length) throw new Error(`${name}: page errors: ${errors.join("; ")}`);
     hashes.forEach((h, i) => console.log(`${name} ${i} ${h}`));
+    // Optional visual check: RENDER_PNG_DIR=dir saves the last frame of each scenario.
+    if (process.env.RENDER_PNG_DIR) {
+      mkdirSync(process.env.RENDER_PNG_DIR, { recursive: true });
+      await page.locator("#c").screenshot({ path: join(process.env.RENDER_PNG_DIR, `${name}.png`) });
+    }
     await page.close();
     seed += 7;
   }

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-46 -46 92 92" width="184" height="184">
+  <title>Windmill sails (two blades, stopped)</title>
+  <g fill="none" stroke="#4a3826" stroke-width="7">
+    <path d="M0 0V-44" transform="rotate(90)"/>
+    <path d="M0 0V-44" transform="rotate(180)"/>
+  </g>
+</svg>

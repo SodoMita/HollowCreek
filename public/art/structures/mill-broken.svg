@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-95 -120 190 124" width="380" height="248">
+  <title>Windmill tower (broken)</title>
+  <rect x="-80" y="-85" width="160" height="85" fill="#20140f"/>
+  <polygon points="-88,-85 88,-85 60,-115 -60,-115" fill="#20140f"/>
+  <rect x="-14" y="-40" width="28" height="40" fill="#0f0a08"/>
+  <polygon points="-30,-113 -4,-94 22,-112 40,-86 -25,-83" fill="#0c090b"/>
+  <path d="M-38-4L13-20" fill="none" stroke="#4a3826" stroke-width="7"/>
+  <rect x="44" y="-17" width="35" height="6" fill="#412a1c"/>
+</svg>

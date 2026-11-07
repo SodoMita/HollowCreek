@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -120 120 124" width="240" height="248">
+  <title>Scarecrow (upright)</title>
+  <path d="M0 0V-85M-30-62H30" fill="none" stroke="#3a2a18" stroke-width="6"/>
+  <path d="M-14-60H14L9-25H-9Z" fill="#6b5433"/>
+  <circle cx="0" cy="-92" r="11" fill="#c9a86a"/>
+  <path d="M-16-98H16L0-116Z" fill="#241511"/>
+  <circle cx="-4" cy="-93" r="1.8" fill="#1a0f0a"/>
+  <circle cx="4" cy="-93" r="1.8" fill="#1a0f0a"/>
+</svg>

@@ -1,36 +1,24 @@
 // Standing props on the road: the bell tower, cages, the key, timepieces and the
-// per-house door keys. Each is drawn in its own function so the orchestrator reads as a list.
+// per-house door keys. The bell tower and cages are SVG art; the key and door keys are SVG with a canvas fallback.
+// Each is drawn in its own function so the orchestrator reads as a list.
 import { drawSvg } from "../svg-assets";
+import { drawStructure } from "./structures";
 import type { DrawEnv } from "./env";
 import type { Frame } from "./frame";
 
-/** The bell tower: two legs, a pitched cap, a swinging bell, and a rope. */
+/** The bell tower: the frame is SVG art; the swinging bell is SVG too, rotated here, with the
+ *  ringing arcs and the rope drawn in code because they follow the bell's state. */
 export function drawBellTower(ctx: CanvasRenderingContext2D, x: number, ground: number, t: number, ringing: boolean) {
   ctx.save();
-  ctx.strokeStyle = "#241611";
-  ctx.lineWidth = 9;
-  ctx.beginPath();
-  ctx.moveTo(x - 42, ground); ctx.lineTo(x - 14, ground - 150);
-  ctx.moveTo(x + 42, ground); ctx.lineTo(x + 14, ground - 150);
-  ctx.stroke();
-  ctx.fillStyle = "#1c100c";
-  ctx.beginPath();
-  ctx.moveTo(x - 30, ground - 148); ctx.lineTo(x + 30, ground - 148); ctx.lineTo(x, ground - 178);
-  ctx.closePath(); ctx.fill();
-  ctx.fillRect(x - 24, ground - 152, 48, 7);
+  ctx.translate(x, ground);
+  drawStructure(ctx, "bell-tower");
+  ctx.restore();
   // bell
   const swing = ringing ? Math.sin(t * 9) * 0.5 : Math.sin(t * 0.8) * 0.04;
+  ctx.save();
   ctx.translate(x, ground - 143);
   ctx.rotate(swing);
-  ctx.fillStyle = "#8a6b2a";
-  ctx.beginPath();
-  ctx.moveTo(-13, 22);
-  ctx.quadraticCurveTo(-13, -2, 0, -4);
-  ctx.quadraticCurveTo(13, -2, 13, 22);
-  ctx.closePath(); ctx.fill();
-  ctx.fillStyle = "#6b5220";
-  ctx.fillRect(-15, 20, 30, 5);
-  ctx.beginPath(); ctx.arc(0, 28, 3.4, 0, Math.PI * 2); ctx.fill();
+  drawStructure(ctx, "bell");
   if (ringing) {
     ctx.strokeStyle = "rgba(255,215,130,0.5)";
     ctx.lineWidth = 2;
@@ -43,33 +31,11 @@ export function drawBellTower(ctx: CanvasRenderingContext2D, x: number, ground: 
   ctx.beginPath(); ctx.moveTo(x + 6, ground - 120); ctx.lineTo(x + 6 + (ringing ? Math.sin(t * 9) * 6 : 0), ground - 30); ctx.stroke();
 }
 
-/** A prisoner's cage. `front` draws the bars in front of the figure; otherwise the back frame. */
+/** A prisoner's cage: the back frame behind the figure, the bars in front of it. */
 export function drawCage(ctx: CanvasRenderingContext2D, x: number, ground: number, front: boolean) {
-  const wHalf = 32, top = ground - 96;
   ctx.save();
-  if (!front) {
-    ctx.fillStyle = "rgba(15,10,14,0.6)";
-    ctx.fillRect(x - wHalf, top, wHalf * 2, 96);
-    ctx.strokeStyle = "#2e2a33";
-    ctx.lineWidth = 3;
-    for (let i = -2; i <= 2; i++) {
-      ctx.beginPath(); ctx.moveTo(x + i * 12, top + 4); ctx.lineTo(x + i * 12, ground); ctx.stroke();
-    }
-  } else {
-    ctx.strokeStyle = "#4a4552";
-    ctx.lineWidth = 3.5;
-    for (let i = -2; i <= 2; i++) {
-      ctx.beginPath(); ctx.moveTo(x + i * 12 + 5, top + 2); ctx.lineTo(x + i * 12 + 5, ground); ctx.stroke();
-    }
-    ctx.strokeStyle = "#57515f";
-    ctx.lineWidth = 5;
-    ctx.strokeRect(x - wHalf, top, wHalf * 2, 96);
-    ctx.beginPath(); ctx.moveTo(x - wHalf, top + 30); ctx.lineTo(x + wHalf, top + 30); ctx.stroke();
-    // hanging chain
-    ctx.strokeStyle = "#3a3542";
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top - 16); ctx.stroke();
-  }
+  ctx.translate(x, ground);
+  drawStructure(ctx, front ? "cage-front" : "cage-back");
   ctx.restore();
 }
 
