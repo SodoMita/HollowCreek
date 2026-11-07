@@ -21,7 +21,7 @@ export function drawGround(f: Frame, env: DrawEnv) {
   });
   ctx.fillStyle = gg;
   ctx.fillRect(0, ground, w, h - ground);
-  // Rutted road, scattered stones, leaf piles, and a broken fence rhythm.
+  // Rutted road (patterned, kept in code), then stumps, leaf piles, and a broken fence rhythm (SVG).
   ctx.strokeStyle = "rgba(218,164,100,0.13)";
   ctx.lineWidth = 2;
   for (const offset of [19, 34]) {
@@ -35,27 +35,21 @@ export function drawGround(f: Frame, env: DrawEnv) {
   for (let i = TREE_MIN; i <= TREE_MAX; i++) {
     const sx = treeX(i) - cam;
     if (sx < -60 || sx > w + 60) continue;
-    ctx.fillStyle = "rgba(160,90,40,0.28)";
-    ctx.beginPath(); ctx.ellipse(sx, ground + 8, 30, 6, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "rgba(205,129,55,.28)";
-    for (let j = 0; j < 4; j++) {
-      ctx.beginPath(); ctx.ellipse(sx - 18 + j * 11, ground + 4 + (j % 2) * 3, 5, 2, j * 0.7, 0, Math.PI * 2); ctx.fill();
-    }
+    drawSvg(ctx, "scenery/stump.svg", sx - 30, ground + 2, 60, 12);
+    drawSvg(ctx, "scenery/leaf-pile.svg", sx - 24, ground + 1, 44, 8);
   }
   if (graphics.quality !== "low") {
-    ctx.strokeStyle = "rgba(107,75,50,.55)"; ctx.lineWidth = 4;
     for (let i = 0; i < 34; i++) {
       const fx = WORLD_MIN + i * 320 - cam;
       if (fx < -80 || fx > w + 80) continue;
       const fy = ground + 48 + (i % 3) * 3;
-      ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx - 2, fy - 31); ctx.moveTo(fx + 74, fy); ctx.lineTo(fx + 72, fy - 28);
-      ctx.moveTo(fx - 5, fy - 23); ctx.lineTo(fx + 78, fy - 17); ctx.moveTo(fx - 4, fy - 9); ctx.lineTo(fx + 77, fy - 5); ctx.stroke();
+      drawSvg(ctx, "props/broken-fence.svg", fx - 6, fy - 34, 86, 38);
     }
-    ctx.fillStyle = "rgba(93,103,111,.18)";
     for (let i = 0; i < 42; i++) {
       const sx = WORLD_MIN + i * 260 + 60 - cam;
       if (sx < 0 || sx > w) continue;
-      ctx.beginPath(); ctx.ellipse(sx, ground + 27, 4 + i % 5, 2, 0, 0, Math.PI * 2); ctx.fill();
+      const rx = 4 + i % 5;
+      drawSvg(ctx, "scenery/pebble.svg", sx - rx, ground + 25, rx * 2, 4);
     }
   }
 }
@@ -74,6 +68,8 @@ export function drawMeetingSquare(f: Frame) {
   const { ctx, t, cam, ground, snap } = f;
   if (snap.phase !== "meeting") return;
   const a = 0.08 + Math.sin(t * 3) * 0.03;
-  ctx.fillStyle = `rgba(255,200,100,${a})`;
-  ctx.fillRect(MEETING_FROM - cam, ground - 200, MEETING_TO - MEETING_FROM, 200 + 40);
+  ctx.save();
+  ctx.globalAlpha = a;
+  drawSvg(ctx, "scenery/meeting-square.svg", MEETING_FROM - cam, ground - 200, MEETING_TO - MEETING_FROM, 240);
+  ctx.restore();
 }

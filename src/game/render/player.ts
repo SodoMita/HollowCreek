@@ -14,7 +14,7 @@ export interface Motion { x: number; facing: number; movingUntil: number }
 type Body = Snapshot["bodies"][number];
 
 /** A corpse on the road, with the flash of its death and circling crows. */
-export function drawBody(f: Frame, env: DrawEnv, b: Body) {
+export function drawBody(f: Frame, b: Body) {
   const { ctx, cam, ground, now, t, graphics } = f;
   const bx = b.x - cam;
   const age = b.at ? now - b.at : 9999;
@@ -34,12 +34,11 @@ export function drawBody(f: Frame, env: DrawEnv, b: Body) {
     }
     ctx.restore();
   }
-  ctx.fillStyle = "rgba(90,10,10,0.7)";
-  ctx.beginPath(); ctx.ellipse(bx, ground - 2, 30, 7, 0, 0, Math.PI * 2); ctx.fill();
+  drawSvg(ctx, "props/blood-pool.svg", bx - 30, ground - 9, 60, 14);
   ctx.save();
   ctx.translate(bx, ground - 10);
   ctx.rotate(Math.PI / 2);
-  drawFigure(ctx, 0, 0, b.color, 1, false, false, false, t, 1, env);
+  drawFigure(ctx, 0, 0, b.color, 1, false, false, false, t, 1);
   ctx.restore();
   // circling crows
   ctx.strokeStyle = "#0a0608";
@@ -79,7 +78,7 @@ export function drawPlayer(f: Frame, env: DrawEnv, motion: Map<string, Motion>, 
   if (Math.abs(dx) > 0.6) { seen.facing = dx > 0 ? 1 : -1; seen.movingUntil = t + 0.12; }
   else if (p.moving && p.id !== snap.self.id) seen.movingUntil = Math.max(seen.movingUntil, t + 0.05);
   seen.x = shownX;
-  drawFigure(ctx, px, ground + floatY, p.color, seen.facing, t < seen.movingUntil, ghost, isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t, 1, env);
+  drawFigure(ctx, px, ground + floatY, p.color, seen.facing, t < seen.movingUntil, ghost, isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t, 1);
   ctx.restore();
   // A kit stays visible on its carrier until someone delivers it.
   if (p.hasSupply) drawKit(ctx, px - 23, ground - 16 + floatY);
@@ -92,9 +91,7 @@ export function drawPlayer(f: Frame, env: DrawEnv, motion: Map<string, Motion>, 
   }
   if (p.hasTimepiece) {
     ctx.save(); ctx.shadowColor = "#9cdad3"; env.glow(ctx, 8);
-    if (!drawSvg(ctx, "props/timepiece.svg", px + 12, ground - 62 + floatY, 15, 20)) {
-      ctx.fillStyle = "#a8d2cf"; ctx.beginPath(); ctx.arc(px + 19, ground - 52 + floatY, 5, 0, Math.PI * 2); ctx.fill();
-    }
+    drawSvg(ctx, "props/timepiece.svg", px + 12, ground - 62 + floatY, 15, 20);
     ctx.restore();
   }
   // name and speech are optional HUD layers; the figures remain identifiable by color.

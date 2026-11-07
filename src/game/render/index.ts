@@ -139,10 +139,10 @@ export class Renderer {
     drawKey(f, env);
     drawTimepieces(f, env);
     drawDoorKeys(f, env);
-    for (const b of snap.bodies) if (b.inside) drawBody(f, env, b);
+    for (const b of snap.bodies) if (b.inside) drawBody(f, b);
     for (const p of f.sorted) if (p.inside && !p.caged) drawPlayer(f, env, this.motion, p);
     drawHouseExteriors(f, this.doorOpenAmount);
-    for (const b of snap.bodies) if (!b.inside) drawBody(f, env, b);
+    for (const b of snap.bodies) if (!b.inside) drawBody(f, b);
     for (const p of f.sorted) if (p.caged) drawPlayer(f, env, this.motion, p);
     // Only prisoners stand behind the fronts; pedestrians remain on the road.
     for (const c of snap.cages) drawCage(ctx, c.x - cam, ground, true);

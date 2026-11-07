@@ -48,14 +48,7 @@ export function drawKey(f: Frame, env: DrawEnv) {
   ctx.save();
   ctx.shadowColor = "#ffd76a";
   env.glow(ctx, 16);
-  ctx.strokeStyle = "#e8b93c";
-  ctx.lineWidth = 3.5;
-  if (!drawSvg(ctx, "props/key.svg", kx - 9, ground - 32 + bob, 18, 32)) {
-    ctx.beginPath(); ctx.arc(kx, ground - 26 + bob, 6, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(kx, ground - 20 + bob); ctx.lineTo(kx, ground - 6 + bob);
-    ctx.moveTo(kx, ground - 10 + bob); ctx.lineTo(kx + 6, ground - 10 + bob);
-    ctx.moveTo(kx, ground - 6 + bob); ctx.lineTo(kx + 5, ground - 6 + bob); ctx.stroke();
-  }
+  drawSvg(ctx, "props/key.svg", kx - 9, ground - 32 + bob, 18, 32);
   ctx.restore();
 }
 
@@ -68,10 +61,7 @@ export function drawTimepieces(f: Frame, env: DrawEnv) {
     const tx = px - cam, bob = Math.sin(t * 2.4 + px) * 3;
     if (tx > -50 && tx < w + 50) {
       ctx.save(); ctx.shadowColor = "#9cdad3"; env.glow(ctx, 20);
-      if (!drawSvg(ctx, "props/timepiece.svg", tx - 18, ground - 48 + bob, 36, 48)) {
-        ctx.fillStyle = "#a8d2cf"; ctx.beginPath(); ctx.arc(tx, ground - 24 + bob, 12, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = "#ebc988"; ctx.lineWidth = 3; ctx.stroke();
-      }
+      drawSvg(ctx, "props/timepiece.svg", tx - 18, ground - 48 + bob, 36, 48);
       ctx.restore();
     }
   }
@@ -84,14 +74,9 @@ export function drawDoorKeys(f: Frame, env: DrawEnv) {
     if (d.keyX === null) continue;
     const kx = d.keyX - cam;
     if (kx < -30 || kx > f.w + 30) continue;
-    ctx.save(); ctx.strokeStyle = "#dfad55"; ctx.lineWidth = 3;
-    ctx.shadowColor = "#ffd578"; env.glow(ctx, 12);
+    ctx.save(); ctx.shadowColor = "#ffd578"; env.glow(ctx, 12);
     const bob = Math.sin(t * 3) * 3;
-    if (!drawSvg(ctx, "props/key.svg", kx - 9, ground - 32 + bob, 18, 32)) {
-      ctx.beginPath(); ctx.arc(kx, ground - 25 + bob, 5, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(kx, ground - 20 + bob); ctx.lineTo(kx, ground - 7 + bob);
-      ctx.lineTo(kx + 5, ground - 7 + bob); ctx.moveTo(kx, ground - 12 + bob); ctx.lineTo(kx + 5, ground - 12 + bob); ctx.stroke();
-    }
+    drawSvg(ctx, "props/key.svg", kx - 9, ground - 32 + bob, 18, 32);
     ctx.restore();
   }
 }

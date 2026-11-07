@@ -1,5 +1,6 @@
 // Sky layer: dusk-to-night gradient, stars, moon with halo and rays, and cloud banks.
 import { drawMoonRays } from "../atmosphere";
+import { drawSvg } from "../svg-assets";
 import type { DrawEnv } from "./env";
 import type { Frame } from "./frame";
 import { SKY_DUSK, SKY_NIGHT, lerpHex } from "./palette";
@@ -46,15 +47,8 @@ export function drawSky(f: Frame, env: DrawEnv) {
   }
   ctx.shadowColor = "rgba(240,225,190,0.8)";
   env.glow(ctx, 34);
-  const moon = ctx.createRadialGradient(mx - 13, my - 15, 4, mx, my, 45);
-  moon.addColorStop(0, "#fff4d8"); moon.addColorStop(0.7, "#e8ddc0"); moon.addColorStop(1, "#bcae98");
-  ctx.fillStyle = moon;
-  ctx.beginPath(); ctx.arc(mx, my, 42, 0, Math.PI * 2); ctx.fill();
+  drawSvg(ctx, "scenery/moon.svg", mx - 42, my - 42, 84, 84);
   ctx.shadowBlur = 0;
-  ctx.fillStyle = "rgba(128,119,112,0.25)";
-  for (const [dx, dy, r] of [[-12, -8, 7], [10, 10, 5], [14, -14, 4], [-20, 16, 3]] as const) {
-    ctx.beginPath(); ctx.arc(mx + dx, my + dy, r, 0, Math.PI * 2); ctx.fill();
-  }
   ctx.restore();
 
   if (graphics.glow && graphics.quality !== "low") drawMoonRays(ctx, mx, my, t, night);
