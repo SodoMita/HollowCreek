@@ -2,16 +2,12 @@
 // endTimeVisit/spawnNextTimepiece live in engine (time-travel machinery), so
 // engine injects them once via bindEngineHooks — no import cycle.
 import { clampWorld, dropBuildingKeys } from "./buildings";
-import { feed, journal, markDirty, record, roomNow, seeded, kitId } from "./chronicle";
-import { inMeetingArea, nearestOccupiedCage, nearestBody, stationNear } from "./proximity";
+import { feed, markDirty, record, roomNow, seeded, kitId } from "./chronicle";
+import { stationNear } from "./proximity";
 import { heldPiece } from "./timepieces";
 import { bumpStats } from "./stats";
 import { createWardPuzzle } from "./wards";
-import {
-  CAGE_UNLOCK_RANGE, INTERACT_RANGE, KILL_COOLDOWN_MS, KILL_RANGE, MEETING_FROM, MEETING_MS, MEETING_TO,
-  STAMINA_KILL_COST, STATIONS, TIMEPIECE_X, WORLD_W, CELL_HALF, ix,
-  type InputBody, type Role,
-} from "./types";
+import { KILL_COOLDOWN_MS, MEETING_MS, STAMINA_KILL_COST, STATIONS, WORLD_W, CELL_HALF, ix, type Role } from "./types";
 import type { P, Room, TaskState } from "./engine";
 
 import { endTimeVisit, spawnNextTimepiece } from "./time-travel";
@@ -20,7 +16,6 @@ import { endTimeVisit, spawnNextTimepiece } from "./time-travel";
 // Helpers
 // ---------------------------------------------------------------------------
 
-const dist = (a: number, b: number) => Math.abs(a - b);
 /** Unused, unheld timepieces still lying on the road. */
 
 

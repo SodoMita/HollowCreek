@@ -1,47 +1,17 @@
-import { db } from "@/db";
-import { gameEvents, roomRows, roomPlayers } from "@/db/schema";
-import { and, desc, eq, lt, notInArray, sql } from "drizzle-orm";
-import { randomInt, randomUUID } from "node:crypto";
-import {
-  BELL_X, BLACKOUT_CD_MS, BLACKOUT_MS, BUBBLE_MS, CAGE_XS, CELL_HALF,
-  CART_HELPER_BONUS, CART_MAX_SPEED, CART_PUSH_RANGE, CART_SOLO_SPEED,
-  CAGE_UNLOCK_RANGE,
-  CARRY_SPEED, CARRY_VIGOR_DRAIN, GHOST_SPEED, INTERACT_RANGE, KILL_COOLDOWN_MS,
-  KILL_RANGE, MEETING_FROM, MEETING_MS, MEETING_TO, PLAYER_COLORS,
-  SABOTAGE_COOLDOWN_MS, SABOTAGE_VIGOR_COST, SPEED, STAMINA_BELL_COST,
-  STAMINA_BLACKOUT_COST, STAMINA_IDLE_REGEN, STAMINA_KILL_COST,
-  STAMINA_UNLOCK_COST, STATIONS, SUPPLY_CART_START, TICK_MS, NIGHT_LENGTH_MS,
-  VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW, WORLD_W, TIMEPIECE_X, TIME_VISIT_MS, HISTORY_SAMPLE_MS, ix,
-  NOTE_REACH, NOTE_TEXT_MAX,
-} from "./types";
-import { BUILDINGS, buildingHint, clampWorld, doorX, dropBuildingKeys, newDoors, interactWithBuilding, snapAnchor, walkThroughBuildings, type DoorState } from "./buildings";
-import { bumpStats, newMatchStats } from "./stats";
-import { shuffle } from "./rng";
-import { canonicalInput } from "./input";
-import { captureHistory, frameAt, restoreFrame } from "./history";
-import { dirtyRooms, emitRoom, feed, gPersist, journal, kitId, markDirty, record, roomNow, seeded } from "./chronicle";
-import { getRoom, listRoomsSync, makeCode, roomLoads, rooms } from "./registry";
-import { flushRooms, loadRoom, pruneChronicle } from "./persistence";
-import { beginMeeting, beginRepair, cagePlayer, canRepair, checkWin, doKill, dropKey, dropSupply, dropTimepiece, freePlayer, resolveMeeting, tryDeliverSupply } from "./rules";
+import { type DoorState } from "./buildings";
 import { bindEngineHooks } from "./hooks";
-import { createRoom, handleInput, joinRoom, leaveRoom, listRooms, restartGame, startGame } from "./actions";
-import { advanceRoomForTest, tick, tickRoom, tickRooms } from "./tick";
-import { roomEtag, snapshot } from "./snapshot";
+import { tickRoom } from "./tick";
+import { snapshot } from "./snapshot";
 export { roomEtag, snapshot } from "./snapshot";
-import { endTimeVisit, handlePastInput, pastRoom, pastSnapshot, reconcileFuture, simulatePastForTest, spawnNextTimepiece, startTimeVisit } from "./time-travel";
 export { endTimeVisit, handlePastInput, pastRoom, pastSnapshot, reconcileFuture, simulatePastForTest, spawnNextTimepiece, startTimeVisit } from "./time-travel";
 export { advanceRoomForTest, tick, tickRoom, tickRooms } from "./tick";
 export { createRoom, handleInput, joinRoom, leaveRoom, listRooms, restartGame, startGame } from "./actions";
 
-const dist = (a: number, b: number) => Math.abs(a - b);
 export { loadRoom } from "./persistence";
 export { getRoom, listRoomsSync } from "./registry";
 export { onRoomEvent } from "./chronicle";
-import { heldPiece, loosePieces, nearTimepiece, nearestTimepiece, usedPieces } from "./timepieces";
-import { inMeetingArea, killTarget, nearestBody, nearestOccupiedCage, stationNear } from "./proximity";
-import { snapshotEtag } from "./fingerprint";
-import { applyWardMove, createWardPuzzle, validWardMove, wardProgress, wardSolved, wardView, type WardPuzzle } from "./wards";
-import type { FeedItem, InputBody, MatchStats, Note, Phase, Role, RoomListing, Snapshot } from "./types";
+import { type WardPuzzle } from "./wards";
+import type { FeedItem, InputBody, MatchStats, Note, Phase, Role } from "./types";
 
 // ---------------------------------------------------------------------------
 // Internal state
@@ -161,12 +131,6 @@ export interface Room {
   temporalShadow?: boolean;
   temporalAt?: number;
 }
-
-const g = globalThis as typeof globalThis & {
-  __hollowRooms?: Map<string, Room>;
-  __hollowRoomLoads?: Map<string, Promise<Room | undefined>>;
-  __hollowLoop?: ReturnType<typeof setInterval>;
-};
 
 // ---------------------------------------------------------------------------
 // Chronicle — every player action is persisted

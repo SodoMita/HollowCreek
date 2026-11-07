@@ -3,15 +3,8 @@
 // Presentational HUD overlays for the room screen, split out of GameClient.
 // All game logic stays in GameClient — these components only render + call back.
 
-import Link from "next/link";
-import type { VoiceCallbacks } from "./overlays";
-import { useRouter } from "next/navigation";
-import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Telescope, Trophy, Volume2, Zap } from "lucide-react";
-import type { Snapshot } from "@/game/types";
-import type { VoiceStatus } from "@/game/voice";
+import { Telescope } from "lucide-react";
 import { keyLabel, type GameSettings } from "@/game/settings";
-import { BUILDINGS } from "@/game/buildings";
-import { BELL_X } from "@/game/types";
 
 export function Toast({ text }: { text: string | null }) {
   if (!text) return null;

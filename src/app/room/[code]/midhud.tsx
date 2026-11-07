@@ -6,7 +6,6 @@
 import type { Snapshot } from "@/game/types";
 import type { VoiceStatus } from "@/game/voice";
 import { keyLabel, type GameSettings } from "@/game/settings";
-import { BUILDINGS } from "@/game/buildings";
 import { BELL_X } from "@/game/types";
 
 export function MidHud(props: {

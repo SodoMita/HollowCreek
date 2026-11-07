@@ -1,9 +1,11 @@
-// Atmosphere over the scene. Everything is decorative except the darkness mask (server vision radius).
+// Atmosphere over the scene: falling leaves, fireflies, fog, the lantern-light
+// darkness, the past wash, vignette, the horror flicker. Everything here is decorative
+// except the darkness mask, which follows the server's vision radius.
 import { drawFireflies } from "../atmosphere";
 import { WORLD_MAX, WORLD_MIN, treeX } from "../buildings";
 import type { DrawEnv } from "./env";
 import type { Frame } from "./frame";
-import { LEAF_COLORS } from "./env";
+import { LEAF_COLORS } from "./palette";
 
 export interface Leaf { x: number; y: number; vx: number; vy: number; r: number; c: string; s: number }
 

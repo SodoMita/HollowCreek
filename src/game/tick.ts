@@ -1,20 +1,14 @@
 // Authoritative tick loop: advances every live room, emits change events for
 // SSE, and GCs dead rooms. Time-travel reconciliation is injected via hooks.
-import { emitRoom, feed, journal, markDirty, roomNow, seeded } from "./chronicle";
-import { endTimeVisit, pastRoom, reconcileFuture, spawnNextTimepiece } from "./time-travel";
+import { emitRoom, feed, journal, roomNow, seeded } from "./chronicle";
+import { endTimeVisit, pastRoom, reconcileFuture } from "./time-travel";
 import { dropKey, dropSupply, dropTimepiece, resolveMeeting } from "./rules";
 import { leaveRoom } from "./actions";
 import { rooms } from "./registry";
 import { captureHistory } from "./history";
-import { heldPiece, nearTimepiece, usedPieces } from "./timepieces";
-import { inMeetingArea, nearestBody } from "./proximity";
 import { clampWorld, dropBuildingKeys, walkThroughBuildings } from "./buildings";
 import { stationNear } from "./proximity";
-import {
-  BELL_X, CARRY_SPEED, CARRY_VIGOR_DRAIN, CART_HELPER_BONUS, CART_MAX_SPEED, CART_PUSH_RANGE, CART_SOLO_SPEED,
-  CELL_HALF, GHOST_SPEED, INTERACT_RANGE, SPEED, STAMINA_IDLE_REGEN, STATIONS, TICK_MS, TIMEPIECE_X, ix,
-  type Snapshot,
-} from "./types";
+import { CARRY_SPEED, CARRY_VIGOR_DRAIN, CART_HELPER_BONUS, CART_MAX_SPEED, CART_PUSH_RANGE, CART_SOLO_SPEED, CELL_HALF, GHOST_SPEED, INTERACT_RANGE, SPEED, STAMINA_IDLE_REGEN, STATIONS, TICK_MS, ix } from "./types";
 import type { Room } from "./engine";
 
 const dist = (a: number, b: number) => Math.abs(a - b);

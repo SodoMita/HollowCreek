@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
 import { Renderer, ZOOM_MAX, ZOOM_READ } from "@/game/render";
 import type { NetState } from "./useGameRender";
 import { useGameStream } from "./useGameStream";
@@ -15,7 +13,7 @@ import { WardPanel } from "@/game/ward-ui";
 import { TimePanel } from "@/game/time-ui";
 import type { AudioDirector } from "@/game/audio";
 import type { VoiceChat, VoiceStatus } from "@/game/voice";
-import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, matchesControl, type BindableAction, type GameSettings } from "@/game/settings";
+import { SettingsStore, createDefaultSettings, type GameSettings } from "@/game/settings";
 import { SettingsDialog } from "@/game/settings-ui";
 import { NoteReader, RoleBanner, Toast } from "./hud";
 import { Minimap } from "./minimap";
@@ -23,7 +21,6 @@ import { MidHud } from "./midhud";
 import { BottomControls, TopBar } from "./bars";
 import { ChatBox, PinPanel } from "./chat";
 import { EndOverlay, LobbyOverlay } from "./overlays";
-import { BELL_X, CARRY_SPEED, GHOST_SPEED, SPEED } from "@/game/types";
 import type { Snapshot } from "@/game/types";
 
 function getPid(): string {
@@ -260,7 +257,7 @@ export default function GameClient({ code }: { code: string }) {
 
 
   useGameOverlays({
-    send, getSettingsStore, releaseInputs, ensureAudio, getVoice, setSettings, setMuted,
+    send, getSettingsStore, releaseInputs, setSettings, setMuted,
     chatOpen, chatOpenRef, settingsDialogRef, wardPanelRef, timePanelRef, voiceRef, voiceInitRef, audioRef,
   });
 
@@ -391,7 +388,7 @@ export default function GameClient({ code }: { code: string }) {
 
           {/* ---- lobby overlay ---- */}
           {s.phase === "lobby" && (
-            <LobbyOverlay s={s} leaving={leaving} voiceStatus={voiceStatus} controls={settings.controls}
+            <LobbyOverlay s={s} leaving={leaving} voiceStatus={voiceStatus}
               onStart={() => send({ action: "start" })} onSettings={() => settingsDialogRef.current?.open()}
               onLeave={() => void leaveToTownList()} onToggleVoice={toggleVoice} onToggleMic={toggleMic}
               onResumePlayback={() => void voiceRef.current?.resumePlayback()} />

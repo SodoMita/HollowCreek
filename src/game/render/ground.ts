@@ -6,7 +6,7 @@ import { drawSvg } from "../svg-assets";
 import { MEETING_FROM, MEETING_TO } from "../types";
 import type { DrawEnv } from "./env";
 import type { Frame } from "./frame";
-import { GROUND_DUSK, GROUND_NIGHT, lerpHex } from "./env";
+import { GROUND_DUSK, GROUND_NIGHT, lerpHex } from "./palette";
 
 export function drawGround(f: Frame, env: DrawEnv) {
   const { ctx, w, h, cam, ground, night, nb, graphics } = f;

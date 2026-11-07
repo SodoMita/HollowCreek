@@ -12,8 +12,6 @@ export interface GameOverlaysDeps {
   send: (payload: Record<string, unknown>) => void;
   getSettingsStore: () => SettingsStore;
   releaseInputs: () => void;
-  ensureAudio: () => Promise<void> | void;
-  getVoice: () => Promise<VoiceChat>;
   setSettings: (s: import("@/game/settings").GameSettings) => void;
   setMuted: (m: boolean) => void;
   chatOpen: boolean;
@@ -27,7 +25,7 @@ export interface GameOverlaysDeps {
 }
 
 export function useGameOverlays(d: GameOverlaysDeps) {
-  const { send, getSettingsStore, releaseInputs, ensureAudio, getVoice, setSettings, setMuted, chatOpen, chatOpenRef, settingsDialogRef, wardPanelRef, timePanelRef, voiceRef, voiceInitRef, audioRef } = d;
+  const { send, getSettingsStore, releaseInputs, setSettings, setMuted, chatOpen, chatOpenRef, settingsDialogRef, wardPanelRef, timePanelRef, voiceRef, voiceInitRef, audioRef } = d;
   useEffect(() => {
     const goodbye = () => { void voiceRef.current?.stop(); };
     const init = voiceInitRef.current; // captured: refs may change before cleanup runs

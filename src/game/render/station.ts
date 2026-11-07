@@ -1,56 +1,15 @@
-// Ward stations and the road around them. Structures are SVG art (structures.ts); code draws
-// only state: lit windows, lantern glow, radio lamp, turning sails, kits and markers.
-import { MEETING_HOUSE as M } from "../units";
-import { drawKit, drawSupplyCart } from "../ward-art";
-import { STATIONS, type Station } from "../types";
+// One outdoor ward station: its structure, its broken or repaired state, the
+// kit on the ground when supplied, and the state marker that floats above it.
+// The structures are SVG art (public/art/structures/). This file places them and
+// draws only what depends on game state: lit windows, the lantern glow, the radio
+// lamp and the turning sails.
+import { drawKit } from "../ward-art";
+import type { Station } from "../types";
 import type { DrawEnv } from "./env";
 import type { Frame } from "./frame";
+import { drawChapel } from "./chapel";
 import { drawMarker } from "./marker";
 import { drawStructure } from "./structures";
-
-/** Chapel in the station frame; `win` lights a window (the station owns the lamp logic). */
-function drawChapel(
-  ctx: CanvasRenderingContext2D, broken: boolean,
-  win: (wx: number, wy: number, ww: number, wh: number) => void,
-) {
-  const { width: W, wallHeight: H, windowWidth: WW, windowHeight: WH, doorWidth: DW, doorHeight: DH } = M;
-  drawStructure(ctx, "chapel", broken ? "broken" : undefined);
-  const winTop = -H + (H - WH) * 0.45;
-  for (const wx of [-W / 2 + W * 0.14, W / 2 - W * 0.14 - WW]) win(wx, winTop, WW, WH);
-  win(-DW / 2, -DH - 16, DW, 12);
-  drawStructure(ctx, "chapel", "trim");
-}
-
-/** Outdoor stations. House work is painted as part of its interior, so it is skipped here. */
-export function drawStations(f: Frame, env: DrawEnv) {
-  const { w, cam } = f;
-  for (const st of STATIONS) {
-    if (st.inside) continue; // house work is painted as part of its interior
-    const sx = st.x - cam;
-    if (sx > -280 && sx < w + 280) drawStation(f, env, st, sx);
-  }
-}
-
-/** The supply cart with its pushers' label, then any supply kits lying on the road. */
-export function drawCartAndKits(f: Frame) {
-  const { ctx, w, cam, ground, snap } = f;
-  const cartScreenX = snap.cartX - cam;
-  if (cartScreenX > -90 && cartScreenX < w + 90) {
-    drawSupplyCart(ctx, cartScreenX, ground);
-    if (snap.cartPushers > 0) {
-      ctx.save();
-      ctx.font = "bold 10px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillStyle = "#e9dfcf";
-      ctx.fillText(`${snap.cartPushers} PUSHING`, cartScreenX, ground - 89);
-      ctx.restore();
-    }
-  }
-  for (const drop of snap.supplyDrops) {
-    const sx = drop - cam;
-    if (sx > -45 && sx < w + 45) drawKit(ctx, sx, ground);
-  }
-}
 
 export function drawStation(f: Frame, env: DrawEnv, st: Station, x: number) {
   const { ctx, ground, t, now, snap } = f;

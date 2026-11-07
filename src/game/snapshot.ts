@@ -1,6 +1,6 @@
 // Per-viewer room snapshot + ETag fingerprint. Depends on the time-travel past
 // layer (pastSnapshot/endTimeVisit) and the extracted helper modules.
-import { feed, journal, markDirty, roomNow } from "./chronicle";
+import { journal, markDirty, roomNow } from "./chronicle";
 import { endTimeVisit, pastSnapshot } from "./time-travel";
 import { inMeetingArea, killTarget, nearestBody, nearestOccupiedCage, stationNear } from "./proximity";
 import { heldPiece, loosePieces, nearTimepiece } from "./timepieces";

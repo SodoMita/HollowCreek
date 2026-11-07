@@ -2,9 +2,19 @@
 import assert from "node:assert/strict";
 const base = process.argv[2] ?? "http://127.0.0.1:3000";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Each simulated player is its own client. The API limits requests per client key
+// (fixed 60 s windows), so one shared key let a busy walk loop exhaust the window
+// and answer a strike with "Slow down." at a moment that depended on timing.
+// A 429 is never processed, so waiting for the window and resending is safe.
 const request = async (path, body) => {
-  const response = await fetch(base + path, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {});
-  return { status: response.status, data: await response.json() };
+  const playerId = body?.playerId ?? new URL(path, base).searchParams.get("playerId") ?? undefined;
+  for (let attempt = 0; ; attempt++) {
+    const headers = { ...(body ? { "content-type": "application/json" } : {}), ...(playerId ? { "x-forwarded-for": playerId } : {}) };
+    const response = await fetch(base + path, body ? { method: "POST", headers, body: JSON.stringify(body) } : { headers });
+    const data = await response.json();
+    if (response.status !== 429 || attempt >= 120) return { status: response.status, data };
+    await sleep(1000);
+  }
 };
 let checks = 0;
 function ok(value, message) { assert.ok(value, message); checks++; console.log(`PASS ${message}`); }

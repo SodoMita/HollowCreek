@@ -2,28 +2,22 @@
 // handleInput (clients send ONLY intent, never positions). Time-travel entry
 // points are injected via hooks (they live in engine's replay machinery).
 import { desc, eq, lt } from "drizzle-orm";
-import { randomInt, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { db } from "@/db";
 import { roomPlayers, roomRows } from "@/db/schema";
-import { BUILDINGS, WORLD_MIN, WORLD_MAX, doorX, dropBuildingKeys, interactWithBuilding, newDoors, snapAnchor } from "./buildings";
+import { BUILDINGS, dropBuildingKeys, interactWithBuilding, newDoors, snapAnchor } from "./buildings";
 import { feed, journal, markDirty, record, roomNow, seeded, kitId } from "./chronicle";
-import { canonicalInput } from "./input";
 import { captureHistory } from "./history";
 import { applyWardMove, validWardMove, wardProgress, wardSolved } from "./wards";
 import { inMeetingArea, killTarget, nearestBody, nearestOccupiedCage, stationNear } from "./proximity";
 import { dropKey, dropSupply, dropTimepiece, beginMeeting, beginRepair, canRepair, checkWin, doKill, freePlayer, resolveMeeting, tryDeliverSupply } from "./rules";
 import { endTimeVisit, handlePastInput, startTimeVisit } from "./time-travel";
-import { rooms, listRoomsSync, makeCode } from "./registry";
+import { rooms, makeCode } from "./registry";
 import { shuffle } from "./rng";
-import { heldPiece, nearTimepiece, nearestTimepiece } from "./timepieces";
+import { nearTimepiece, nearestTimepiece } from "./timepieces";
 import { newMatchStats } from "./stats";
 import { bumpStats } from "./stats";
-import {
-  BELL_X, BLACKOUT_CD_MS, BLACKOUT_MS, BUBBLE_MS, CAGE_XS, INTERACT_RANGE, NOTE_REACH, NOTE_TEXT_MAX,
-  PLAYER_COLORS, SABOTAGE_COOLDOWN_MS, SABOTAGE_VIGOR_COST, STAMINA_BELL_COST, STAMINA_BLACKOUT_COST,
-  STAMINA_UNLOCK_COST, STATIONS, SUPPLY_CART_START, TIMEPIECE_X, WORLD_W, ix,
-  type InputBody, type Note, type Phase, type RoomListing, type Snapshot,
-} from "./types";
+import { BELL_X, BLACKOUT_CD_MS, BLACKOUT_MS, BUBBLE_MS, CAGE_XS, INTERACT_RANGE, NOTE_REACH, NOTE_TEXT_MAX, PLAYER_COLORS, SABOTAGE_COOLDOWN_MS, SABOTAGE_VIGOR_COST, STAMINA_BELL_COST, STAMINA_BLACKOUT_COST, STAMINA_UNLOCK_COST, STATIONS, SUPPLY_CART_START, TIMEPIECE_X, WORLD_W, ix, type InputBody, type Note, type Phase, type RoomListing } from "./types";
 import type { P, Room } from "./engine";
 
 const dist = (a: number, b: number) => Math.abs(a - b);

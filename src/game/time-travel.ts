@@ -1,19 +1,18 @@
 // Time travel: the server-owned replay of recorded night snapshots — a single
 // temporary past layer per room. Depends on rules/actions for game effects and
 // on the snapshot hook for building per-viewer views.
-import { randomInt, randomUUID } from "node:crypto";
-import { clampWorld, dropBuildingKeys, snapAnchor } from "./buildings";
-import { feed, journal, markDirty, record, roomNow, seeded, kitId } from "./chronicle";
+import { randomInt } from "node:crypto";
+import { dropBuildingKeys, snapAnchor } from "./buildings";
+import { feed, journal, markDirty, record, roomNow } from "./chronicle";
 import { snapshot, tickRoom } from "./hooks";
 import { bumpStats, newMatchStats } from "./stats";
 import { canonicalInput } from "./input";
 import { cagePlayer, checkWin, dropKey, dropSupply, dropTimepiece } from "./rules";
 import { handleInput } from "./actions";
-import { captureHistory, frameAt, restoreFrame } from "./history";
-import { heldPiece, loosePieces, usedPieces, nearTimepiece } from "./timepieces";
-import { inMeetingArea, killTarget, nearestBody, stationNear } from "./proximity";
+import { frameAt, restoreFrame } from "./history";
+import { heldPiece, loosePieces, usedPieces } from "./timepieces";
 import { TIME_VISIT_MS, TIMEPIECE_X, type InputBody, type MatchStats, type Snapshot } from "./types";
-import type { HistoryEvent, HistoryFrame, JournalEntry, ReplayAction } from "./engine";
+import type { HistoryEvent, JournalEntry, ReplayAction } from "./engine";
 import type { P, Room, TimeVisit } from "./engine";
 
 const dist = (a: number, b: number) => Math.abs(a - b);

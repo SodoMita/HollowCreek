@@ -2,7 +2,7 @@
 import { drawMoonRays } from "../atmosphere";
 import type { DrawEnv } from "./env";
 import type { Frame } from "./frame";
-import { SKY_DUSK, SKY_NIGHT, lerpHex } from "./env";
+import { SKY_DUSK, SKY_NIGHT, lerpHex } from "./palette";
 
 export function drawSky(f: Frame, env: DrawEnv) {
   const { ctx, w, h, t, cam, ground, night, nb, lift, graphics } = f;

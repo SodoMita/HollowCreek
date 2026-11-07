@@ -5,12 +5,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { BookOpen, DoorOpen, Flame, Mic, MicOff, ScrollText, Trophy, Volume2, Zap } from "lucide-react";
+import { BookOpen, DoorOpen, Flame, ScrollText, Trophy } from "lucide-react";
 import type { Snapshot } from "@/game/types";
 import type { VoiceStatus } from "@/game/voice";
-import { keyLabel, type GameSettings } from "@/game/settings";
-import { BUILDINGS } from "@/game/buildings";
-import { BELL_X } from "@/game/types";
 
 export type VoiceCallbacks = {
   onToggleVoice: () => void;
@@ -22,12 +19,11 @@ export function LobbyOverlay(props: {
   s: Snapshot;
   leaving: boolean;
   voiceStatus: VoiceStatus;
-  controls: GameSettings["controls"];
   onStart: () => void;
   onSettings: () => void;
   onLeave: () => void;
 } & VoiceCallbacks) {
-  const { s, leaving, voiceStatus, controls, onStart, onSettings, onLeave, onToggleVoice, onToggleMic, onResumePlayback } = props;
+  const { s, leaving, voiceStatus, onStart, onSettings, onLeave, onToggleVoice, onToggleMic, onResumePlayback } = props;
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-[#0b0710]/70 backdrop-blur-sm">
       <div className="hc-rise max-h-[88dvh] w-[min(92vw,440px)] overflow-y-auto rounded-lg border border-[#3a2733] bg-[#140d18]/95 p-4 text-center sm:p-6">
