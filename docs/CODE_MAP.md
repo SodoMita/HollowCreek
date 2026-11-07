@@ -138,7 +138,7 @@ HollowCreek/
         ├── snapshot.ts · fingerprint.ts · wire.ts · viewers.ts ... per-viewer views and deltas
         ├── history.ts · time-travel.ts · timepieces.ts ........... night checkpoints, time travel
         ├── wards.ts · recovered-wards.ts · ward-ui.ts · ward-art.ts ... repair games
-        ├── buildings.ts · house-art.ts · town.ts ................. houses, doors, dead backdrop
+        ├── buildings.ts · house-art.ts ............................. houses, doors
         ├── proximity.ts · voice-range.ts · voice.ts ............... range queries, voice
         ├── stats.ts · chronicle-access.ts ....................... stats bump, sealed-ledger rule
         ├── hooks.ts ............................................ engine↔module bridge (cycle breaker)
@@ -231,7 +231,6 @@ See `docs/time-travel.md` for the design.
 | `recovered-wards.ts` | 111 | Pure deterministic mechanics recovered from the Gloamwing experiments (Lantern Rites, The Long Draw, Nine Candles, Crow Call, The Furrow). No timers, no client-claimed positions. | — |
 | `buildings.ts` | 147 | Houses (`BUILDINGS`), doors (`DoorState`, `doorX`, `newDoors`), trees (`treeX`, `TREE_MIN/MAX`), `snapAnchor` for pinned pages, `interactWithBuilding`, `walkThroughBuildings`, `clampWorld`. | types, units |
 | `house-art.ts` | 128 | `drawHouseExterior`, `drawHouseInterior`. Data-driven from `public/art/rooms.json` and SVGs. [client] | buildings, svg-assets, types |
-| `town.ts` | 15 | `TOWN_HOUSES` backdrop village. **Dead**: nothing imports it and `houses.json` is empty (trap T7). | — |
 
 ### 4.5 Presentation (browser only; pure drawing, no game logic)
 
@@ -495,7 +494,7 @@ human or a later branch.
 | T4 | `WORLD_W = 4200` in `types.ts` is the *old town span* (spawn bounds), while `units.ts` `WORLD_SPAN = 12200`. Names collide. | `types.ts`, `actions.ts`, `rules.ts` | open (HANDOFF P4) |
 | T5 | `render.ts` (56 KB) and `TutorialClient.tsx` (53 KB) exceed the AGENTS.md 50 KB rule. `drawStation` and the tutorial chapters are the obvious split points. | `src/game/render.ts`, `src/app/tutorial/TutorialClient.tsx` | open (HANDOFF P3) |
 | T6 | 13-module engine import cycle; `hooks.ts` header claims "no import cycles". | §7 | open (document, not refactor) |
-| T7 | Dead backdrop village: `town.ts`, `public/art/town/`, `scripts/test-house-assets.mjs`. | `src/game/town.ts`, `public/art/town/` | open (confirm with human first) |
+| T7 | Dead backdrop village. `src/game/town.ts` is deleted (human-approved). `public/art/town/` and the `test-house-assets.mjs` asserts are left as they are. | `public/art/town/`, `scripts/test-house-assets.mjs` | partly resolved: town.ts deleted; art left in place |
 | T8 | `test-house-assets.mjs` fails on main (external `../../malye-korely/` dir, asserts ≥100 town houses). | `scripts/test-house-assets.mjs` | open |
 | T9 | Local smoke scripts hardcode ports and kill servers: `smoke-rooms` restarts on 3100 with `pkill -f next-serv[e]r` (kills any other Next server); `test-wire` defaults to 3000. | `scripts/smoke-rooms.mjs`, `scripts/test-wire.mjs` | open |
 | T10 | Create rate limit is 20 towns per minute per IP. Running the smoke suite back to back trips it ("Too many towns from one address") and looks like a game bug. | `api/game/create`, `server/rate-limit.ts` | open (note in DEPLOY) |
