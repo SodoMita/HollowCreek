@@ -66,7 +66,8 @@ assert.ok(/private view: View \| null/.test(source["index.ts"]), "index.ts: one 
 assert.ok(/this\.view \?\? \(this\.view = \{\} as View\)/.test(source["index.ts"]), "index.ts: View is reused, not rebuilt");
 
 // 5/6. Figure fallbacks and cache policy.
-assert.ok(/if \(!drawTraveler\(/.test(source["actors.ts"]), "actors.ts: a fallback silhouette draws when a palette is not ready");
+assert.ok(/drawTraveler\(ctx/.test(source["actors.ts"]) || /drawFigure/.test(source["actors.ts"]), "actors.ts: figures draw through drawTraveler");
+ assert.ok(/primeTravelers/.test(svg), "svg-assets: every player palette is pre-baked at load");
 assert.ok(/travelers\.delete\(oldest\.value\)/.test(svg), "svg-assets: traveller cache evicts one entry");
 assert.ok(!/travelers\.clear\(\)/.test(svg), "svg-assets: traveller cache is never mass-cleared");
 

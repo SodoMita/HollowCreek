@@ -8,7 +8,7 @@ import { AudioDirector } from "../src/game/audio";
 import { VoiceChat, type VoiceStatus } from "../src/game/voice";
 import { SettingsStore, applyDocumentPreferences, keyLabel, matchesControl, type BindableAction } from "../src/game/settings";
 import { SettingsDialog } from "../src/game/settings-ui";
-import { BELL_X, CARRY_SPEED, GHOST_SPEED, SPEED } from "../src/game/types";
+import { BELL_X, CARRY_SPEED, CART_HELPER_BONUS, CART_MAX_SPEED, CART_PUSH_RANGE, CART_SOLO_SPEED, GHOST_SPEED, SPEED } from "../src/game/types";
 import { BUILDINGS, DOOR_REACH, doorX } from "../src/game/buildings";
 import type { RoomListing, Snapshot } from "../src/game/types";
 import { applyFrame, frameTouchesPlayers, type WireFrame } from "../src/game/wire";
@@ -88,6 +88,8 @@ let lastPhase = "lobby";
 let overlayKey = "";
 const keys = new Set<string>();
 let lastDir = 0;
+// Local mirror of the push key/button, used to predict cart-speed movement.
+let cartHeld = false;
 const displayX = new Map<string, number>();
 // Prediction bookkeeping: measured round trip, arrival of the last positions,
 // and our own steering log, replayed over the unacknowledged interval.
@@ -561,6 +563,7 @@ function releaseInputs() {
   keys.clear();
   lastDir = 0;
   interactToggled = false;
+  cartHeld = false;
   if (roomCode) void send({ dir: 0, interactHeld: false, cartHeld: false });
 }
 function activateTimepiece() {
@@ -624,7 +627,7 @@ window.addEventListener("keydown", (e) => {
   else if (bound("interact", e) && !e.repeat) { interactDown(); e.preventDefault(); }
   else if (bound("ability", e) && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
   else if (bound("blackout", e) && !e.repeat) { void send({ action: "blackout" }); e.preventDefault(); }
-  else if (bound("push", e) && !e.repeat) { void send({ cartHeld: true }); e.preventDefault(); }
+  else if (bound("push", e) && !e.repeat) { cartHeld = true; void send({ cartHeld: true }); e.preventDefault(); }
   else if (bound("drop", e) && !e.repeat) { void send({ action: "drop_supply" }); e.preventDefault(); }
   else if (bound("ruin", e) && !e.repeat) { void send({ action: "sabotage" }); e.preventDefault(); }
   else if (bound("chat", e) && !e.repeat) { openChat(); e.preventDefault(); }
@@ -635,12 +638,19 @@ window.addEventListener("keyup", (e) => {
   if (bound("left", e)) { keys.delete("left"); computeDir(); }
   else if (bound("right", e)) { keys.delete("right"); computeDir(); }
   else if (bound("interact", e)) interactUp();
-  else if (bound("push", e)) void send({ cartHeld: false });
+  else if (bound("push", e)) { cartHeld = false; void send({ cartHeld: false }); }
 });
 window.addEventListener("blur", releaseInputs);
 $("chatinput").addEventListener("keydown", (e) => { if (e.key === "Enter") submitChat(); e.stopPropagation(); });
 $("chatinput").addEventListener("blur", () => setTimeout(submitChat, 50));
 window.addEventListener("pointerdown", () => audio.start());
+// A lost window must not leave a held key stuck down.
+window.addEventListener("blur", () => {
+  keys.clear();
+  computeDir();
+  if (cartHeld) { cartHeld = false; void send({ cartHeld: false }); }
+  document.querySelectorAll("[data-hold].pressed").forEach((el) => el.classList.remove("pressed"));
+});
 
 // hold buttons (movement + E)
 document.querySelectorAll<HTMLElement>("[data-hold]").forEach((b) => {
@@ -648,19 +658,41 @@ document.querySelectorAll<HTMLElement>("[data-hold]").forEach((b) => {
   const on = (e: Event) => {
     e.preventDefault();
     if (what === "e") interactDown();
-    else if (what === "push") void send({ cartHeld: true });
+    else if (what === "push") { cartHeld = true; void send({ cartHeld: true }); }
     else { keys.add(what); computeDir(); }
   };
   const off = () => {
     if (what === "e") interactUp();
-    else if (what === "push") void send({ cartHeld: false });
+    else if (what === "push") { cartHeld = false; void send({ cartHeld: false }); }
     else { keys.delete(what); computeDir(); }
   };
-  b.addEventListener("pointerdown", on);
-  b.addEventListener("pointerup", off);
-  b.addEventListener("pointerleave", off);
-  b.addEventListener("pointercancel", off);
+  // Press-and-hold: only a release or a cancel ends the press. The old pointerleave
+  // handler stopped movement the moment a finger slid a pixel off the button, which is
+  // exactly what happens when you hold an arrow on a phone. The pointer is captured so
+  // the release still arrives if the finger ends up outside the button.
+  const pressed = new Set<number>();
+  const down = (e: PointerEvent) => {
+    if (e.button !== undefined && e.button > 0) return;
+    pressed.add(e.pointerId);
+    try { b.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
+    b.classList.add("pressed");
+    on(e);
+  };
+  const up = (e: PointerEvent) => {
+    if (!pressed.has(e.pointerId)) return;
+    pressed.delete(e.pointerId);
+    if (pressed.size === 0) b.classList.remove("pressed");
+    off();
+  };
+  b.addEventListener("pointerdown", down);
+  b.addEventListener("pointerup", up);
+  b.addEventListener("pointercancel", up);
+  b.addEventListener("lostpointercapture", up);
   b.addEventListener("contextmenu", (e) => e.preventDefault());
+  b.addEventListener("dragstart", (e) => e.preventDefault());
+  // A long press must not open the context menu or select text on mobile.
+  (b.style as CSSStyleDeclaration).touchAction = "none";
+  (b.style as CSSStyleDeclaration).userSelect = "none";
 });
 $("ability").addEventListener("click", () => send({ action: "ability" }));
 $("snuffbtn").addEventListener("click", () => send({ action: "blackout" }));
@@ -774,6 +806,17 @@ settingsStore.subscribe((settings) => { renderer.setSettings(settings); resize()
 resize();
 window.addEventListener("resize", resize);
 window.visualViewport?.addEventListener("resize", resize);
+/** The speed the server will actually move this soul at. A pusher walks at cart
+ *  speed, so predicting at walking speed made the figure lunge ahead of the cart
+ *  and snap back (the "pushing is slower / cart lags" report). */
+function walkSpeed(snap: Snapshot, p: Snapshot["players"][number]): number {
+  if (p.id !== snap.self.id || p.hasSupply || p.inside) return SPEED;
+  if (!cartHeld || !snap.self.alive || snap.self.caged) return SPEED;
+  if (Math.abs((displayX.get(p.id) ?? p.x) - snap.cartX) > CART_PUSH_RANGE) return SPEED;
+  const helpers = Math.max(0, snap.cartPushers - 1);
+  return Math.min(CART_MAX_SPEED, CART_SOLO_SPEED + helpers * CART_HELPER_BONUS);
+}
+
 // Other players are drawn on a short interpolation delay between the last two
 // server positions (plus a capped extrapolation past the newest), so state frames
 // arriving ~10×/s read as continuous motion instead of visible steps.
@@ -804,7 +847,7 @@ function loop(nowMs: number) {
   for (const p of snap.players) {
     const cur = displayX.get(p.id);
     if (cur === undefined) { displayX.set(p.id, p.x); continue; }
-    const spd = !p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : SPEED;
+    const spd = !p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : walkSpeed(snap, p);
     if (p.id === snap.self.id && snap.phase === "playing" && !snap.self.caged) {
       // Move at once on our own input; the server only corrects the replayed
       // estimate (acknowledged x + our steering since arrival − round trip).

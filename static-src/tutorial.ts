@@ -547,15 +547,31 @@ function bindInput(): void {
   });
   window.addEventListener("blur", () => { keys.clear(); s.cartHeld = false; });
 
+  // Press-and-hold on touch: a finger sliding off the button must not stop the walk
+  // (the old pointerleave handler did), and a captured pointer keeps the release.
   const hold = (id: string, action: string) => {
     const el = $(id);
+    el.style.touchAction = "none";
+    el.style.userSelect = "none";
+    const pressed = new Set<number>();
     el.addEventListener("pointerdown", (e) => {
       e.preventDefault();
+      pressed.add(e.pointerId);
+      try { el.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
+      el.classList.add("pressed");
       if (action === "push") s.cartHeld = true; else keys.add(action);
     });
-    const release = () => { if (action === "push") s.cartHeld = false; else keys.delete(action); };
-    el.addEventListener("pointerup", release);
-    el.addEventListener("pointerleave", release);
+    const release = () => {
+      if (action === "push") s.cartHeld = false; else keys.delete(action);
+      el.classList.remove("pressed");
+    };
+    const up = (e: PointerEvent) => {
+      if (!pressed.delete(e.pointerId)) return;
+      if (pressed.size === 0) release();
+    };
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+    el.addEventListener("lostpointercapture", up);
   };
   hold("left", "left");
   hold("right", "right");

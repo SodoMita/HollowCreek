@@ -11,6 +11,8 @@
 // its frame until artReady(). The wait ends after PRELOAD_TIMEOUT_MS so a slow or
 // missing file cannot stall the game, and a file that never loads is never drawn.
 
+import { PLAYER_COLORS } from "./types";
+
 export interface RoomArtItem {
   id: string;
   asset: string;
@@ -195,19 +197,25 @@ export function drawSvg(
 
 /** The traveller sprite in its own colours, baked per palette and pose. Drawn in local coordinates. */
 export function drawTraveler(ctx: CanvasRenderingContext2D, color: string, redEyes: boolean, ghost: boolean, pose: number): boolean {
-  if (typeof window === "undefined") return false;
+  const canvas = travelerCanvas(color, redEyes, ghost, pose);
+  if (!canvas) return false;
+  ctx.drawImage(canvas, -20, -54, 40, 54);
+  return true;
+}
+
+/** The baked traveller canvas for a palette and pose, or null while it bakes.
+ *  Exported for preloadArt(), which primes every player colour up front. */
+export function travelerCanvas(color: string, redEyes: boolean, ghost: boolean, pose: number): HTMLCanvasElement | null {
+  if (typeof window === "undefined") return null;
   void requestTraveler();
-  if (!travelerTemplate) return false;
+  if (!travelerTemplate) return null;
   const cloak = /^#[0-9a-f]{6}$/i.test(color) ? color : "#3a7ca5";
   const step = pose > 0 ? 3 : pose < 0 ? -3 : 0;
   const key = `${cloak}:${redEyes}:${ghost}:${step}:${artScale}`;
   const hit = travelers.get(key);
-  if (hit) {
-    ctx.drawImage(hit, -20, -54, 40, 54);
-    return true;
-  }
+  if (hit) return hit;
   if (!travelerPending.has(key)) bakeTraveler(key, cloak, redEyes, ghost, step, travelerTemplate);
-  return false;
+  return null;
 }
 
 function bakeTraveler(key: string, cloak: string, redEyes: boolean, ghost: boolean, step: number, template: string) {
@@ -240,6 +248,13 @@ export function artReady(): boolean {
 }
 
 /** Starts loading all fixed art, room furniture and the traveller sprite. Idempotent. */
+/** Bake the traveller in every player colour and pose, so no figure bakes mid-match. */
+function primeTravelers(): void {
+  for (const color of PLAYER_COLORS) {
+    for (const pose of [-1, 0, 1]) travelerCanvas(color, false, false, pose);
+  }
+}
+
 export function preloadArt(): Promise<void> {
   if (preloading) return preloading;
   if (typeof window === "undefined") {
@@ -252,7 +267,7 @@ export function preloadArt(): Promise<void> {
   ));
   const all = Promise.all([
     ...STATIC_ART.map((path) => settled(requestImage(path))),
-    requestTraveler(),
+    requestTraveler().then(() => primeTravelers()),
     rooms,
   ]);
   const timeout = new Promise<void>((resolve) => setTimeout(resolve, PRELOAD_TIMEOUT_MS));

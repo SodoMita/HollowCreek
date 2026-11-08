@@ -99,7 +99,8 @@ export function tickRoom(room: Room, now: number) {
         p.x = step.x;
         p.inside = step.inside;
       }
-      p.moving = Math.abs(p.x - wasX) > 0.01;
+      // Keep the intended state: a soul pressing into a blocked doorway is still walking.
+      p.moving = p.dir !== 0;
       if (p.alive && !p.caged && p.dir !== 0 && (p.hasSupply || pushingIds.has(p.id))) {
         p.stamina = Math.max(0, p.stamina - CARRY_VIGOR_DRAIN * dt * (pushingIds.has(p.id) ? 1.2 : 1));
         if (p.stamina <= 0) p.exhausted = true;

@@ -16,7 +16,7 @@ export function drawFigure(
   facing: number, moving: boolean, ghost: boolean, redEyes: boolean, t: number,
 ) {
   const gait = Math.sin(t * 11 + x * 0.1);
-  const bob = moving ? gait * 1.8 : Math.sin(t * 1.7 + x) * 0.35;
+  const bob = moving ? Math.abs(gait) * -1.1 : Math.sin(t * 1.7 + x) * 0.3;
   ctx.save();
   ctx.translate(x, groundY + bob);
   ctx.scale(facing, 1);
@@ -115,22 +115,26 @@ function drawPlayer(v: View, motion: Map<string, Motion>, p: View["sorted"][numb
     motion.set(p.id, seen);
   }
   const dx = shownX - seen.x;
-  if (Math.abs(dx) > 0.6) {
-    seen.facing = dx > 0 ? 1 : -1;
-    seen.movingUntil = t + 0.12;
-  } else if (p.moving && p.id !== snap.self.id) {
-    seen.movingUntil = Math.max(seen.movingUntil, t + 0.05);
-  }
+  if (Math.abs(dx) > 0.6 && p.id !== snap.self.id) seen.facing = dx > 0 ? 1 : -1;
+  // Walk from intent: `moving` comes from the server and stays true while a soul
+  // presses into a blocked doorway, so the cycle no longer freezes at walls.
+  if (p.moving) seen.movingUntil = t + 0.15;
+  else if (Math.abs(dx) > 0.6) seen.movingUntil = t + 0.12;
   seen.x = shownX;
 
   const prev = ctx.globalAlpha;
   if (ghost) ctx.globalAlpha = prev * 0.45;
   else if (p.echo) ctx.globalAlpha = prev * 0.52;
   if (!ghost) {
-    ctx.fillStyle = "rgba(0,0,0,.35)";
-    ctx.beginPath();
-    ctx.ellipse(px, ground + 2, 17, 4, 0, 0, Math.PI * 2);
-    ctx.fill();
+    // A tight, cool contact shadow under the feet: it must read as shade on the road,
+    // not as a second object (the warm grade turned wide soft ellipses brown).
+    const inside = !!p.inside;
+    if (!inside) {
+      ctx.fillStyle = "rgba(6,4,10,.5)";
+      ctx.beginPath();
+      ctx.ellipse(px, ground + 1, 13, 2.6, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
   drawFigure(ctx, px, ground + floatY, p.color, seen.facing, t < seen.movingUntil, ghost,
     isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t);

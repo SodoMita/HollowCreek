@@ -167,7 +167,7 @@ export class Renderer {
     const night = snap.time?.mode === "past" ? 0.05 : clamp(snap.nightT ?? 0.2, 0, 1);
     const v = this.view ?? (this.view = {} as View);
     v.ctx = ctx; v.w = vw; v.h = vh; v.t = reduced ? 0 : t; v.dt = dt; v.cam = this.cameraX;
-    v.ground = vh * 0.78; v.now = snap.now; v.night = night; v.nb = Math.round(night * 10) / 10;
+    v.ground = vh * 0.74; v.now = snap.now; v.night = night; v.nb = Math.round(night * 10) / 10;
     v.snap = snap; v.displayX = displayX; v.meX = meX; v.focused = focused; v.focusX = this.focusX;
     v.glassUp = glassUp; v.lift = lift; v.quality = graphics.quality; v.reduced = reduced;
     v.glow = graphics.glow; v.settings = this.settings; v.sorted = ix.sorted; v.tasks = ix.tasks;
