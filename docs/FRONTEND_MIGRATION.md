@@ -34,3 +34,10 @@ Consequence: HANDOFF §6.1–6.2 (client parity) no longer applies to the landin
 - `scripts/smoke-records.mjs` (new, turn 50): 7 checks, stubbed API, run against a static server over `public/play`. Passes.
 - `smoke-art` (art paths, room layout, standalone copies): updated in turn 49.
 - To rewrite, not just rerun: `smoke-time-room-ui` (6 React selectors), `smoke-browser` (3), `smoke-tutorial` (2), `smoke-time-browser` (2), `smoke-static` (2), `smoke-stats` (3, now for the standalone records page).
+
+## Tutorial port: status (turn 51)
+
+- **Done:** the framework-free logic moved to `static-src/tutorial/` (`chapters.ts`, `tutorial-snapshot.ts`, `tutorial-time.ts`, `tutorial-types.ts`). Commit `8de9010`. The React page imports them from there. An esbuild bundle of these modules contains no React or Next code.
+- **Still React:** `src/app/tutorial/TutorialClient.tsx` (716 lines, about 50 state hooks), `TutorialOverlay.tsx` (347 lines, uses `next/link` and `lucide-react`), `WardJobSurface.tsx` (uses `useLayoutEffect`).
+- **Plan:** port the state into one plain object with a fixed-step loop and a DOM overlay in `static-src/tutorial.ts` and `tutorial.html`. Keep the existing `Renderer`, `WardPanel`, `TimePanel`, `AudioDirector`, and `SettingsDialog` from `src/game`. Then point the standalone menu's "Singleplayer Tutorial" link at `tutorial.html` (no server URL) and delete `src/app/tutorial/`.
+- **Verify:** rewrite `smoke-tutorial` for the standalone selectors. The 29 checks still define the behaviour.
