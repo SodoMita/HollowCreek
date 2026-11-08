@@ -1,50 +1,81 @@
-// Canvas renderer for Hollow Creek — pure drawing, no game logic.
+// Canvas renderer for Hollow Creek: pure drawing, no game rules.
 //
-// This module is the orchestrator. It owns the state that survives between
-// frames (camera, glass zoom, lookup caches, figure motion, door swing, falling
-// leaves, the vision radius) and calls one drawing function per subject, back to
-// front. The subjects live beside it: sky, horizon, ground, houses, stations,
-// landmarks, players and effects. Per-frame values travel in a Frame object.
+// A frame is a fixed sequence of layers, drawn back to front. Each layer is a
+// function over a View (the frame's values). State that must survive between
+// frames lives here: the camera, the falling leaves, door swing, traveller motion,
+// the darkness radius, and the per-snapshot indexes.
 //
-// Public surface (used by GameClient, useGameRender, TutorialClient, static-src/main.ts):
-// Renderer, ZOOM_MAX, ZOOM_READ, CAGE_POSITIONS.
-import { CAGE_XS, BELL_X, WORLD_W, type PublicPlayer, type Snapshot, type TaskView } from "../types";
+// Rules the layers follow:
+//   - SVG art is rasterised once per size and device density; a frame copies bitmaps.
+//   - Light is a pre-rendered sprite, never shadowBlur.
+//   - No blend modes. Full-screen passes are few: the grade+vignette overlay, the
+//     darkness mask, the flicker and the grain.
+//   - Gradients are cached by the values that define them; text widths are cached.
+//   - Lookups (players, tasks, doors, notes, occupancy) are built once per snapshot.
+//   - Objects outside the viewport are skipped before any state is touched.
 import { WORLD_MAX, WORLD_MIN, type DoorState } from "../buildings";
 import type { GameSettings } from "../settings";
+import { createDefaultSettings } from "../settings";
+import { BELL_X, CAGE_XS, WORLD_W, type PublicPlayer, type Snapshot, type TaskView } from "../types";
 import { ZOOM_MAX, ZOOM_READ } from "../units";
-import { DrawEnv } from "./env";
-import type { Frame } from "./frame";
-import { drawSky } from "./sky";
-import { drawHorizon } from "./horizon";
-import { drawGround, drawCreek, drawMeetingSquare } from "./ground";
+import { artReady, preloadArt, setArtScale } from "../svg-assets";
+import { drawBackdrop } from "./backdrop";
+import { drawCreek, drawRuts, drawMeetingSquare, drawRoadDressing, drawStreetProps } from "./street";
+import { drawBellTower, drawCage, drawCart, drawDoorKeys, drawKey, drawKits, drawTimepieces } from "./props";
 import { drawHouseExteriors, drawHouseInteriors } from "./houses";
-import { drawStations, drawCartAndKits } from "./stations";
-import { drawPinnedNotes } from "./note";
-import { drawBellTower, drawCage, drawDoorKeys, drawKey, drawTimepieces } from "./landmarks";
-import { drawBody, drawPlayer, type Motion } from "./player";
-import { drawDarkness, drawFireflyLayer, drawFlicker, drawFog, drawLeaves, drawPastWash, drawVignette, makeLeaves, type Leaf } from "./effects";
-import { drawForeground, drawGrade, makeGrainTile } from "../atmosphere";
-import { artReady, preloadArt } from "../svg-assets";
+import { drawStations } from "./stations";
+import { drawStreetNotes } from "./notes";
+import { drawBodies, drawPlayers, type Motion } from "./actors";
+import {
+  drawDarkness, drawFireflies, drawFlicker, drawFog, drawLeaves, drawPastWash,
+  drawReeds, drawScreenGrade, makeLeaves, type Leaf,
+} from "./fx";
+import { clamp, pick, type PinnedNote, type View } from "./view";
 
 export { ZOOM_MAX, ZOOM_READ };
 /** World x of each cage, for the wider game code that needs cage positions. */
 export const CAGE_POSITIONS = CAGE_XS;
 
+/** Lookups built once per snapshot, so a frame never searches the lists. */
+interface Index {
+  snap: Snapshot;
+  me: PublicPlayer | undefined;
+  sorted: PublicPlayer[];
+  tasks: Map<string, TaskView>;
+  houseTask: Map<string, TaskView>;
+  doors: Map<string, DoorState>;
+  occupied: Set<string>;
+  notesByHouse: Map<string, PinnedNote[]>;
+}
+
+function buildIndex(snap: Snapshot): Index {
+  const me = snap.players.find((p) => p.id === snap.self.id);
+  // The viewer is drawn last, on top of everyone else.
+  const sorted = [...snap.players].sort((a, b) => (a.id === snap.self.id ? 1 : 0) - (b.id === snap.self.id ? 1 : 0));
+  const tasks = new Map(snap.tasks.map((t) => [t.id, t]));
+  const houseTask = new Map<string, TaskView>();
+  for (const t of snap.tasks) if (t.inside && !houseTask.has(t.inside)) houseTask.set(t.inside, t);
+  const occupied = new Set<string>();
+  for (const p of snap.players) if (p.inside && p.alive) occupied.add(p.inside);
+  const notesByHouse = new Map<string, PinnedNote[]>();
+  for (const n of snap.notes ?? []) {
+    if (!n.house) continue;
+    const list = notesByHouse.get(n.house);
+    if (list) list.push(n);
+    else notesByHouse.set(n.house, [n]);
+  }
+  const doors = new Map((snap.doors ?? []).map((d) => [d.id, d]));
+  return { snap, me, sorted, tasks, houseTask, doors, occupied, notesByHouse };
+}
+
 export class Renderer {
-  private readonly env = new DrawEnv();
   private leaves: Leaf[] = makeLeaves();
-  // Per-snapshot lookup caches. Snapshots are rebuilt per poll, so these turn
-  // 60 fps finds and sorts into one pass per 100 ms snapshot.
-  private cacheFor: unknown = null;
-  private meCache: PublicPlayer | undefined;
-  private sortedCache: PublicPlayer[] = [];
-  private doorsCache = new Map<string, DoorState>();
-  private tasksCache = new Map<string, TaskView>();
-  private grainTile: HTMLCanvasElement | null | undefined;
-  private visionR = 420;
-  private readonly doorOpenAmount = new Map<string, number>();
-  /** Where each figure was drawn last frame (facing and gait follow what is shown). */
   private readonly motion = new Map<string, Motion>();
+  private readonly doorOpen = new Map<string, number>();
+  private readonly grads = new Map<string, CanvasGradient>();
+  private visionR = 420;
+  private index: Index | null = null;
+  private settings: GameSettings = createDefaultSettings();
 
   /** Smoothed camera x in world units. */
   cameraX = 0;
@@ -59,25 +90,16 @@ export class Renderer {
   }
 
   setSettings(settings: GameSettings) {
-    this.env.settings = settings;
+    this.settings = settings;
   }
 
   setFocus(x: number | null) {
     this.focusX = x;
   }
 
-  /** The spyglass / pinch zoom: clamped to [1, ZOOM_MAX]. */
+  /** The spyglass / pinch zoom, clamped to [1, ZOOM_MAX]. */
   setViewZoom(z: number) {
-    this.viewZoom = Math.max(1, Math.min(ZOOM_MAX, z));
-  }
-
-  private cacheSnap(snap: Snapshot) {
-    if (this.cacheFor === snap) return;
-    this.cacheFor = snap;
-    this.meCache = snap.players.find((p) => p.id === snap.self.id);
-    this.sortedCache = [...snap.players].sort((a, b) => (a.id === snap.self.id ? 1 : 0) - (b.id === snap.self.id ? 1 : 0));
-    this.doorsCache = new Map((snap.doors ?? []).map((d) => [d.id, d]));
-    this.tasksCache = new Map(snap.tasks.map((t) => [t.id, t]));
+    this.viewZoom = clamp(z, 1, ZOOM_MAX);
   }
 
   render(
@@ -90,93 +112,88 @@ export class Renderer {
     dt: number,
   ) {
     if (!artReady()) {
-      // Blank frame while the SVG art loads, so no scene is drawn half-dressed.
-      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); ctx.restore();
+      // A blank frame while the art loads, so no scene is drawn half-dressed.
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      ctx.restore();
       return;
     }
-    const env = this.env;
-    const graphics = env.settings.graphics;
+    const graphics = this.settings.graphics;
+    if (!this.index || this.index.snap !== snap) this.index = buildIndex(snap);
+    const ix = this.index;
+
     // Zoom the world, not the DOM HUD. Gameplay and server vision stay in world units.
-    // A focused page (read-note zoom) overrides both zoom and camera target.
     const focused = this.focusX !== null;
-    const glassUp = focused || this.viewZoom > 1.05; // HUD-like labels stay out of the zoomed view
+    const glassUp = focused || this.viewZoom > 1.05;
     const base = graphics.worldZoom * this.viewZoom;
     const zoom = Math.min(graphics.worldZoom * ZOOM_MAX, focused ? Math.max(base, ZOOM_READ) : base);
-    ctx.save(); ctx.scale(zoom, zoom); w /= zoom; h /= zoom;
-    // Through the glass the page, not the road, should sit mid-screen: lift the
-    // whole view so the paper is centred (wall pages hang higher than tree pages).
+    // Device pixels per CSS pixel, times the zoom, decides the sprite density.
+    setArtScale(ctx.getTransform().a * zoom);
+
+    ctx.save();
+    ctx.scale(zoom, zoom);
+    const vw = w / zoom;
+    const vh = h / zoom;
+    // A page under the glass sits mid-screen: the whole view lifts by the page's height.
     let lift = 0;
     if (focused) {
-      const fn = (snap.notes ?? []).find((n) => n.x === this.focusX);
-      if (fn) lift = Math.max(0, (fn.kind === "wall" ? 165 : 121) - 0.28 * h);
+      const page = (snap.notes ?? []).find((n) => n.x === this.focusX);
+      if (page) lift = Math.max(0, (page.kind === "wall" ? 165 : 121) - 0.28 * vh);
       ctx.translate(0, lift);
     }
-    if (graphics.reducedMotion) t = 0;
-    this.cacheSnap(snap);
-    const me = this.meCache;
-    const meX = me ? displayX.get(me.id) ?? me.x : WORLD_W / 2;
+    const reduced = graphics.reducedMotion;
+    const meX = ix.me ? displayX.get(ix.me.id) ?? ix.me.x : WORLD_W / 2;
     const lookX = focused ? this.focusX! : meX;
-    const targetCam = Math.max(WORLD_MIN, Math.min(WORLD_MAX - w, lookX - w / 2));
+    const targetCam = clamp(lookX - vw / 2, WORLD_MIN, WORLD_MAX - vw);
     if (graphics.cameraSmoothing) this.cameraX += (targetCam - this.cameraX) * Math.min(1, dt * 6);
     else this.cameraX = targetCam;
-    if (WORLD_MAX - WORLD_MIN < w) this.cameraX = (WORLD_MIN + WORLD_MAX - w) / 2;
-    const cam = this.cameraX;
-    const ground = h * 0.78;
-    const now = snap.now;
+    if (WORLD_MAX - WORLD_MIN < vw) this.cameraX = (WORLD_MIN + WORLD_MAX - vw) / 2;
 
-    // Time travel to the past pins the sky to early dusk and warms the scene.
-    const past = snap.time?.mode === "past";
-    const night = past ? 0.05 : Math.min(1, Math.max(0, snap.nightT ?? 0.2));
-    const nb = Math.round(night * 10) / 10; // bucket: keeps the gradient cache small
-
-    const f: Frame = {
-      ctx, w, h, t, dt, cam, ground, now, night, nb, snap, displayX, meX,
-      focused, focusX: this.focusX, glassUp, lift, graphics,
-      tasks: this.tasksCache, doors: this.doorsCache, sorted: this.sortedCache,
+    // Time travel to the past pins the sky to early dusk.
+    const night = snap.time?.mode === "past" ? 0.05 : clamp(snap.nightT ?? 0.2, 0, 1);
+    const v: View = {
+      ctx, w: vw, h: vh, t: reduced ? 0 : t, dt, cam: this.cameraX, ground: vh * 0.78, now: snap.now,
+      night, nb: Math.round(night * 10) / 10, snap, displayX, meX, focused, focusX: this.focusX, glassUp, lift,
+      quality: graphics.quality, reduced, glow: graphics.glow, settings: this.settings,
+      sorted: ix.sorted, tasks: ix.tasks, houseTask: ix.houseTask, doors: ix.doors,
+      occupied: ix.occupied, notesByHouse: ix.notesByHouse, grads: this.grads,
     };
 
-    // --- back to front ---
-    drawSky(f, env);
-    drawHorizon(f, env);
-    drawGround(f, env);
-    drawCreek(f);
-    drawMeetingSquare(f);
-    drawHouseInteriors(f, env);
-    drawStations(f, env);
-    drawCartAndKits(f);
-    drawPinnedNotes(f, env);
-    drawBellTower(ctx, BELL_X - cam, ground, t, now - snap.bellAt < 4000);
-    for (const c of snap.cages) drawCage(ctx, c.x - cam, ground, false);
-    drawKey(f, env);
-    drawTimepieces(f, env);
-    drawDoorKeys(f, env);
-    for (const b of snap.bodies) if (b.inside) drawBody(f, b);
-    for (const p of f.sorted) if (p.inside && !p.caged) drawPlayer(f, env, this.motion, p);
-    drawHouseExteriors(f, this.doorOpenAmount);
-    for (const b of snap.bodies) if (!b.inside) drawBody(f, b);
-    for (const p of f.sorted) if (p.caged) drawPlayer(f, env, this.motion, p);
-    // Only prisoners stand behind the fronts; pedestrians remain on the road.
-    for (const c of snap.cages) drawCage(ctx, c.x - cam, ground, true);
-    for (const p of f.sorted) if (!p.caged && !p.inside) drawPlayer(f, env, this.motion, p);
+    // --- the world, back to front ---
+    drawBackdrop(v);
+    drawRuts(v);
+    drawRoadDressing(v);
+    drawStreetProps(v);
+    drawCreek(v);
+    drawMeetingSquare(v);
+    drawHouseInteriors(v);
+    drawStations(v);
+    drawCart(v);
+    drawKits(v);
+    drawStreetNotes(v);
+    drawBellTower(v);
+    for (const c of snap.cages) drawCage(v, c.x, false);
+    drawKey(v);
+    drawTimepieces(v);
+    drawDoorKeys(v);
+    drawBodies(v, true);
+    drawPlayers(v, this.motion, (p) => !!p.inside && !p.caged);
+    drawHouseExteriors(v, this.doorOpen);
+    drawBodies(v, false);
+    drawPlayers(v, this.motion, (p) => p.caged);
+    for (const c of snap.cages) drawCage(v, c.x, true);
+    drawPlayers(v, this.motion, (p) => !p.caged && !p.inside);
 
-    // --- falling leaves (quantity follows the detail preset), fireflies, fog ---
-    if (graphics.particles && !graphics.reducedMotion) drawLeaves(f, this.leaves, env.qualityCount(100, 55, 22));
-    if (graphics.particles) drawFireflyLayer(f, env);
-    if (graphics.fog) drawFog(f, env);
-    // near-field reeds sweep past faster than the road — parallax depth
-    if (graphics.quality !== "low") drawForeground(ctx, cam, w, h, t);
-
-    // lantern-light darkness mask (server-authoritative vision radius)
-    this.visionR = drawDarkness(f, this.visionR);
-    if (snap.time?.mode === "past") drawPastWash(f);
-    if (graphics.vignette) drawVignette(f, env);
-    drawFlicker(f);
-
-    // cool shadows / warm lantern grade, with fine grain on high detail
-    if (graphics.quality !== "low") {
-      if (this.grainTile === undefined) this.grainTile = makeGrainTile();
-      drawGrade(ctx, w, h, night, graphics.quality === "high" && !graphics.reducedMotion ? this.grainTile : null, t);
-    }
+    // --- atmosphere and screen passes ---
+    if (graphics.particles && !reduced) drawLeaves(v, this.leaves, pick(v.quality, 100, 55, 22));
+    if (graphics.particles) drawFireflies(v, pick(v.quality, 18, 12, 6));
+    if (graphics.fog) drawFog(v, pick(v.quality, 4, 3, 1));
+    if (v.quality !== "low") drawReeds(v);
+    this.visionR = drawDarkness(v, this.visionR);
+    if (snap.time?.mode === "past") drawPastWash(v);
+    drawScreenGrade(v);
+    drawFlicker(v);
     ctx.restore();
   }
 }

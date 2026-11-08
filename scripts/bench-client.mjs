@@ -65,7 +65,7 @@ await build({
 const dev = readFileSync("/tmp/bench/game.js", "utf8");
 
 // ---- browser -----------------------------------------------------------------
-const browser = await chromium.launch({ headless: true, args: ["--disable-gpu-vsync", "--ignore-gpu-blocklist"] });
+const browser = await chromium.launch({ headless: true, args: ["--disable-gpu-vsync", "--disable-frame-rate-limit", "--ignore-gpu-blocklist"] });
 const context = await browser.newContext({ viewport: VIEW, deviceScaleFactor: 1 });
 const page = await context.newPage();
 let bytes = 0, requests = 0;
@@ -135,6 +135,7 @@ const { profile } = await cdp.send("Profiler.stop");
 const stages = process.env.PROF === "1" ? await page.evaluate(() => { const p = window.__prof; if (!p) return null; p.on = false; return p.acc; }) : null;
 const opsCounts = process.env.OPS === "1" ? await page.evaluate(() => window.__ops) : null;
 const m1 = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map((m) => [m.name, m.value]));
+if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT });
 const canvasPx = await page.evaluate(() => { const c = document.getElementById("cv"); return c ? [c.width, c.height] : null; });
 const heap = await page.evaluate(() => performance.memory ? performance.memory.usedJSHeapSize : 0);
 

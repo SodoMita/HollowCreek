@@ -1,11 +1,16 @@
-// Shared browser-side SVG loader. Art lives in public/art, not in game logic.
-// Static exports set hc-art-base so the same files work on portal hosts.
+// Browser-side art loader. Art lives as editable SVG files in public/art.
+//
+// Each file is fetched once. The renderer then asks for a sprite at a world size:
+// the SVG is rasterised once into a canvas at the device density, and every later
+// frame is a plain bitmap copy. Drawing an SVG <img> straight onto the canvas
+// re-runs its vector paint on every call, which the old renderer did for well
+// over a hundred calls a frame.
 //
 // Preloading: preloadArt() requests every fixed SVG in STATIC_ART, the room
-// furniture placed by each room layout, and the traveller sprite. The renderer holds
-// its frame until artReady() is true, so the first visible frame is complete.
-// If a file is slow or missing, the wait ends after PRELOAD_TIMEOUT_MS and the
-// game continues; an object whose file never loads is simply not drawn.
+// furniture from rooms/<house>.svg and the traveller sprite. The renderer holds
+// its frame until artReady(). The wait ends after PRELOAD_TIMEOUT_MS so a slow or
+// missing file cannot stall the game, and a file that never loads is never drawn.
+
 export interface RoomArtItem {
   id: string;
   asset: string;
@@ -42,18 +47,30 @@ export const STATIC_ART: readonly string[] = [
   "structures/well.svg", "structures/well-broken.svg",
 ];
 
-const PRELOAD_TIMEOUT_MS = 4000;
-
-const images = new Map<string, HTMLImageElement>();
 /** Each house's layout: rooms/<house>.svg, one <image> per placed object. */
 export const ROOM_LAYOUTS: readonly string[] = ["ferryman", "foreman", "lodge", "orchard", "quarry", "tollhouse"];
+
+const PRELOAD_TIMEOUT_MS = 4000;
+const SPRITE_CAP = 1200;
+const TRAVELER_CAP = 600;
+
+const images = new Map<string, HTMLImageElement>();
+const sprites = new Map<string, HTMLCanvasElement>();
 const roomLayouts = new Map<string, RoomArtItem[]>();
 const layoutRequests = new Map<string, Promise<void>>();
 let travelerTemplate: string | null = null;
 let travelerRequest: Promise<void> | null = null;
-const travelers = new Map<string, HTMLImageElement>();
+const travelers = new Map<string, HTMLCanvasElement>();
+const travelerPending = new Set<string>();
+let artScale = 1;
 let preloading: Promise<void> | null = null;
 let ready = false;
+
+/** Device pixels per world unit, in half steps. Sprites are rasterised at this density. */
+export function setArtScale(scale: number) {
+  if (!Number.isFinite(scale) || scale <= 0) return;
+  artScale = Math.min(4, Math.max(0.5, Math.ceil(scale * 2) / 2));
+}
 
 function assetUrl(path: string): string {
   if (typeof document === "undefined") return `/art/${path}`;
@@ -81,19 +98,9 @@ function settled(image: HTMLImageElement): Promise<void> {
   });
 }
 
-/** Draw a same-origin SVG once loaded. Returns false until then, and forever if the file fails. */
-export function drawSvg(ctx: CanvasRenderingContext2D, path: string, x: number, y: number, width: number, height: number): boolean {
-  if (typeof Image === "undefined") return false;
-  const image = requestImage(path);
-  if (!image.complete || !image.naturalWidth) return false;
-  ctx.drawImage(image, x, y, width, height);
-  return true;
-}
-
 const FURNITURE_PATH = /^furniture\/[a-z0-9][a-z0-9_-]*\.svg$/i;
 
-/** Reads the <image> objects of a room layout. A layout is a normal SVG, so editors can move and resize them.
- *  Invalid objects are skipped, as the JSON layout did. */
+/** Reads the <image> objects of a room layout. Invalid objects are skipped. */
 function parseLayout(text: string): RoomArtItem[] {
   const doc = new DOMParser().parseFromString(text, "image/svg+xml");
   if (doc.querySelector("parsererror")) return [];
@@ -148,26 +155,79 @@ function requestTraveler(): Promise<void> {
   return travelerRequest;
 }
 
-/** The SVG is a normal editable file. Only its marked palette variables vary by player. */
+/** The sprite for a same-origin SVG at a world size, or null until the file has loaded. */
+export function spriteFor(path: string, width: number, height: number): HTMLCanvasElement | null {
+  if (typeof document === "undefined" || !(width > 0) || !(height > 0)) return null;
+  const image = requestImage(path);
+  if (!image.complete || !image.naturalWidth) return null;
+  const pw = Math.max(1, Math.ceil(width * artScale));
+  const ph = Math.max(1, Math.ceil(height * artScale));
+  const key = `${path}|${pw}x${ph}`;
+  const hit = sprites.get(key);
+  if (hit) return hit;
+  const canvas = document.createElement("canvas");
+  canvas.width = pw;
+  canvas.height = ph;
+  canvas.getContext("2d")?.drawImage(image, 0, 0, pw, ph);
+  if (sprites.size >= SPRITE_CAP) sprites.delete(sprites.keys().next().value as string);
+  sprites.set(key, canvas);
+  return canvas;
+}
+
+/** Draws a same-origin SVG at a world box. Returns false until the file has loaded. */
+export function drawSvg(
+  ctx: CanvasRenderingContext2D, path: string, x: number, y: number, width: number, height: number, flip = false,
+): boolean {
+  const sprite = spriteFor(path, width, height);
+  if (!sprite) return false;
+  if (flip) {
+    // Mirror about the box's centre line.
+    ctx.save();
+    ctx.translate(2 * x + width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(sprite, x, y, width, height);
+    ctx.restore();
+  } else {
+    ctx.drawImage(sprite, x, y, width, height);
+  }
+  return true;
+}
+
+/** The traveller sprite in its own colours, baked per palette and pose. Drawn in local coordinates. */
 export function drawTraveler(ctx: CanvasRenderingContext2D, color: string, redEyes: boolean, ghost: boolean, pose: number): boolean {
   if (typeof window === "undefined") return false;
   void requestTraveler();
   if (!travelerTemplate) return false;
   const cloak = /^#[0-9a-f]{6}$/i.test(color) ? color : "#3a7ca5";
   const step = pose > 0 ? 3 : pose < 0 ? -3 : 0;
-  const key = `${cloak}:${redEyes}:${ghost}:${step}`;
-  let image = travelers.get(key);
-  if (!image) {
-    const variables = `--cloak:${cloak};--eyes:${redEyes ? "#ff5142" : "#eee6ce"};--leg-a:${step}px;--leg-b:${-step}px;--legs-opacity:${ghost ? 0 : 1};`;
-    const svg = travelerTemplate.replace("/* RUNTIME PALETTE */", variables);
-    image = new Image();
-    image.decoding = "async";
-    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-    travelers.set(key, image);
+  const key = `${cloak}:${redEyes}:${ghost}:${step}:${artScale}`;
+  const hit = travelers.get(key);
+  if (hit) {
+    ctx.drawImage(hit, -20, -54, 40, 54);
+    return true;
   }
-  if (!image.complete || !image.naturalWidth) return false;
-  ctx.drawImage(image, -20, -54, 40, 54);
-  return true;
+  if (!travelerPending.has(key)) bakeTraveler(key, cloak, redEyes, ghost, step, travelerTemplate);
+  return false;
+}
+
+function bakeTraveler(key: string, cloak: string, redEyes: boolean, ghost: boolean, step: number, template: string) {
+  travelerPending.add(key);
+  const variables = `--cloak:${cloak};--eyes:${redEyes ? "#ff5142" : "#eee6ce"};--leg-a:${step}px;--leg-b:${-step}px;--legs-opacity:${ghost ? 0 : 1};`;
+  const image = new Image();
+  const scale = artScale;
+  image.onload = () => {
+    const pw = Math.max(1, Math.ceil(40 * scale));
+    const ph = Math.max(1, Math.ceil(54 * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = pw;
+    canvas.height = ph;
+    canvas.getContext("2d")?.drawImage(image, 0, 0, pw, ph);
+    if (travelers.size >= TRAVELER_CAP) travelers.clear();
+    travelers.set(key, canvas);
+    travelerPending.delete(key);
+  };
+  image.onerror = () => travelerPending.delete(key);
+  image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(template.replace("/* RUNTIME PALETTE */", variables))}`;
 }
 
 /** Whether preloadArt() has finished (all loaded, failed, or timed out). */
@@ -175,8 +235,7 @@ export function artReady(): boolean {
   return ready;
 }
 
-/** Starts loading all fixed art, room furniture and the traveller sprite. Idempotent.
- *  Resolves when everything has loaded or failed, or after PRELOAD_TIMEOUT_MS. */
+/** Starts loading all fixed art, room furniture and the traveller sprite. Idempotent. */
 export function preloadArt(): Promise<void> {
   if (preloading) return preloading;
   if (typeof window === "undefined") {
