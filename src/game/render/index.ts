@@ -1,29 +1,36 @@
-// Pixi (WebGL) renderer for Hollow Creek: pure drawing, no game rules.
+// Canvas renderer for Hollow Creek: pure drawing, no game rules.
 //
-// The scene is a retained display list built once — baked sky/hills/overlay
-// textures, one sprite per structure, house, station and traveller — and each
-// frame only updates transforms, alphas, visibility and the occasional texture
-// swap on state change. Rules the scene follows:
-//   - SVG art is rasterised to bitmaps once at load (svg-assets) and uploaded
-//     as GPU textures; nothing parses SVG or builds paths per frame.
-//   - Gradients, shadows and glows are baked into static layers/sprites.
-//   - No per-frame full-canvas copies or pixel readbacks on the CPU; the GPU
-//     composites the retained scene.
-//   - No allocations in the frame loop: one View object, pooled rigs, numeric
-//     cache keys.
-//   - Off-screen groups are hidden (culled) before any child work.
-//   - The DOM is never touched per frame; Pixi owns the one canvas.
-import { Application, Container, Sprite } from "pixi.js";
+// A frame is a fixed sequence of layers, drawn back to front. Each layer is a
+// function over a View (the frame's values). State that must survive between
+// frames lives here: the camera, the falling leaves, door swing, traveller motion,
+// the darkness radius, and the per-snapshot indexes.
+//
+// Rules the layers follow:
+//   - SVG art is rasterised once per size and device density; a frame copies bitmaps.
+//   - Light is a pre-rendered sprite, never shadowBlur.
+//   - No blend modes. Full-screen passes are few: the grade+vignette overlay, the
+//     darkness mask, the flicker and the grain.
+//   - Gradients are cached by the values that define them; text widths are cached.
+//   - Lookups (players, tasks, doors, notes, occupancy) are built once per snapshot.
+//   - Objects outside the viewport are skipped before any state is touched.
 import { WORLD_MAX, WORLD_MIN, type DoorState } from "../buildings";
-import { createDefaultSettings, type GameSettings } from "../settings";
-import { CAGE_XS, WORLD_W, type PublicPlayer, type Snapshot, type TaskView } from "../types";
+import type { GameSettings } from "../settings";
+import { createDefaultSettings } from "../settings";
+import { BELL_X, CAGE_XS, WORLD_W, type PublicPlayer, type Snapshot, type TaskView } from "../types";
 import { ZOOM_MAX, ZOOM_READ } from "../units";
 import { artReady, preloadArt, setArtScale } from "../svg-assets";
-import { Actors, type Motion } from "./actors";
-import { Fx, makeLeaves, type Leaf } from "./fx";
-import { Statics } from "./statics";
-import { syncDensity, whiteTexture } from "./textures";
-import { clamp, type PinnedNote, type View } from "./view";
+import { drawBackdrop } from "./backdrop";
+import { drawCreek, drawRuts, drawMeetingSquare, drawRoadDressing, drawStreetProps } from "./street";
+import { drawBellTower, drawCage, drawCart, drawDoorKeys, drawKey, drawKits, drawTimepieces } from "./props";
+import { drawHouseExteriors, drawHouseInteriors } from "./houses";
+import { drawStations } from "./stations";
+import { drawStreetNotes } from "./notes";
+import { drawBodies, drawPlayers, type Motion } from "./actors";
+import {
+  drawDarkness, drawFireflies, drawFlicker, drawFog, drawLeaves, drawPastWash,
+  drawReeds, drawScreenGrade, makeLeaves, type Leaf,
+} from "./fx";
+import { clamp, pick, type PinnedNote, type View } from "./view";
 
 export { ZOOM_MAX, ZOOM_READ };
 /** World x of each cage, for the wider game code that needs cage positions. */
@@ -62,28 +69,17 @@ function buildIndex(snap: Snapshot): Index {
 }
 
 export class Renderer {
-  private readonly canvasEl: HTMLCanvasElement;
-  private app: Application | null = null;
-  private appReady = false;
-  private starting: Promise<void> | null = null;
   private leaves: Leaf[] = makeLeaves();
   private readonly motion = new Map<string, Motion>();
+  private readonly doorOpen = new Map<string, number>();
+  private readonly grads = new Map<string, CanvasGradient>();
   private visionR = 420;
   private index: Index | null = null;
-  private settings: GameSettings = createDefaultSettings();
+  // One View instance, mutated per frame: the render path allocates nothing.
   private view: View | null = null;
-  private statics: Statics | null = null;
-  private actors: Actors | null = null;
-  private fx: Fx | null = null;
-  private layers: {
-    sky: Sprite; far: Container; hillsFar: Container; hillsNear: Container; trees: Container;
-    world: Container; fog: Container; reeds: Container; dark: Container;
-  } | null = null;
-  private appliedW = 0;
-  private appliedH = 0;
-  private appliedRes = 0;
-  private wantW = 0;
-  private wantH = 0;
+  private primed = false;
+  private readonly createdAt = performance.now();
+  private settings: GameSettings = createDefaultSettings();
 
   /** Smoothed camera x in world units. */
   cameraX = 0;
@@ -92,8 +88,7 @@ export class Renderer {
   /** A multiplier on the settings' world zoom (1 = lowered). */
   viewZoom = 1;
 
-  constructor(canvas: HTMLCanvasElement) {
-    this.canvasEl = canvas;
+  constructor() {
     // Art starts loading as soon as a renderer exists; render() holds frames until it is ready.
     void preloadArt();
   }
@@ -111,95 +106,8 @@ export class Renderer {
     this.viewZoom = clamp(z, 1, ZOOM_MAX);
   }
 
-  /** Records the desired CSS size; the Pixi surface follows on the next frame. */
-  resize(w: number, h: number) {
-    this.wantW = Math.max(1, Math.round(w));
-    this.wantH = Math.max(1, Math.round(h));
-  }
-
-  private resolution(): number {
-    const g = this.settings.graphics;
-    const cap = g.quality === "high" ? 2 : g.quality === "medium" ? 1.5 : 1;
-    return Math.max(0.5, Math.min(window.devicePixelRatio || 1, cap) * g.resolution);
-  }
-
-  private startApp(): void {
-    if (this.starting) return;
-    const app = new Application();
-    this.app = app;
-    this.starting = app.init({
-      canvas: this.canvasEl,
-      width: this.wantW || 960,
-      height: this.wantH || 540,
-      resolution: this.resolution(),
-      autoDensity: true,
-      antialias: true,
-      backgroundAlpha: 0,
-      preference: "webgl",
-      powerPreference: "high-performance",
-    }).then(() => {
-      this.buildScene(app);
-      this.appReady = true;
-    }).catch((err) => {
-      // WebGL unavailable: stay blank rather than take the page down with us.
-      console.warn("Hollow Creek: WebGL renderer unavailable", err);
-    });
-  }
-
-  private buildScene(app: Application): void {
-    const stage = app.stage;
-    const sky = new Sprite();
-    stage.addChild(sky);
-    const far = new Container();
-    const hillsFar = new Container();
-    const hillsNear = new Container();
-    const trees = new Container();
-    const world = new Container();
-    const group = () => {
-      const c = new Container();
-      world.addChild(c);
-      return c;
-    };
-    const dressing = group();
-    const interiors = group();
-    const stations = group();
-    const cart = group();
-    const kits = group();
-    const notes = group();
-    const bell = group();
-    const cageBacks = group();
-    const keys = group();
-    const bodiesIn = group();
-    const playersIn = group();
-    const exteriors = group();
-    const bodiesOut = group();
-    const playersCaged = group();
-    const cageFronts = group();
-    const playersOut = group();
-    const fxWorld = group();
-    stage.addChild(far, hillsFar, hillsNear, trees, world);
-    const fog = new Container();
-    const reeds = new Container();
-    const dark = new Container();
-    const past = new Sprite(whiteTexture());
-    past.tint = 0x488597;
-    past.alpha = 0.1;
-    past.visible = false;
-    const overlay = new Sprite();
-    const flicker = new Sprite(whiteTexture());
-    flicker.tint = 0x000000;
-    flicker.visible = false;
-    stage.addChild(fog, reeds, dark, past, overlay, flicker);
-    this.layers = { sky, far, hillsFar, hillsNear, trees, world, fog, reeds, dark };
-    this.statics = new Statics({
-      sky, far, hillsFar, hillsNear, trees, dressing, interiors, stations, cart, kits,
-      notes, bell, cageBacks, keys, exteriors, cageFronts,
-    });
-    this.actors = new Actors({ bodiesIn, playersIn, bodiesOut, playersCaged, playersOut });
-    this.fx = new Fx({ world: fxWorld, fog, reeds, dark, past, overlay, flicker }, this.leaves);
-  }
-
   render(
+    ctx: CanvasRenderingContext2D,
     w: number,
     h: number,
     snap: Snapshot,
@@ -207,20 +115,19 @@ export class Renderer {
     t: number, // seconds
     dt: number,
   ) {
-    this.resize(w, h);
-    if (!artReady()) return; // blank while the art loads, as before
-    if (!this.app) {
-      this.startApp();
-      return;
-    }
-    if (!this.appReady || !this.statics || !this.actors || !this.fx || !this.layers) return;
-    const app = this.app;
-    const res = this.resolution();
-    if (this.wantW !== this.appliedW || this.wantH !== this.appliedH || res !== this.appliedRes) {
-      this.appliedW = this.wantW;
-      this.appliedH = this.wantH;
-      this.appliedRes = res;
-      app.renderer.resize(this.wantW, this.wantH, res);
+    // Draw immediately: every layer has a fallback (drawn trees, cloak silhouettes) and
+    // art appears as it loads. Holding a blank canvas until *all* art settled made the
+    // opening seconds flicker black. Only the very first frames wait for the traveller
+    // template, which every figure needs.
+    if (!this.primed) {
+      if (!artReady() && performance.now() - this.createdAt < 600) {
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        ctx.restore();
+        return;
+      }
+      this.primed = true;
     }
     const graphics = this.settings.graphics;
     if (!this.index || this.index.snap !== snap) this.index = buildIndex(snap);
@@ -232,9 +139,10 @@ export class Renderer {
     const base = graphics.worldZoom * this.viewZoom;
     const zoom = Math.min(graphics.worldZoom * ZOOM_MAX, focused ? Math.max(base, ZOOM_READ) : base);
     // Device pixels per CSS pixel, times the zoom, decides the sprite density.
-    setArtScale(res * zoom);
-    syncDensity();
+    setArtScale(ctx.getTransform().a * zoom);
 
+    ctx.save();
+    ctx.scale(zoom, zoom);
     const vw = w / zoom;
     const vh = h / zoom;
     // A page under the glass sits mid-screen: the whole view lifts by the page's height.
@@ -242,59 +150,64 @@ export class Renderer {
     if (focused) {
       const page = (snap.notes ?? []).find((n) => n.x === this.focusX);
       if (page) lift = Math.max(0, (page.kind === "wall" ? 165 : 121) - 0.28 * vh);
+      ctx.translate(0, lift);
     }
     const reduced = graphics.reducedMotion;
     const meX = ix.me ? displayX.get(ix.me.id) ?? ix.me.x : WORLD_W / 2;
     const lookX = focused ? this.focusX! : meX;
     const targetCam = clamp(lookX - vw / 2, WORLD_MIN, WORLD_MAX - vw);
-    if (graphics.cameraSmoothing) this.cameraX += (targetCam - this.cameraX) * Math.min(1, dt * 6);
+    // Follow the viewer tightly (the camera must not add lag to your own input);
+    // only the glass focus keeps a soft ease.
+    const ease = focused ? 6 : 18;
+    if (graphics.cameraSmoothing) this.cameraX += (targetCam - this.cameraX) * Math.min(1, dt * ease);
     else this.cameraX = targetCam;
     if (WORLD_MAX - WORLD_MIN < vw) this.cameraX = (WORLD_MIN + WORLD_MAX - vw) / 2;
 
     // Time travel to the past pins the sky to early dusk.
     const night = snap.time?.mode === "past" ? 0.05 : clamp(snap.nightT ?? 0.2, 0, 1);
-    const cam = this.cameraX;
-    if (!this.view) {
-      this.view = {
-        cssW: w, cssH: h, w: vw, h: vh, zoom, res, t: reduced ? 0 : t, dt, cam, now: snap.now,
-        night, nb: Math.round(night * 10) / 10, snap, displayX, meX, focused, focusX: this.focusX,
-        glassUp, lift, quality: graphics.quality, reduced, glow: graphics.glow, settings: this.settings,
-        sorted: ix.sorted, tasks: ix.tasks, houseTask: ix.houseTask, doors: ix.doors,
-        occupied: ix.occupied, notesByHouse: ix.notesByHouse,
-      };
-    } else {
-      const v = this.view;
-      v.cssW = w; v.cssH = h; v.w = vw; v.h = vh; v.zoom = zoom; v.res = res;
-      v.t = reduced ? 0 : t; v.dt = dt; v.cam = cam; v.now = snap.now;
-      v.night = night; v.nb = Math.round(night * 10) / 10; v.snap = snap; v.displayX = displayX;
-      v.meX = meX; v.focused = focused; v.focusX = this.focusX; v.glassUp = glassUp; v.lift = lift;
-      v.quality = graphics.quality; v.reduced = reduced; v.glow = graphics.glow; v.settings = this.settings;
-      v.sorted = ix.sorted; v.tasks = ix.tasks; v.houseTask = ix.houseTask; v.doors = ix.doors;
-      v.occupied = ix.occupied; v.notesByHouse = ix.notesByHouse;
-    }
-    const v = this.view;
+    const v = this.view ?? (this.view = {} as View);
+    v.ctx = ctx; v.w = vw; v.h = vh; v.t = reduced ? 0 : t; v.dt = dt; v.cam = this.cameraX;
+    v.ground = vh * 0.78; v.now = snap.now; v.night = night; v.nb = Math.round(night * 10) / 10;
+    v.snap = snap; v.displayX = displayX; v.meX = meX; v.focused = focused; v.focusX = this.focusX;
+    v.glassUp = glassUp; v.lift = lift; v.quality = graphics.quality; v.reduced = reduced;
+    v.glow = graphics.glow; v.settings = this.settings; v.sorted = ix.sorted; v.tasks = ix.tasks;
+    v.houseTask = ix.houseTask; v.doors = ix.doors; v.occupied = ix.occupied;
+    v.notesByHouse = ix.notesByHouse; v.grads = this.grads;
 
-    // Layer transforms: parallax factors match the canvas renderer's math.
-    const groundCss = h * 0.78 + lift * zoom;
-    const L = this.layers;
-    L.far.scale.set(zoom, zoom);
-    L.far.position.set(0, lift * zoom);
-    L.hillsFar.scale.set(zoom, zoom);
-    L.hillsFar.position.set(-cam * 0.09 * zoom, groundCss);
-    L.hillsNear.scale.set(zoom, zoom);
-    L.hillsNear.position.set(-cam * 0.15 * zoom, groundCss);
-    L.trees.scale.set(zoom, zoom);
-    L.trees.position.set(-cam * 0.45 * zoom, groundCss);
-    L.world.scale.set(zoom, zoom);
-    L.world.position.set(-cam * zoom, groundCss);
-    L.fog.scale.set(zoom, zoom);
-    L.fog.position.set(0, groundCss);
-    L.reeds.scale.set(zoom, zoom);
-    L.reeds.position.set(-((cam * 1.22) % 150) * zoom, h);
+    // --- the world, back to front ---
+    drawBackdrop(v);
+    drawRuts(v);
+    drawRoadDressing(v);
+    drawStreetProps(v);
+    drawCreek(v);
+    drawMeetingSquare(v);
+    drawHouseInteriors(v);
+    drawStations(v);
+    drawCart(v);
+    drawKits(v);
+    drawStreetNotes(v);
+    drawBellTower(v);
+    for (const c of snap.cages) drawCage(v, c.x, false);
+    drawKey(v);
+    drawTimepieces(v);
+    drawDoorKeys(v);
+    drawBodies(v, true);
+    drawPlayers(v, this.motion, (p) => !!p.inside && !p.caged);
+    drawHouseExteriors(v, this.doorOpen);
+    drawBodies(v, false);
+    drawPlayers(v, this.motion, (p) => p.caged);
+    for (const c of snap.cages) drawCage(v, c.x, true);
+    drawPlayers(v, this.motion, (p) => !p.caged && !p.inside);
 
-    this.statics.update(v);
-    this.actors.update(v, this.motion);
-    this.visionR = this.fx.update(v, this.visionR);
-    app.render();
+    // --- atmosphere and screen passes ---
+    if (graphics.particles && !reduced) drawLeaves(v, this.leaves, pick(v.quality, 100, 55, 22));
+    if (graphics.particles) drawFireflies(v, pick(v.quality, 18, 12, 6));
+    if (graphics.fog) drawFog(v, pick(v.quality, 4, 3, 1));
+    if (v.quality !== "low") drawReeds(v);
+    this.visionR = drawDarkness(v, this.visionR);
+    if (snap.time?.mode === "past") drawPastWash(v);
+    drawScreenGrade(v);
+    drawFlicker(v);
+    ctx.restore();
   }
 }

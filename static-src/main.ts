@@ -756,20 +756,27 @@ document.addEventListener("click", (e) => {
 
 // -------------------------------------------------------------- canvas ----
 const canvas = $("cv") as HTMLCanvasElement;
-const renderer = new Renderer(canvas);
+const ctx = canvas.getContext("2d")!;
+const renderer = new Renderer();
 renderer.setSettings(settingsStore.value);
 const vw = () => window.visualViewport?.width ?? window.innerWidth;
 const vh = () => window.visualViewport?.height ?? window.innerHeight;
 function resize() {
-  renderer.resize(vw(), vh());
+  const graphics = settingsStore.value.graphics;
+  const dprCap = graphics.quality === "high" ? 2 : graphics.quality === "medium" ? 1.5 : 1;
+  const dpr = Math.min(window.devicePixelRatio || 1, dprCap) * graphics.resolution;
+  canvas.width = Math.max(1, Math.round(vw() * dpr));
+  canvas.height = Math.max(1, Math.round(vh() * dpr));
+  canvas.style.width = `${vw()}px`; canvas.style.height = `${vh()}px`;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 settingsStore.subscribe((settings) => { renderer.setSettings(settings); resize(); });
 resize();
 window.addEventListener("resize", resize);
 window.visualViewport?.addEventListener("resize", resize);
 // Other players are drawn on a short interpolation delay between the last two
-// server positions (plus a capped extrapolation past the newest), so state
-// frames arriving ~10×/s read as continuous motion instead of visible steps.
+// server positions (plus a capped extrapolation past the newest), so state frames
+// arriving ~10×/s read as continuous motion instead of visible steps.
 const interp = new Map<string, { fromX: number; toX: number; fromT: number; toT: number; facing: number; moving: boolean; spd: number }>();
 let interpSnap: Snapshot | null = null;
 let last = performance.now();
@@ -817,7 +824,7 @@ function loop(nowMs: number) {
         if (it) { it.fromX = it.toX; it.fromT = it.toT; }
         continue;
       }
-      const rt = nowMs - 90; // interpolation delay: render 90 ms in the past
+      const rt = nowMs - 60; // interpolation delay: 1.5 server ticks, enough to hide snapshot gaps
       let x: number;
       if (rt <= it.fromT) x = it.fromX;
       else if (rt <= it.toT) x = it.fromX + (it.toX - it.fromX) * ((rt - it.fromT) / Math.max(1, it.toT - it.fromT));
@@ -826,7 +833,7 @@ function loop(nowMs: number) {
     }
   }
   renderer.setFocus(noteFocusX);
-  renderer.render(vw(), vh(), snap, displayX, nowMs / 1000, dt);
+  renderer.render(ctx, vw(), vh(), snap, displayX, nowMs / 1000, dt);
 }
 requestAnimationFrame(loop);
 

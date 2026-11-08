@@ -623,7 +623,7 @@ function step(): void {
     if (s.stamina >= 0.2 && s.exhausted) s.exhausted = false;
   }
   if (s.chapter === 6) s.danger = Math.abs(s.playerX - BELL_X) < 400 ? 0.75 : 0.2;
-  // step() now runs at display rate; the HUD only needs ~8 updates a second.
+  // step() runs at display rate now; the HUD needs ~8 updates a second, not 60.
   if (now - lastHudAt >= 120) {
     lastHudAt = now;
     renderHud();
@@ -663,6 +663,13 @@ function frame(nowMs: number, last: { t: number }): void {
   const canvas = $<HTMLCanvasElement>("game");
   const ctx = canvas.getContext("2d");
   if (!ctx || !renderer) return;
+  // The simulation steps here, at display rate — not on a 50 ms interval. That
+  // interval was the 120 ms input latency and the visible position quantization.
+  step();
+  if (s.timeVisit) {
+    s.timeNow = Date.now();
+    if (s.timeNow >= s.timeVisit.endsAt) endVisit();
+  }
   const dt = Math.min(0.05, (nowMs - last.t) / 1000);
   last.t = nowMs;
   const w = window.visualViewport?.width ?? window.innerWidth;
@@ -685,13 +692,13 @@ function frame(nowMs: number, last: { t: number }): void {
       displayX.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 16));
     }
   }
-  renderer.render(w, h, snap, displayX, nowMs / 1000, dt);
+  renderer.render(ctx, w, h, snap, displayX, nowMs / 1000, dt);
   audio?.update(snap);
   if (s.practiceOpen) renderPractice();
 }
 
 function boot(): void {
-  renderer = new Renderer($<HTMLCanvasElement>("game"));
+  renderer = new Renderer();
   renderer.setSettings(store.value);
   setupPanels();
   bindInput();
