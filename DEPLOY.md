@@ -13,6 +13,7 @@ for that process.
 | Authoritative server | this repo (`npm start`) | owns every position, role, cooldown and outcome |
 | Landing page | `/` | the only React page (Next.js + Tailwind); create and join hand off to `/play/?room=CODE` |
 | Standalone client | `/play/` (room, tutorial at `/play/tutorial.html`, Repair Bench at `/play/bench.html`, records, chronicle) | plain TypeScript, built by `node scripts/build-static.mjs` from `static-src/`; no framework runtime |
+| Client performance | `/play/` | React runs only on the landing page. The room is plain TypeScript: the canvas draws on a frame budget (hidden tab: 0 fps, lobby overlay: 8 fps, low detail: 20 fps, medium: 30 fps, reduced motion + no new data: 2 fps) and the HUD only repaints regions whose data changed, so an idle 10 Hz poll rewrites just the countdowns. `scripts/test-frame-budget.mjs` pins the budget and the diff. |
 | Repair Bench | `/play/bench.html` | offline practice for all 13 ward repairs: seeded boards, free nudges, best runs in localStorage; no server or account |
 | Old room links | `/room/CODE` | redirect (307) to `/play/?room=CODE` |
 | Published static client | https://sodomita.github.io/HollowCreek/ | the `gh-pages` branch |
@@ -106,4 +107,5 @@ node scripts/smoke-static.mjs
 node scripts/smoke-stats.mjs http://127.0.0.1:3100
 node scripts/smoke-random.mjs http://127.0.0.1:3100 200
 node scripts/perf-state.mjs http://127.0.0.1:3100 8 240   # latency/payload budgets
+node scripts/test-frame-budget.mjs                          # canvas frame budget + HUD diff
 ```

@@ -139,15 +139,26 @@ export function drawForeground(ctx: CanvasRenderingContext2D, cam: number, w: nu
   ctx.restore();
 }
 
-/** Cool shadows, warm lantern light: a soft-light grade plus fine film grain. */
-export function drawGrade(ctx: CanvasRenderingContext2D, w: number, h: number, night: number, grain: HTMLCanvasElement | null, t: number) {
-  ctx.save();
-  ctx.globalCompositeOperation = "soft-light";
+// The grade gradient depends only on the viewport height and a night bucket,
+// so it is built once per resize/dusk step instead of once per frame.
+const gradeCache = new WeakMap<CanvasRenderingContext2D, { key: string; grad: CanvasGradient }>();
+function gradeGradient(ctx: CanvasRenderingContext2D, h: number, night: number) {
+  const key = `${Math.round(h)}:${Math.round(night * 10)}`;
+  const cached = gradeCache.get(ctx);
+  if (cached && cached.key === key) return cached.grad;
   const g = ctx.createLinearGradient(0, 0, 0, h);
   g.addColorStop(0, `rgba(46,92,112,${0.4 + 0.15 * night})`);
   g.addColorStop(0.55, "rgba(60,50,70,0.12)");
   g.addColorStop(1, "rgba(214,130,52,0.34)");
-  ctx.fillStyle = g;
+  gradeCache.set(ctx, { key, grad: g });
+  return g;
+}
+
+/** Cool shadows, warm lantern light: a soft-light grade plus fine film grain. */
+export function drawGrade(ctx: CanvasRenderingContext2D, w: number, h: number, night: number, grain: HTMLCanvasElement | null, t: number) {
+  ctx.save();
+  ctx.globalCompositeOperation = "soft-light";
+  ctx.fillStyle = gradeGradient(ctx, h, night);
   ctx.fillRect(0, 0, w, h);
   ctx.restore();
   if (grain) {

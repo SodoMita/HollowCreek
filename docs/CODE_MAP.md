@@ -141,6 +141,7 @@ HollowCreek/
         ├── snapshot.ts · fingerprint.ts · wire.ts · viewers.ts ... per-viewer views and deltas
         ├── history.ts · time-travel.ts · timepieces.ts ........... night checkpoints, time travel
         ├── wards.ts · recovered-wards.ts · ward-ui.ts · ward-hints.ts · ward-art.ts ... repair games
+        ├── perf.ts ............................................. frame budget + HUD diff (client only)
         ├── buildings.ts · house-art.ts ............................. houses, doors
         ├── proximity.ts · voice-range.ts · voice.ts ............... range queries, voice
         ├── stats.ts · chronicle-access.ts ....................... stats bump, sealed-ledger rule

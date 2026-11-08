@@ -3,6 +3,7 @@
 // reuses the canvas Renderer and generative AudioDirector unchanged.
 import { Renderer, ZOOM_MAX, ZOOM_READ } from "../src/game/render";
 import { WardPanel } from "../src/game/ward-ui";
+import { FrameBudget, HudMemo, feedKey, hudTick, tasksKey, voteKey } from "../src/game/perf";
 import { TimePanel } from "../src/game/time-ui";
 import { AudioDirector } from "../src/game/audio";
 import { VoiceChat, type VoiceStatus } from "../src/game/voice";
@@ -136,6 +137,9 @@ settingsStore.subscribe((settings) => {
   applyDocumentPreferences(settings);
   $("mute").textContent = settings.audio.muted ? "🔇" : "🔊";
   voice.applyMix();
+  // Key labels live in the HUD, which now repaints only on change: refresh it
+  // once when the bindings move instead of waiting for the next snapshot.
+  if (snap) renderHud(snap);
 });
 applyDocumentPreferences(settingsStore.value);
 
@@ -270,6 +274,7 @@ function enterRoom(code: string) {
   roomError = "";
   pollFailures = 0;
   overlayKey = "";
+  hudMemo.forget();
   $("overlay").style.display = "none";
   $("menu").style.display = "none";
   $("game").style.display = "block";
@@ -296,6 +301,7 @@ function leaveToMenu() {
   }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   snap = null; roomCode = ""; overlayKey = ""; roomError = ""; pollFailures = 0; held = null; heldRev = ""; lowerGlass();
+  hudMemo.forget();
   wardPanel.update(null, 1, false);
   $("game").style.display = "none";
   $("menu").style.display = "block";
@@ -343,7 +349,7 @@ async function poll() {
       const now = performance.now();
       if (snap && lastPollAt) snap.now += now - lastPollAt;
       lastPollAt = now;
-      if (snap) renderHud(snap);
+      if (snap) tickHud(snap);
       pollFailures = 0;
       return;
     }
@@ -421,8 +427,28 @@ function renderMatchResults(s: Snapshot): string {
   </section>`;
 }
 
+const hudMemo = new HudMemo();
+/** Countdown-only refresh: no region is rebuilt, only the clocks are rewritten. */
+function tickHud(s: Snapshot) {
+  const tick = hudTick(s);
+  const banner = $("banner");
+  if (tick.meeting !== undefined && banner.style.display !== "none") {
+    const sub = banner.querySelector(".sub");
+    if (sub && sub.innerHTML !== tick.meeting) sub.innerHTML = tick.meeting;
+  }
+  const status = $("status");
+  if (tick.status !== undefined && status.textContent !== tick.status) status.textContent = tick.status;
+  const ruin = $("ruinbtn");
+  if (tick.ruin !== undefined) {
+    const text = `Ruin ${keyLabel(settingsStore.value.controls.ruin)}${tick.ruin}`;
+    if (ruin.textContent !== text) ruin.textContent = text;
+  }
+  const cd = $("cd");
+  if (tick.ability !== undefined && cd.textContent !== tick.ability) cd.textContent = tick.ability;
+}
 function renderHud(s: Snapshot) {
   const me = s.players.find((p) => p.id === s.self.id);
+  const tick = hudTick(s);
   $("copycode").textContent = s.code;
   $("soulcount").textContent = `${s.playerCount} souls${s.self.hasSupply ? " · kit carried" : ""}`;
   $("supplydrop").style.display = s.phase === "playing" && s.self.hasSupply ? "inline-block" : "none";
@@ -435,7 +461,7 @@ function renderHud(s: Snapshot) {
   $("pushbtn").style.display = s.phase === "playing" && s.self.alive && !s.self.caged && !s.self.hasSupply ? "block" : "none";
   $("pushbtn").textContent = `Hold Push + ◀▶${s.cartPushers > 0 ? ` · ${s.cartPushers}` : ""}`;
   $("ruinbtn").style.display = s.phase === "playing" && s.self.alive && s.self.role === "hollow" ? "block" : "none";
-  $("ruinbtn").textContent = `Ruin ${keyLabel(settingsStore.value.controls.ruin)}${s.self.sabotageCooldownMs > 0 ? ` · ${Math.ceil(s.self.sabotageCooldownMs / 1000)}s` : ""}`;
+  $("ruinbtn").textContent = `Ruin ${keyLabel(settingsStore.value.controls.ruin)}${tick.ruin ?? ""}`;
   ($("ruinbtn") as HTMLButtonElement).disabled = !s.self.canSabotage;
   const role = $("role");
   role.textContent = (!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "The Hollow" : "Townfolk") + (s.self.caged && s.self.alive ? " · Caged" : "");
@@ -446,22 +472,21 @@ function renderHud(s: Snapshot) {
   const tasks = $("tasks");
   if (s.phase !== "lobby" && s.self.alive && s.tasks.length) {
     tasks.style.display = "block";
-    tasks.innerHTML = `<div class="hd" id="tasktoggle">${s.self.role === "hollow" && s.time?.mode !== "past" ? "Town wards (pretend)" : "Town wards · shared"} ${tasksOpen ? "▾" : "▸"}</div>` +
+    if (hudMemo.changed("tasks", tasksKey(s, tasksOpen))) tasks.innerHTML = `<div class="hd" id="tasktoggle">${s.self.role === "hollow" && s.time?.mode !== "past" ? "Town wards (pretend)" : "Town wards · shared"} ${tasksOpen ? "▾" : "▸"}</div>` +
       (tasksOpen ? s.tasks.map((t) => `<div class="t ${t.done ? "done" : ""}">${t.done ? "✓" : t.delivered ? "▣" : "◇"} ${esc(t.name)}${!t.done ? ` <span style="color:${t.delivered ? "var(--moss)" : "var(--amber)"}">${t.delivered ? t.progress > 0 ? `${Math.round(t.progress * 100)}%` : "puzzle ready" : t.sabotaged ? "ruined" : "needs kit"}</span>` : ""}</div>`).join("") : "");
   } else tasks.style.display = "none";
 
   // feed
-  $("feed").innerHTML = s.feed.slice(-4).map((f, i) => `<p style="opacity:${0.4 + i * 0.2}">${esc(f.text)}</p>`).join("");
+  if (hudMemo.changed("feed", feedKey(s))) {
+    $("feed").innerHTML = s.feed.slice(-4).map((f, i) => `<p style="opacity:${0.4 + i * 0.2}">${esc(f.text)}</p>`).join("");
+  }
 
   // meeting banner + vote
   const banner = $("banner"), vote = $("vote");
   if (s.phase === "meeting" && s.meeting) {
-    const secs = Math.max(0, Math.ceil((s.meeting.endsAt - s.now) / 1000));
     banner.style.display = "block";
     banner.querySelector(".why")!.textContent = `🔔 ${s.meeting.reason}`;
-    banner.querySelector(".sub")!.innerHTML = s.meeting.inArea
-      ? `Cast your verdict — <b>${secs}s</b>`
-      : `Walk to the town square ${me && me.x < BELL_X ? "→ east" : "← west"} — <b>${secs}s</b>`;
+    banner.querySelector(".sub")!.innerHTML = tick.meeting ?? "";
     if (s.meeting.inArea && s.self.alive) {
       vote.style.display = "block";
       const opts = [
@@ -469,15 +494,17 @@ function renderHud(s: Snapshot) {
         ...s.players.filter((p) => p.caged).map((p) => ({ key: `free:${p.id}`, label: `Free ${p.name}`, color: "#7fb069" })),
         { key: "skip", label: "Abstain", color: "#7f8c8d" },
       ];
-      vote.innerHTML = `<h3>The Verdict</h3>` + opts.map((o) =>
-        `<button data-vote="${o.key}" class="${s.self.myVote === o.key ? "mine" : ""}" ${s.self.myVote ? "disabled" : ""}><span class="dot" style="background:${o.color}"></span>${esc(o.label)}</button>`
-      ).join("") + `<div class="note">${s.self.myVote ? "Verdict cast. Wait for the toll." : "Most votes: caged in the square. Free the caged by vote or iron key."}</div>`;
+      if (hudMemo.changed("vote", voteKey(s))) {
+        vote.innerHTML = `<h3>The Verdict</h3>` + opts.map((o) =>
+          `<button data-vote="${o.key}" class="${s.self.myVote === o.key ? "mine" : ""}" ${s.self.myVote ? "disabled" : ""}><span class="dot" style="background:${o.color}"></span>${esc(o.label)}</button>`
+        ).join("") + `<div class="note">${s.self.myVote ? "Verdict cast. Wait for the toll." : "Most votes: caged in the square. Free the caged by vote or iron key."}</div>`;
+      }
     } else vote.style.display = "none";
   } else { banner.style.display = "none"; vote.style.display = "none"; }
 
   // status strip
   const status = $("status");
-  if (s.time?.mode === "past") { status.style.display = "block"; status.textContent = `In the past · ${Math.max(0, Math.ceil(((s.time.endsAt ?? s.now) - s.now) / 1000))}s remaining · M to return`; status.style.color = "#b8e3de"; }
+  if (s.time?.mode === "past") { status.style.display = "block"; status.textContent = tick.status ?? ""; status.style.color = "#b8e3de"; }
   else if (!s.self.alive && s.phase !== "ended") { status.style.display = "block"; status.textContent = "You are dead. Drift as a ghost — only the dead can see and hear you."; status.style.color = "#99aaaa"; }
   else if (s.self.caged && s.self.alive) { status.style.display = "block"; status.textContent = "The iron is cold. You can still speak and vote — plead for the key."; status.style.color = "var(--amber)"; }
   else status.style.display = "none";
@@ -510,9 +537,7 @@ function renderHud(s: Snapshot) {
   snuff.style.display = s.self.role === "hollow" && s.self.alive && s.phase === "playing" ? "block" : "none";
   snuff.querySelector("small")!.textContent = keyLabel(settingsStore.value.controls.blackout);
   snuff.className = `rbtn snuff ${s.self.canBlackout ? "hot" : ""}`;
-  $("cd").textContent = s.self.role === "hollow" && s.self.alive
-    ? (s.self.killCooldownMs > 0 ? `${Math.ceil(s.self.killCooldownMs / 1000)}s` : "") + (s.self.blackoutCooldownMs > 0 ? ` 🌑${Math.ceil(s.self.blackoutCooldownMs / 1000)}s` : "")
-    : "";
+  $("cd").textContent = tick.ability ?? "";
 
   minimap.update(s, viewZoom > 1.05);
 
@@ -775,11 +800,30 @@ resize();
 window.addEventListener("resize", resize);
 window.visualViewport?.addEventListener("resize", resize);
 let last = performance.now();
+// One budget for the canvas: hidden tab, lobby overlay, reduced motion and the
+// low/medium detail presets all draw fewer frames instead of repainting blind.
+const budget = new FrameBudget();
+let lastRenderedSnap: Snapshot | null = null;
+let overlayWasVisible = false;
+document.addEventListener("visibilitychange", () => budget.reset());
 function loop(nowMs: number) {
   requestAnimationFrame(loop);
-  const dt = Math.min(0.05, (nowMs - last) / 1000);
-  last = nowMs;
   if (!snap || $("game").style.display === "none") return;
+  const graphicsSettings = settingsStore.value.graphics;
+  const overlayVisible = $("overlay").style.display !== "none";
+  if (overlayVisible !== overlayWasVisible) { overlayWasVisible = overlayVisible; budget.reset(); }
+  const idle = lastRenderedSnap === snap && lastDir === 0 && keys.size === 0;
+  if (!budget.shouldRender({
+    now: nowMs,
+    hidden: document.hidden,
+    overlay: overlayVisible,
+    quality: graphicsSettings.quality,
+    reducedMotion: graphicsSettings.reducedMotion,
+    idle,
+  })) return;
+  // Motion uses the real elapsed time, so a 30 fps cap still moves at the right speed.
+  const dt = budget.dtSince(nowMs, Math.min(0.05, (nowMs - last) / 1000));
+  last = nowMs;
   const age = net.arrival ? Math.min(0.3, (nowMs - net.arrival) / 1000) : 0;
   for (const p of snap.players) {
     const cur = displayX.get(p.id);
@@ -804,6 +848,7 @@ function loop(nowMs: number) {
   }
   renderer.setFocus(noteFocusX);
   renderer.render(ctx, vw(), vh(), snap, displayX, nowMs / 1000, dt);
+  lastRenderedSnap = snap;
 }
 requestAnimationFrame(loop);
 

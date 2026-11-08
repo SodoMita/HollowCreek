@@ -76,6 +76,27 @@ export function drawFog(f: Frame, env: DrawEnv) {
   }
 }
 
+// The darkness mask is two radial gradients in local space. Building them per
+// frame allocated two objects at 60 fps; the radius is bucketed to 4 px (the
+// lantern breathing never needs finer) and the mask is translated into place.
+const darkCache = new WeakMap<CanvasRenderingContext2D, { r: number; dark: CanvasGradient; warm: CanvasGradient }>();
+function darknessGradients(ctx: CanvasRenderingContext2D, r: number) {
+  const bucket = Math.round(r / 4) * 4;
+  const cached = darkCache.get(ctx);
+  if (cached && cached.r === bucket) return cached;
+  const dark = ctx.createRadialGradient(0, 0, bucket * 0.45, 0, 0, bucket);
+  dark.addColorStop(0, "rgba(4,2,8,0)");
+  dark.addColorStop(0.55, "rgba(4,2,8,0.3)");
+  dark.addColorStop(0.78, "rgba(4,2,8,0.6)");
+  dark.addColorStop(1, "rgba(3,1,6,0.965)");
+  const warm = ctx.createRadialGradient(0, 0, 6, 0, 0, bucket * 0.7);
+  warm.addColorStop(0, "rgba(255,178,92,0.07)");
+  warm.addColorStop(1, "rgba(255,178,92,0)");
+  const entry = { r: bucket, dark, warm };
+  darkCache.set(ctx, entry);
+  return entry;
+}
+
 /** Lantern-light darkness around the viewer, sized by the server's vision radius.
  *  Returns the smoothed radius to keep for the next frame. */
 export function drawDarkness(f: Frame, visionR: number): number {
@@ -86,19 +107,15 @@ export function drawDarkness(f: Frame, visionR: number): number {
   const r = Math.max(80, vr + Math.sin(t * 7.3) * 6); // lantern breathing
   const cx2 = meX - cam;
   const cy2 = ground - 50;
-  const dark = ctx.createRadialGradient(cx2, cy2, r * 0.45, cx2, cy2, r);
-  dark.addColorStop(0, "rgba(4,2,8,0)");
-  dark.addColorStop(0.55, "rgba(4,2,8,0.3)");
-  dark.addColorStop(0.78, "rgba(4,2,8,0.6)");
-  dark.addColorStop(1, "rgba(3,1,6,0.965)");
+  const { dark, warm } = darknessGradients(ctx, r);
+  ctx.save();
+  ctx.translate(cx2, cy2);
   ctx.fillStyle = dark;
-  ctx.fillRect(0, 0, w, h);
+  ctx.fillRect(-cx2, -cy2, w, h);
   // the lantern you carry is warm; the dark beyond it is cold
-  const warm = ctx.createRadialGradient(cx2, cy2, 6, cx2, cy2, r * 0.7);
-  warm.addColorStop(0, "rgba(255,178,92,0.07)");
-  warm.addColorStop(1, "rgba(255,178,92,0)");
   ctx.fillStyle = warm;
-  ctx.fillRect(cx2 - r, cy2 - r, r * 2, r * 2);
+  ctx.fillRect(-r, -r, r * 2, r * 2);
+  ctx.restore();
   return vr;
 }
 
