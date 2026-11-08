@@ -7,7 +7,7 @@ import { cachedSprite, drawShadowOval, getPillBadge, light, makeCanvas } from ".
 import { drawKit } from "./props";
 import type { View } from "./view";
 
-export interface Motion { x: number; facing: number; movingUntil: number }
+export interface Motion { x: number; facing: number; movingUntil: number; stride: number }
 
 type Body = Snapshot["bodies"][number];
 
@@ -107,11 +107,12 @@ function getBubbleSprite(text: string): { canvas: HTMLCanvasElement; w: number; 
 
 export function drawFigure(
   ctx: CanvasRenderingContext2D, x: number, groundY: number, color: string,
-  facing: number, moving: boolean, ghost: boolean, redEyes: boolean, t: number,
+  facing: number, moving: boolean, ghost: boolean, redEyes: boolean,
+  stride: number, breathClock: number, worldSeed: number, bobAllowed: boolean,
 ) {
-  const gait = Math.sin(t * 11 + x * 0.1);
-  const bob = moving ? gait * 1.8 : Math.sin(t * 1.7 + x) * 0.35;
-  const pose = moving ? (gait > 0.25 ? 1 : gait < -0.25 ? -1 : 0) : 0;
+  const gait = Math.sin(stride);
+  const bob = bobAllowed ? (moving ? Math.abs(gait) * -2.2 : Math.sin(breathClock * 1.7 + worldSeed) * 0.35) : 0;
+  const pose = moving ? (gait > 0.32 ? 1 : gait < -0.32 ? -1 : 0) : 0;
   ctx.translate(x, groundY + bob);
   drawTraveler(ctx, color, redEyes, ghost, pose, facing);
   ctx.translate(-x, -(groundY + bob));
@@ -159,7 +160,7 @@ export function drawPlayers(v: View, motion: Map<string, Motion>, pick: (p: View
 }
 
 function drawPlayer(v: View, motion: Map<string, Motion>, p: View["sorted"][number]) {
-  const { ctx, w, t, cam, ground, now, snap, displayX, glassUp } = v;
+  const { ctx, w, t, clock, dt, cam, ground, now, snap, displayX, glassUp, reduced } = v;
   const shownX = displayX.get(p.id) ?? p.x;
   const px = shownX - cam;
   if (px < -100 || px > w + 100) return;
@@ -170,24 +171,32 @@ function drawPlayer(v: View, motion: Map<string, Motion>, p: View["sorted"][numb
 
   let seen = motion.get(p.id);
   if (!seen) {
-    seen = { x: shownX, facing: p.facing, movingUntil: 0 };
+    seen = { x: shownX, facing: p.facing, movingUntil: 0, stride: 0 };
     motion.set(p.id, seen);
   }
   const dx = shownX - seen.x;
-  if (Math.abs(dx) > 0.6) {
+  const moved = Math.abs(dx);
+  // Distance-driven stride works at any FPS, slow cart-push speed, under reducedMotion,
+  // and identically near buildings or map edges.
+  if (moved > 0.02) {
     seen.facing = dx > 0 ? 1 : -1;
-    seen.movingUntil = t + 0.12;
+    seen.movingUntil = clock + 0.12;
+    seen.stride += Math.max(moved * 0.085, dt * 7);
   } else if (p.moving && p.id !== snap.self.id) {
-    seen.movingUntil = Math.max(seen.movingUntil, t + 0.05);
+    seen.facing = p.facing || seen.facing;
+    seen.movingUntil = Math.max(seen.movingUntil, clock + 0.08);
+    seen.stride += dt * 10;
   }
   seen.x = shownX;
+  const walking = clock < seen.movingUntil;
 
   const prev = ctx.globalAlpha;
   if (ghost) ctx.globalAlpha = prev * 0.45;
   else if (p.echo) ctx.globalAlpha = prev * 0.52;
   if (!ghost) drawShadowOval(ctx, px, ground + 2, 17, 4, 0.35);
-  drawFigure(ctx, px, ground + floatY, p.color, seen.facing, t < seen.movingUntil, ghost,
-    isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t);
+  drawFigure(ctx, px, ground + floatY, p.color, seen.facing, walking, ghost,
+    isMate || (p.id === snap.self.id && snap.self.role === "hollow"),
+    seen.stride, clock, p.x * 0.05, !reduced);
   ctx.globalAlpha = prev;
 
   if (p.hasSupply) drawKit(ctx, px - 23, ground - 16 + floatY);

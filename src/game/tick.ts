@@ -66,6 +66,11 @@ export function tickRoom(room: Room, now: number) {
     const pushingIds = new Set(team.map((p) => p.id));
     const cartSpeed = Math.min(CART_MAX_SPEED, CART_SOLO_SPEED + Math.max(0, team.length - 1) * CART_HELPER_BONUS);
     room.cartPushers = team.length;
+    const prevCartX = room.cartX;
+    if (team.length) {
+      room.cartX = clampWorld(room.cartX + team[0].dir * ix(cartSpeed * dt), 90);
+    }
+    const cartDelta = room.cartX - prevCartX;
 
     for (const p of room.players.values()) {
       if (p.temporalAbsent) continue;
@@ -88,7 +93,10 @@ export function tickRoom(room: Room, now: number) {
       p.moving = p.dir !== 0;
       if (p.dir !== 0) p.facing = p.dir;
       const wasX = p.x;
-      const nextX = p.x + p.dir * speed * dt;
+      // Same-direction pushers move by the exact cartDelta so pushers and cart never drift apart.
+      const nextX = pushingIds.has(p.id) && team.length && p.dir === team[0].dir
+        ? p.x + cartDelta
+        : p.x + p.dir * speed * dt;
       if (p.caged && p.cageIndex >= 0) {
         const cx = room.cages[p.cageIndex].x;
         p.x = Math.max(cx - CELL_HALF + 8, Math.min(cx + CELL_HALF - 8, nextX));
@@ -118,10 +126,6 @@ export function tickRoom(room: Room, now: number) {
         p.stamina = Math.min(1, p.stamina + STAMINA_IDLE_REGEN * dt * (p.activeWard ? 0.5 : 1));
         if (p.exhausted && p.stamina >= 0.2) p.exhausted = false;
       }
-    }
-
-    if (team.length) {
-      room.cartX = clampWorld(room.cartX + team[0].dir * ix(cartSpeed * dt), 90);
     }
 
     if (room.phase === "meeting" && room.meeting && now >= room.meeting.endsAt) resolveMeeting(room);

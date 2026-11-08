@@ -98,7 +98,7 @@ export function interactWithBuilding(doors: DoorState[], playerId: string, x: nu
 
 /** Crossing changes only the layer, never x. A closed door only bounds occupants;
  * pedestrians on the road can still pass a closed house on the foreground path. */
-export function walkThroughBuildings(x: number, nextX: number, inside: string | null, doors: DoorState[]) {
+export function walkThroughBuildings(x: number, nextX: number, inside: string | null, doors: DoorState[], round = true) {
   let next = clampWorld(nextX);
   if (inside) {
     const b = BUILDINGS.find((item) => item.id === inside);
@@ -117,10 +117,10 @@ export function walkThroughBuildings(x: number, nextX: number, inside: string | 
     const d = doors.find((item) => item.id === b.id);
     const threshold = doorX(b);
     if (d?.open && (x - threshold) * b.side >= 0 && (next - threshold) * b.side < 0) {
-      return { x: ix(next), inside: b.id };
+      return { x: round ? ix(next) : next, inside: b.id };
     }
   }
-  return { x: ix(next), inside: null };
+  return { x: round ? ix(next) : next, inside: null };
 }
 
 export function dropBuildingKeys(doors: DoorState[], playerId: string, x: number, inside: string | null) {

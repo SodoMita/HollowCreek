@@ -73,6 +73,7 @@ export class Renderer {
   private hasCamera = false;
   private wasFocused = false;
   private lastPhase = "";
+  private clock = 0;
 
   cameraX = 0;
   focusX: number | null = null;
@@ -144,7 +145,9 @@ export class Renderer {
 
     // Under reduced motion, when camera, zoom, focus, vision and snapshot are settled,
     // skip repainting the identical frame.
-    if (reduced && this.lastRenderedSnap === snap && Math.abs(this.cameraX - targetCam) < 0.05 && Math.abs(this.visionR - snap.visionRadius) < 0.5) {
+    this.clock += dt;
+    const anyMoving = snap.players.some((p) => p.moving);
+    if (reduced && !anyMoving && this.lastRenderedSnap === snap && Math.abs(this.cameraX - targetCam) < 0.05 && Math.abs(this.visionR - snap.visionRadius) < 0.5) {
       const staticKey = `${artVersion()}|${ctx.canvas.width}x${ctx.canvas.height}|${this.cameraX.toFixed(1)}|${zoom.toFixed(3)}|${this.focusX}|${nb}|${snap.players.map((p) => (displayX.get(p.id) ?? p.x).toFixed(1)).join(",")}|${snap.cartX}`;
       if (staticKey === this.lastStaticKey) return;
       this.lastStaticKey = staticKey;
@@ -162,10 +165,12 @@ export class Renderer {
       ctx.translate(0, lift);
     }
 
+    const ground = vh * 0.74;
+    const roadEdge = ground - 16;
     const v = this.view;
     if (!v) {
       this.view = {
-        ctx, w: vw, h: vh, t: reduced ? 0 : t, dt, cam: this.cameraX, ground: vh * 0.78, now: snap.now,
+        ctx, w: vw, h: vh, t: reduced ? 0 : t, clock: this.clock, dt, cam: this.cameraX, ground, roadEdge, now: snap.now,
         night, nb, snap, displayX, meX, focused, focusX: this.focusX, glassUp, lift,
         quality: graphics.quality, reduced, glow: graphics.glow, flicker: graphics.flicker,
         playerNames: this.settings.interface.playerNames, speechBubbles: this.settings.interface.speechBubbles,
@@ -173,8 +178,8 @@ export class Renderer {
         occupied: ix.occupied, notesByHouse: ix.notesByHouse,
       };
     } else {
-      v.ctx = ctx; v.w = vw; v.h = vh; v.t = reduced ? 0 : t; v.dt = dt; v.cam = this.cameraX;
-      v.ground = vh * 0.78; v.now = snap.now; v.night = night; v.nb = nb; v.snap = snap;
+      v.ctx = ctx; v.w = vw; v.h = vh; v.t = reduced ? 0 : t; v.clock = this.clock; v.dt = dt; v.cam = this.cameraX;
+      v.ground = ground; v.roadEdge = roadEdge; v.now = snap.now; v.night = night; v.nb = nb; v.snap = snap;
       v.displayX = displayX; v.meX = meX; v.focused = focused; v.focusX = this.focusX;
       v.glassUp = glassUp; v.lift = lift; v.quality = graphics.quality; v.reduced = reduced;
       v.glow = graphics.glow; v.flicker = graphics.flicker;

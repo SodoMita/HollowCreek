@@ -9,7 +9,7 @@ import { VoiceChat, type VoiceStatus } from "../src/game/voice";
 import { SettingsStore, applyDocumentPreferences, keyLabel, matchesControl, type BindableAction } from "../src/game/settings";
 import { SettingsDialog } from "../src/game/settings-ui";
 import { BUILDINGS, WORLD_MAX, WORLD_MIN, clampWorld, doorX } from "../src/game/buildings";
-import { CARRY_SPEED, GHOST_SPEED, SPEED } from "../src/game/types";
+import { CARRY_SPEED, CART_HELPER_BONUS, CART_MAX_SPEED, CART_PUSH_RANGE, CART_SOLO_SPEED, GHOST_SPEED, SPEED } from "../src/game/types";
 import type { RoomListing, Snapshot } from "../src/game/types";
 import { applyFrame, type WireFrame } from "../src/game/wire";
 import { RoomHud, esc } from "./hud";
@@ -94,6 +94,7 @@ const displayX = new Map<string, number>();
 const tracks = new Map<string, PlayerTrack>();
 // Prediction bookkeeping: measured round trip, arrival of our own acknowledged
 // position, and our steering log, replayed over the unacknowledged interval.
+let cartHeldLocal = false;
 const net = { rttMs: 80, selfAckX: 0, selfAckAt: 0, hasSelfAck: false, inputs: [] as { t: number; dir: number }[] };
 let held: Snapshot | null = null; // what the server thinks we hold (deltas merge into it)
 let lastPollAt = 0;
@@ -364,9 +365,13 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
       const part = byId.get(p.id);
       const prevTrack = tracks.get(p.id);
       if (part || !prevTrack) {
-        const spd = !p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : SPEED;
-        const vx = p.moving ? p.facing * spd : 0;
         const prevX = prevTrack?.ackX ?? p.x;
+        const elapsedSec = prevTrack ? Math.max(0.03, (now - prevTrack.ackAt) / 1000) : 0;
+        const nearCart = s.cartPushers > 0 && p.alive && !p.inside && !p.hasSupply && Math.abs(p.x - s.cartX) <= CART_PUSH_RANGE;
+        const cartSpd = Math.min(CART_MAX_SPEED, CART_SOLO_SPEED + Math.max(0, s.cartPushers - 1) * CART_HELPER_BONUS);
+        const obsSpeed = elapsedSec > 0 && p.x !== prevX ? Math.abs(p.x - prevX) / elapsedSec : 0;
+        const spd = !p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : (nearCart && (obsSpeed === 0 || obsSpeed <= cartSpd * 1.35)) ? cartSpd : SPEED;
+        const vx = p.moving ? p.facing * spd : 0;
         // Keep ackAt fresh when the player moves, or when this is their first sight.
         if (!prevTrack || p.x !== prevX || part?.moving !== undefined || part?.facing !== undefined) {
           tracks.set(p.id, { ackX: p.x, ackAt: now, vx });
@@ -465,6 +470,7 @@ function renderHud(s: Snapshot) { hud.render(s, settingsStore.value, voice.curre
 function releaseInputs() {
   keys.clear();
   lastDir = 0;
+  cartHeldLocal = false;
   interactToggled = false;
   if (roomCode) void send({ dir: 0, interactHeld: false, cartHeld: false });
 }
@@ -529,7 +535,7 @@ window.addEventListener("keydown", (e) => {
   else if (bound("interact", e) && !e.repeat) { interactDown(); e.preventDefault(); }
   else if (bound("ability", e) && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
   else if (bound("blackout", e) && !e.repeat) { void send({ action: "blackout" }); e.preventDefault(); }
-  else if (bound("push", e) && !e.repeat) { void send({ cartHeld: true }); e.preventDefault(); }
+  else if (bound("push", e) && !e.repeat) { cartHeldLocal = true; void send({ cartHeld: true }); e.preventDefault(); }
   else if (bound("drop", e) && !e.repeat) { void send({ action: "drop_supply" }); e.preventDefault(); }
   else if (bound("ruin", e) && !e.repeat) { void send({ action: "sabotage" }); e.preventDefault(); }
   else if (bound("chat", e) && !e.repeat) { openChat(); e.preventDefault(); }
@@ -540,33 +546,83 @@ window.addEventListener("keyup", (e) => {
   if (bound("left", e)) { keys.delete("left"); computeDir(); }
   else if (bound("right", e)) { keys.delete("right"); computeDir(); }
   else if (bound("interact", e)) interactUp();
-  else if (bound("push", e)) void send({ cartHeld: false });
+  else if (bound("push", e)) { cartHeldLocal = false; void send({ cartHeld: false }); }
 });
 window.addEventListener("blur", releaseInputs);
 $("chatinput").addEventListener("keydown", (e) => { if (e.key === "Enter") submitChat(); e.stopPropagation(); });
 $("chatinput").addEventListener("blur", () => setTimeout(submitChat, 50));
 window.addEventListener("pointerdown", () => audio.start());
 
-// hold buttons (movement + E)
-document.querySelectorAll<HTMLElement>("[data-hold]").forEach((b) => {
-  const what = b.dataset.hold!;
-  const on = (e: Event) => {
+// Pointer-captured touch rocker for ◀ ▶ so mobile thumbs never drop movement
+// from small drift, and sliding across the gap switches direction cleanly.
+{
+  const leftBtn = document.querySelector<HTMLElement>('[data-hold="left"]');
+  const rightBtn = document.querySelector<HTMLElement>('[data-hold="right"]');
+  const group = leftBtn?.parentElement;
+  if (leftBtn && rightBtn && group) {
+    let walkPointer: number | null = null;
+    const setTouchDir = (dir: "left" | "right" | null) => {
+      keys.delete("left"); keys.delete("right");
+      if (dir) keys.add(dir);
+      leftBtn.classList.toggle("active", dir === "left");
+      rightBtn.classList.toggle("active", dir === "right");
+      computeDir();
+    };
+    const pickDir = (cx: number, cy: number): "left" | "right" | null => {
+      const lb = leftBtn.getBoundingClientRect();
+      const rb = rightBtn.getBoundingClientRect();
+      const pad = 34;
+      if (cy < Math.min(lb.top, rb.top) - pad || cy > Math.max(lb.bottom, rb.bottom) + pad) return null;
+      if (cx < lb.left - pad || cx > rb.right + pad) return null;
+      return cx <= (lb.right + rb.left) / 2 ? "left" : "right";
+    };
+    group.addEventListener("pointerdown", (e) => {
+      const dir = pickDir(e.clientX, e.clientY);
+      if (!dir) return;
+      e.preventDefault();
+      walkPointer = e.pointerId;
+      try { group.setPointerCapture(e.pointerId); } catch { /* noop */ }
+      setTouchDir(dir);
+    });
+    group.addEventListener("pointermove", (e) => {
+      if (walkPointer !== e.pointerId) return;
+      setTouchDir(pickDir(e.clientX, e.clientY));
+    });
+    const endTouch = (e: PointerEvent) => {
+      if (walkPointer !== e.pointerId) return;
+      walkPointer = null;
+      setTouchDir(null);
+    };
+    group.addEventListener("pointerup", endTouch);
+    group.addEventListener("pointercancel", endTouch);
+    group.addEventListener("lostpointercapture", endTouch);
+    group.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
+}
+for (const what of ["e", "push"] as const) {
+  const b = document.querySelector<HTMLElement>(`[data-hold="${what}"]`);
+  if (!b) continue;
+  let activeId: number | null = null;
+  b.addEventListener("pointerdown", (e) => {
     e.preventDefault();
+    activeId = e.pointerId;
+    try { b.setPointerCapture(e.pointerId); } catch { /* noop */ }
+    b.classList.add("active");
     if (what === "e") interactDown();
-    else if (what === "push") void send({ cartHeld: true });
-    else { keys.add(what); computeDir(); }
-  };
-  const off = () => {
+    else { cartHeldLocal = true; void send({ cartHeld: true }); }
+  });
+  const off = (e: PointerEvent) => {
+    if (activeId !== e.pointerId) return;
+    activeId = null;
+    b.classList.remove("active");
     if (what === "e") interactUp();
-    else if (what === "push") void send({ cartHeld: false });
-    else { keys.delete(what); computeDir(); }
+    else { cartHeldLocal = false; void send({ cartHeld: false }); }
   };
-  b.addEventListener("pointerdown", on);
   b.addEventListener("pointerup", off);
-  b.addEventListener("pointerleave", off);
   b.addEventListener("pointercancel", off);
+  b.addEventListener("lostpointercapture", off);
   b.addEventListener("contextmenu", (e) => e.preventDefault());
-});
+}
 $("ability").addEventListener("click", () => send({ action: "ability" }));
 $("snuffbtn").addEventListener("click", () => send({ action: "blackout" }));
 $("talkbtn").addEventListener("click", openChat);
@@ -707,8 +763,11 @@ function loop(nowMs: number) {
   for (const p of snap.players) {
     const cur = displayX.get(p.id);
     if (cur === undefined) { displayX.set(p.id, p.x); continue; }
-    const spd = !p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : SPEED;
-    if (p.id === snap.self.id && snap.phase === "playing" && !snap.self.caged) {
+    const isSelf = p.id === snap.self.id;
+    const selfPushing = isSelf && p.alive && !snap.self.caged && !p.inside && !p.hasSupply && cartHeldLocal && Math.abs(cur - snap.cartX) <= CART_PUSH_RANGE;
+    const pushSpd = Math.min(CART_MAX_SPEED, CART_SOLO_SPEED + Math.max(0, Math.max(1, snap.cartPushers) - 1) * CART_HELPER_BONUS);
+    const spd = !p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : selfPushing ? pushSpd : SPEED;
+    if (isSelf && snap.phase === "playing" && !snap.self.caged) {
       let next = clampPredicted(cur + lastDir * spd * dt, p.inside ?? null, snap.doors);
       if (net.hasSelfAck) {
         const since = net.selfAckAt - net.rttMs * 0.5 - 25;

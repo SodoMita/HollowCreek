@@ -277,13 +277,20 @@ export function drawTraveler(
   return false;
 }
 
+function legTransforms(step: number): [string, string] {
+  if (step > 0) return ["translate(-3px,0px)", "translate(3px,-2px)"];
+  if (step < 0) return ["translate(11px,-2px)", "translate(-11px,0px)"];
+  return ["translate(0px,0px)", "translate(0px,0px)"];
+}
+
 function bakeTraveler(
   key: string, cloak: string, redEyes: boolean, ghost: boolean, step: number, scale: number, template: string,
 ): Promise<void> {
   const existing = travelerPending.get(key);
   if (existing) return existing;
   const p = new Promise<void>((resolve) => {
-    const variables = `--cloak:${cloak};--eyes:${redEyes ? "#ff5142" : "#eee6ce"};--leg-a:${step}px;--leg-b:${-step}px;--legs-opacity:${ghost ? 0 : 1};`;
+    const [legA, legB] = legTransforms(step);
+    const variables = `--cloak:${cloak};--eyes:${redEyes ? "#ff5142" : "#eee6ce"};--leg-a:${legA};--leg-b:${legB};--legs-opacity:${ghost ? 0 : 1};`;
     const image = new Image();
     image.onload = () => {
       const pw = Math.max(1, Math.ceil(40 * scale));
@@ -292,7 +299,7 @@ function bakeTraveler(
       canvas.width = pw;
       canvas.height = ph;
       canvas.getContext("2d")?.drawImage(image, 0, 0, pw, ph);
-      if (travelers.size >= TRAVELER_CAP) travelers.clear();
+      if (travelers.size >= TRAVELER_CAP) travelers.delete(travelers.keys().next().value as string);
       travelers.set(key, canvas);
       travelerPending.delete(key);
       artGen++;
@@ -363,12 +370,14 @@ function warmCommonSprites(): Promise<void> {
   if (!travelerTemplate || typeof window === "undefined") return Promise.resolve();
   const colors = [...new Set([...PLAYER_COLORS, "#d9a441", "#c44a3a"])];
   const jobs: Promise<void>[] = [];
-  for (const c of colors) {
-    const cloak = c.toLowerCase();
-    for (const step of [-3, 0, 3]) {
-      jobs.push(bakeTraveler(travKey(cloak, false, false, step, false, 2), cloak, false, false, step, 2, travelerTemplate));
+  for (const sc of [1, 2]) {
+    for (const c of colors) {
+      const cloak = c.toLowerCase();
+      for (const step of [-3, 0, 3]) {
+        jobs.push(bakeTraveler(travKey(cloak, false, false, step, false, sc), cloak, false, false, step, sc, travelerTemplate));
+      }
+      jobs.push(bakeTraveler(travKey(cloak, true, false, 0, false, sc), cloak, true, false, 0, sc, travelerTemplate));
     }
-    jobs.push(bakeTraveler(travKey(cloak, true, false, 0, false, 2), cloak, true, false, 0, 2, travelerTemplate));
   }
   return Promise.all(jobs).then(() => {});
 }

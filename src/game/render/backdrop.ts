@@ -14,23 +14,26 @@ let skyW = 0, skyH = 0, skyBottomPx = -1, skyNb = -1;
 let skyQual: Quality = "high";
 
 function drawSkyBake(v: View) {
-  const { ctx, ground, night, nb, quality } = v;
+  const { ctx, roadEdge, night, nb, quality } = v;
   const cw = ctx.canvas.width;
   const ch = ctx.canvas.height;
   const m = ctx.getTransform();
-  const bottom = Math.round(m.d * ground + m.f);
+  // Horizon starts at roadEdge (above the street objects) so shadows always land on ground, not empty sky.
+  const bottom = Math.round(m.d * roadEdge + m.f);
+  const clampedBottom = Math.max(0, Math.min(ch, bottom));
   if (!skyCanvas || skyW !== cw || skyH !== ch || skyBottomPx !== bottom || skyNb !== nb || skyQual !== quality) {
     const c = makeCanvas(cw, ch);
     const g = c.getContext("2d")!;
-    const sky = g.createLinearGradient(0, 0, 0, bottom);
-    sky.addColorStop(0, lerpHex(SKY_DUSK[0], SKY_NIGHT[0], night));
-    sky.addColorStop(0.38, lerpHex(SKY_DUSK[1], SKY_NIGHT[1], night));
-    sky.addColorStop(0.72, lerpHex(SKY_DUSK[2], SKY_NIGHT[2], night));
-    sky.addColorStop(0.9, lerpHex(SKY_DUSK[3], SKY_NIGHT[3], night));
-    sky.addColorStop(1, lerpHex(SKY_DUSK[4], SKY_NIGHT[4], night));
-    g.fillStyle = sky;
-    g.fillRect(0, 0, cw, bottom);
-    // Bake stars straight into the sky bitmap (zero star path calls per frame).
+    if (clampedBottom > 0) {
+      const sky = g.createLinearGradient(0, 0, 0, Math.max(1, bottom));
+      sky.addColorStop(0, lerpHex(SKY_DUSK[0], SKY_NIGHT[0], night));
+      sky.addColorStop(0.38, lerpHex(SKY_DUSK[1], SKY_NIGHT[1], night));
+      sky.addColorStop(0.72, lerpHex(SKY_DUSK[2], SKY_NIGHT[2], night));
+      sky.addColorStop(0.9, lerpHex(SKY_DUSK[3], SKY_NIGHT[3], night));
+      sky.addColorStop(1, lerpHex(SKY_DUSK[4], SKY_NIGHT[4], night));
+      g.fillStyle = sky;
+      g.fillRect(0, 0, cw, clampedBottom);
+    }
     const count = quality === "high" ? 95 : quality === "medium" ? 48 : 18;
     const scaleX = m.a || 1;
     const scaleY = m.d || 1;
@@ -39,6 +42,7 @@ function drawSkyBake(v: View) {
     for (let i = 0; i < count; i++) {
       const sx = (((i * 197.3 + 41) % (vw + 160)) - 80) * scaleX;
       const sy = (18 + ((i * 83.7) % Math.max(60, gndWorld * 0.52))) * scaleY;
+      if (sy >= clampedBottom) continue;
       const r = (0.45 + (i % 7 === 0 ? 0.85 : 0.25)) * scaleX;
       g.globalAlpha = (0.25 + (i % 5) * 0.1) * (0.3 + 0.7 * night);
       g.fillStyle = i % 9 === 0 ? "#ffd9a0" : "#d9d8ed";
@@ -47,12 +51,14 @@ function drawSkyBake(v: View) {
       g.fill();
     }
     g.globalAlpha = 1;
-    const road = g.createLinearGradient(0, bottom, 0, ch);
-    road.addColorStop(0, lerpHex(GROUND_DUSK[0], GROUND_NIGHT[0], night));
-    road.addColorStop(0.12, lerpHex(GROUND_DUSK[1], GROUND_NIGHT[1], night));
-    road.addColorStop(1, lerpHex(GROUND_DUSK[2], GROUND_NIGHT[2], night));
-    g.fillStyle = road;
-    g.fillRect(0, bottom, cw, ch - bottom);
+    if (clampedBottom < ch) {
+      const road = g.createLinearGradient(0, bottom, 0, ch);
+      road.addColorStop(0, lerpHex(GROUND_DUSK[0], GROUND_NIGHT[0], night));
+      road.addColorStop(0.14, lerpHex(GROUND_DUSK[1], GROUND_NIGHT[1], night));
+      road.addColorStop(1, lerpHex(GROUND_DUSK[2], GROUND_NIGHT[2], night));
+      g.fillStyle = road;
+      g.fillRect(0, clampedBottom, cw, ch - clampedBottom);
+    }
     skyCanvas = c;
     skyW = cw; skyH = ch; skyBottomPx = bottom; skyNb = nb; skyQual = quality;
   }
@@ -167,12 +173,12 @@ function ensureHills(viewW: number) {
 }
 
 function drawHills(v: View) {
-  const { ctx, w, cam, ground } = v;
+  const { ctx, w, cam, roadEdge } = v;
   ensureHills(w);
   const sx1 = Math.max(0, Math.min(hill1Canvas!.width - w, cam * 0.09 - HILL1_MIN));
-  ctx.drawImage(hill1Canvas!, sx1, 0, w, HILL_H, 0, ground - HILL_H, w, HILL_H);
+  ctx.drawImage(hill1Canvas!, sx1, 0, w, HILL_H, 0, roadEdge - HILL_H, w, HILL_H);
   const sx2 = Math.max(0, Math.min(hill2Canvas!.width - w, cam * 0.15 - HILL2_MIN));
-  ctx.drawImage(hill2Canvas!, sx2, 0, w, HILL_H, 0, ground - HILL_H, w, HILL_H);
+  ctx.drawImage(hill2Canvas!, sx2, 0, w, HILL_H, 0, roadEdge - HILL_H, w, HILL_H);
 }
 
 // ---- Cloud sprite (baked once) ---
@@ -190,9 +196,10 @@ function getCloudSprite(): HTMLCanvasElement {
   return c;
 }
 
-/** Only visible trees in the treeline loop are visited. */
+/** Only visible trees in the treeline loop are visited; anchored at the raised treeline edge. */
 function drawTreeline(v: View) {
-  const { ctx, w, cam, ground } = v;
+  const { ctx, w, cam, roadEdge } = v;
+  const baseY = roadEdge + 4;
   const pcam = cam * 0.45;
   const i0 = Math.max(0, Math.floor((pcam - 160 - WORLD_MIN) / 155) - 1);
   const i1 = Math.min(91, Math.ceil((pcam + w + 160 - WORLD_MIN) / 155) + 1);
@@ -202,11 +209,11 @@ function drawTreeline(v: View) {
     if (sx < -150 || sx > w + 150) continue;
     const th = 74 + ((i * 53) % 56);
     const s1 = spriteFor("scenery/autumn-tree.svg", th * 0.75, th, (i & 1) === 1);
-    if (s1) ctx.drawImage(s1, sx - th * 0.375, ground - th, th * 0.75, th);
+    if (s1) ctx.drawImage(s1, sx - th * 0.375, baseY - th, th * 0.75, th);
     if (wx < -2650 || wx > 7350) {
       const th2 = th * 0.82;
       const s2 = spriteFor("scenery/autumn-tree.svg", th2 * 0.75, th2, ((i + 7) & 1) === 1);
-      if (s2) ctx.drawImage(s2, sx + 62 - th2 * 0.375, ground - th2, th2 * 0.75, th2);
+      if (s2) ctx.drawImage(s2, sx + 62 - th2 * 0.375, baseY - th2, th2 * 0.75, th2);
     }
   }
 }

@@ -593,19 +593,65 @@ function bindInput(): void {
   });
   window.addEventListener("blur", () => { keys.clear(); s.cartHeld = false; });
 
-  const hold = (id: string, action: string) => {
-    const el = $(id);
-    el.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
-      if (action === "push") s.cartHeld = true; else keys.add(action);
-    });
-    const release = () => { if (action === "push") s.cartHeld = false; else keys.delete(action); };
-    el.addEventListener("pointerup", release);
-    el.addEventListener("pointerleave", release);
+  // Pointer-captured touch rocker for Left/Right so thumb drift or sliding between
+  // arrows keeps walking smoothly instead of dropping on pointerleave.
+  const leftBtn = $("left"), rightBtn = $("right");
+  const dpad = leftBtn.parentElement!;
+  let walkPointer: number | null = null;
+  const setTouchWalk = (dir: "left" | "right" | null) => {
+    keys.delete("left"); keys.delete("right");
+    if (dir) keys.add(dir);
+    leftBtn.classList.toggle("active", dir === "left");
+    rightBtn.classList.toggle("active", dir === "right");
   };
-  hold("left", "left");
-  hold("right", "right");
-  hold("pushBtn", "push");
+  const pickWalkDir = (clientX: number, clientY: number): "left" | "right" | null => {
+    const lb = leftBtn.getBoundingClientRect();
+    const rb = rightBtn.getBoundingClientRect();
+    const pad = 34;
+    if (clientY < Math.min(lb.top, rb.top) - pad || clientY > Math.max(lb.bottom, rb.bottom) + pad) return null;
+    if (clientX < lb.left - pad || clientX > rb.right + pad) return null;
+    const mid = (lb.right + rb.left) / 2;
+    return clientX <= mid ? "left" : "right";
+  };
+  dpad.addEventListener("pointerdown", (e) => {
+    const dir = pickWalkDir(e.clientX, e.clientY);
+    if (!dir) return;
+    e.preventDefault();
+    walkPointer = e.pointerId;
+    try { dpad.setPointerCapture(e.pointerId); } catch { /* noop */ }
+    setTouchWalk(dir);
+  });
+  dpad.addEventListener("pointermove", (e) => {
+    if (walkPointer !== e.pointerId) return;
+    setTouchWalk(pickWalkDir(e.clientX, e.clientY));
+  });
+  const endWalkTouch = (e: PointerEvent) => {
+    if (walkPointer !== e.pointerId) return;
+    walkPointer = null;
+    setTouchWalk(null);
+  };
+  dpad.addEventListener("pointerup", endWalkTouch);
+  dpad.addEventListener("pointercancel", endWalkTouch);
+  dpad.addEventListener("lostpointercapture", endWalkTouch);
+
+  const pushEl = $("pushBtn");
+  let pushPointer: number | null = null;
+  pushEl.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    pushPointer = e.pointerId;
+    try { pushEl.setPointerCapture(e.pointerId); } catch { /* noop */ }
+    s.cartHeld = true;
+    pushEl.classList.add("active");
+  });
+  const endPush = (e: PointerEvent) => {
+    if (pushPointer !== e.pointerId) return;
+    pushPointer = null;
+    s.cartHeld = false;
+    pushEl.classList.remove("active");
+  };
+  pushEl.addEventListener("pointerup", endPush);
+  pushEl.addEventListener("pointercancel", endPush);
+  pushEl.addEventListener("lostpointercapture", endPush);
 
   $("interact").addEventListener("click", () => handleInteract());
   $("lockBtn").addEventListener("click", () => handleBuilding("lock"));
@@ -651,7 +697,7 @@ function step(dt: number): void {
     s.cartPushers = pushing ? 1 : 0;
     const speed = pushing ? CART_SOLO_SPEED : s.hasSupply ? CARRY_SPEED : SPEED;
     const prevInside = s.inside;
-    const move = walkThroughBuildings(s.playerX, s.playerX + dir * speed * dt, s.inside, s.doors);
+    const move = walkThroughBuildings(s.playerX, s.playerX + dir * speed * dt, s.inside, s.doors, false);
     s.playerX = move.x;
     s.inside = move.inside;
     if (s.inside !== prevInside) markDirty();

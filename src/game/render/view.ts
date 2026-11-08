@@ -12,12 +12,16 @@ export interface View {
   /** Viewport in world units, after the zoom divide. */
   w: number;
   h: number;
-  /** Seconds since start; zero under reduced motion. */
+  /** Seconds since start; zero under reduced motion (decorative motion). */
   t: number;
+  /** Monotonic clock in seconds; always advances (drives walk stride & timing). */
+  clock: number;
   dt: number;
   /** Camera x in world units, and the y of the road. */
   cam: number;
   ground: number;
+  /** Back edge of the road (horizon where ground starts behind houses/trees/shadows). */
+  roadEdge: number;
   /** Server clock in milliseconds. */
   now: number;
   /** Night 0..1 and its 0.1 bucket. */

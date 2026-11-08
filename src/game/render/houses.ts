@@ -70,7 +70,7 @@ export function drawHouseInteriors(v: View) {
 function drawInterior(v: View, b: Building, x: number, ground: number, task: TaskView | undefined, occupied: boolean) {
   const { ctx } = v;
   const left = x - b.width / 2;
-  drawShadowOval(ctx, x, ground + 2, b.width * 0.52, 7, 0.38);
+  drawShadowOval(ctx, x, ground - 1, b.width * 0.52, 6, 0.38);
   drawSvg(ctx, "house/interior.svg", left, ground - WALL_HEIGHT, b.width, WALL_HEIGHT);
   for (const item of roomItems(b.id)) {
     if (item.when === "done" && !task?.done) continue;

@@ -50,8 +50,8 @@ export function drawRoadDressing(v: View) {
   for (let i = i0; i <= i1; i++) {
     const sx = treeX(i) - cam;
     if (sx < -60 || sx > w + 60) continue;
-    drawSvg(ctx, "scenery/stump.svg", sx - 30, ground + 2, 60, 12);
-    drawSvg(ctx, "scenery/leaf-pile.svg", sx - 24, ground + 1, 44, 8);
+    drawSvg(ctx, "scenery/stump.svg", sx - 30, ground - 4, 60, 12);
+    drawSvg(ctx, "scenery/leaf-pile.svg", sx - 24, ground - 3, 44, 8);
   }
   if (quality === "low") return;
   const f0 = Math.max(0, Math.floor((cam - 80 - WORLD_MIN) / 320));
