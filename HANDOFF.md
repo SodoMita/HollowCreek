@@ -167,6 +167,18 @@ can post to that channel.
 - `/api/polish/status` is public and reports the worker's branch, commit, files
   and result. Decide whether it should be authenticated or removed.
 
+**Status: implemented on branch `mallow/code-map-hygiene` @ `450020e`, awaiting
+the human's merge decision.** Mallow Dewhopper 58 made the supervisor and the
+loop require `HOLLOW_POLISH_WORKER=1`, made the channel URL come from
+`HOLLOW_MAYFLY_URL` only, untracked and gitignored `scripts/mayfly-channel.txt`,
+aligned `/api/polish/status`, and added `scripts/test-polish-gate.mjs` (DB-free,
+wired into `run-unit.mjs`). Reviewed and re-verified independently: 12/12
+DB-free suites, `tsc` and `eslint` clean, and the new test really spawns the
+loop and asserts it exits disabled. **The key remains in git history — whoever
+owns that channel must rotate it.** Small nit for the author: `.env.example`
+still shows `# HOLLOW_POLISH_WORKER=0` as the example value, while the gate now
+needs `1`.
+
 ### Priority 2 — DONE at `0b9eb22`: the two failing browser smoke scripts
 
 Both reviews found these independently; they are fixed on `main`. Kept here so
@@ -211,7 +223,24 @@ nobody redoes the work.
 7. **Dead code from the merge:** `Renderer.zoomOnly` / `setZoomOnly`
    (`src/game/render.ts`) have no callers left — superseded by `viewZoom`.
    Remove them or wire them to something.
-8. **Housekeeping:**
+8. **Engine import cycles (verified independently with a Tarjan SCC scan of
+   `src/game/*.ts`):** two strongly connected components exist.
+   - A **13-module cycle**: `actions · chronicle · engine · history · hooks ·
+     persistence · proximity · registry · rules · snapshot · tick ·
+     time-travel · timepieces`. `hooks.ts` breaks only the snapshot/tick edges,
+     so `engine.ts`'s `export *` barrel keeps the rest of the cycle alive. It is
+     runtime-safe today (ESM hoisting + function-level use) but fragile: any new
+     top-level side effect or const-to-const import across those edges can give
+     you `undefined` at module init. Do not add a 14th member casually.
+   - A **3-module cycle**: `types ↔ balance ↔ buildings` (`types.ts` re-exports
+     balance and imports a `DoorState` type from buildings; buildings imports
+     `ix` from types). This predates the merge. A fourth member (`units.ts`,
+     which re-exported `VISION_*` from balance for convenience) was removed at
+     `60a7f40` — nothing imported it, and dropping that one line shrank the SCC
+     from 4 to 3.
+   - `docs/CODE_MAP.md` on `mallow/code-map-hygiene` documents both plus the
+     full measured import graph (fan-in/out); it is pending merge.
+9. **Housekeeping:**
    - Remove leftover scratch dotfiles in `scripts/` (`.mobile-check.mjs`, `.mobile-check2.mjs`, `.mobile-shot.mjs`, `.mse.mjs`, `.shot-svg.mjs`, `.smoke-pages.mjs`, `.smoke-refactor.mjs`).
    - Update or gate `scripts/test-house-assets.mjs` so it does not require an external `../../malye-korely/` directory outside the repository.
    - Close stale GitHub PRs `#1` and `#2` (with human/maintainer approval).
@@ -383,6 +412,24 @@ A match needs **≥4 souls** before `{"action":"start"}` is accepted. Use
 `?delta=1&wait=1` on `/api/game/state` to watch frames, and remember
 `/api/health` is the platform's readiness probe — hitting it can spawn the
 polish worker (§5 Priority 1).
+
+### 8.4 Two more traps, both confirmed on `main`
+
+- **`drizzle.config.json` hardcodes its database URL**
+  (`postgresql://postgres:postgres@127.0.0.1:5432/app_db`) and ignores
+  `DATABASE_URL`. In the arena workspace the two happen to be identical, so
+  `npx drizzle-kit push --force` works and prints "No changes detected";
+  anywhere else it silently targets the wrong database and reports
+  "Did not find any relations". Apply `drizzle/0000_smart_mongu.sql` with
+  `psql "$DATABASE_URL"` instead, or make the config read the env var.
+- **`scripts/smoke-rooms.mjs` runs `pkill -f 'next-serv[e]r'`** (line 34) to
+  restart the server mid-test. That kills *every* Next server on the box —
+  including the platform preview you are demoing. Run it last, and never while
+  something else depends on port 3100. (The `[e]` trick is deliberate so the
+  pattern does not match the pkill command itself; a plain
+  `pkill -f "next-server"` in your own shell matches *your shell's command
+  line* and kills the calling process — that mistake cost a whole debugging
+  session.)
 
 ---
 

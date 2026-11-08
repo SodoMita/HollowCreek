@@ -76,5 +76,6 @@ export const MEETING_HOUSE = {
 /** Foreground tree spacing (world units). */
 export const TREE_SPACING = 190;
 
-// ---- Vision (re-exported so size queries have one home) --------------------
-export { VISION_CREW, VISION_HOLLOW, VISION_BLACKOUT } from "./balance";
+// Vision radii are balance values, not scale: they stay in balance.ts. (This
+// file used to re-export them for convenience; nothing imported them and the
+// re-export closed a units -> balance -> types -> buildings -> units cycle.)
