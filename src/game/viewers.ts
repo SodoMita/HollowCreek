@@ -7,12 +7,13 @@ import { onRoomEvent } from "./chronicle";
 import { roomEtag, snapshot } from "./snapshot";
 import { applyFrame, diffView, encodeView, type EncodedView, type WireFrame } from "./wire";
 
-export const FRAME_MS = 100; // at most 10 state frames per second per viewer
+export const FRAME_MS = 50; // up to 20 state frames per second per viewer (matches server TICK_MS)
 export const SLOW_MS = 1000; // slow-class values ride at most once a second
 
 interface ViewerState {
   view: EncodedView;
   slowAt: number; // last time a frame carrying slow values went out
+  sentAt: number; // last time any frame went out
 }
 
 const store = new WeakMap<Room, Map<string, ViewerState>>();
@@ -41,7 +42,7 @@ export function nextFrame(room: Room, playerId: string, holdsEtag: string | null
   const m = states(room);
   const prev = m.get(playerId);
   if (!prev || holdsEtag !== prev.view.etag) {
-    m.set(playerId, { view: encodeView(snap, etag), slowAt: now });
+    m.set(playerId, { view: encodeView(snap, etag), slowAt: now, sentAt: now });
     return { frame: { etag, now: snap.now, snap }, snapNow: snap.now };
   }
   if (etag === prev.view.etag) return { frame: null, snapNow: snap.now };
@@ -54,7 +55,7 @@ export function nextFrame(room: Room, playerId: string, holdsEtag: string | null
   if (Object.keys(d.patch).length) frame.patch = d.patch;
   // Did this frame carry slow values? Then the beat restarts; fast-only frames leave it alone.
   const carriedSlow = !d.fast || Object.keys(d.delta).some((k) => k === "nightT" || k === "time" || k === "danger") || !!d.patch.self || !!d.patch.tasks;
-  m.set(playerId, { view: next, slowAt: carriedSlow ? now : prev.slowAt });
+  m.set(playerId, { view: next, slowAt: carriedSlow ? now : prev.slowAt, sentAt: now });
   return { frame, snapNow: snap.now };
 }
 
@@ -67,8 +68,7 @@ export function slowDueIn(room: Room, playerId: string, now: number): number {
 /**
  * Long-poll support: resolve as soon as the viewer would get a frame (a fast
  * change, or the slow beat coming due), or after `maxMs`. Checks are
- * coalesced to one per FRAME_MS so a busy room costs one snapshot per viewer
- * per 100 ms, not one per tick.
+ * coalesced to at most one per FRAME_MS; an idle viewer wakes immediately.
  */
 export function waitForFrame(room: Room, playerId: string, holdsEtag: string | null, maxMs: number, signal?: AbortSignal): Promise<WireFrame | null> {
   return new Promise((resolve) => {
@@ -92,7 +92,13 @@ export function waitForFrame(room: Room, playerId: string, holdsEtag: string | n
       if (!r) { finish(null); return; }
       if (r.frame) finish(r.frame);
     };
-    const onEvent = () => { if (!timer && !done) timer = setTimeout(check, FRAME_MS); };
+    const onEvent = () => {
+      if (timer || done) return;
+      const sentAt = states(room).get(playerId)?.sentAt ?? 0;
+      const delay = Math.max(0, FRAME_MS - (Date.now() - sentAt));
+      if (delay === 0) check();
+      else timer = setTimeout(check, delay);
+    };
     const unsub = onRoomEvent(room.code, onEvent);
     const deadline = setTimeout(() => { if (!done) { const now = Date.now(); const r = nextFrame(room, playerId, holdsEtag, now, true); finish(r?.frame ?? null); } }, maxMs);
     const onAbort = () => finish(null);

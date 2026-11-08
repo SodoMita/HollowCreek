@@ -17,7 +17,7 @@ import { SettingsStore, applyDocumentPreferences, matchesControl } from "../src/
 import { SettingsDialog } from "../src/game/settings-ui";
 import {
   BELL_X, CAGE_UNLOCK_RANGE, CART_PUSH_RANGE, CART_SOLO_SPEED, CARRY_SPEED, CARRY_VIGOR_DRAIN,
-  INTERACT_RANGE, SPEED, STAMINA_IDLE_REGEN, STATIONS, GHOST_SPEED, SUPPLY_CART_START,
+  INTERACT_RANGE, SPEED, STAMINA_IDLE_REGEN, STATIONS, SUPPLY_CART_START,
   TIMEPIECE_X, TIME_VISIT_MS, HISTORY_SAMPLE_MS, type Snapshot, type TaskView,
 } from "../src/game/types";
 import { mergeReturnedDoors, mergeReturnedTasks } from "./tutorial/tutorial-time";
@@ -115,9 +115,11 @@ const s: Tutorial = {
 };
 
 const keys = new Set<string>();
-let lastDir = 0;
 const displayX = new Map<string, number>();
-let lastStepTime = 0;
+let cachedSnap: Snapshot | null = null;
+let snapDirty = true;
+let practiceDirty = false;
+function markDirty(): void { snapDirty = true; }
 
 const store = new SettingsStore();
 let audio: AudioDirector | null = null;
@@ -125,6 +127,10 @@ let settingsDialog: SettingsDialog | null = null;
 let timePanel: TimePanel | null = null;
 let wardPanel: WardPanel | null = null;
 let renderer: Renderer | null = null;
+let gameCanvas: HTMLCanvasElement | null = null;
+let gameCtx: CanvasRenderingContext2D | null = null;
+let viewW = 0;
+let viewH = 0;
 
 function ensureAudio(): void {
   if (!audio) audio = new AudioDirector(store);
@@ -139,11 +145,11 @@ function showToast(msg: string): void {
 
 function showAction(text: string): void {
   s.actionNotice = { text, until: Date.now() + 3500 };
+  markDirty();
 }
 
 function releaseKeys(): void {
   keys.clear();
-  lastDir = 0;
   s.moving = false;
   s.cartHeld = false;
 }
@@ -155,6 +161,7 @@ function menuOpen(): boolean {
 function advance(next: number): void {
   if (!s.completed.includes(s.chapter)) s.completed.push(s.chapter);
   s.chapter = next;
+  markDirty();
   showToast(`Completed! Next: ${CHAPTERS[next - 1]?.title ?? "Finish"}`);
 }
 
@@ -177,6 +184,7 @@ function endVisit(): void {
   releaseKeys();
   s.future = null;
   s.timeVisit = null;
+  markDirty();
   showToast("You return to the present. Past changes have carried forward.");
 }
 
@@ -211,6 +219,7 @@ function beginVisit(targetAt: number): void {
   s.timeVisit = { originAt: frame.at, startedAt: now, endsAt: now + TIME_VISIT_MS };
   s.timeNow = now;
   releaseKeys();
+  markDirty();
   showToast("The timepiece breaks. You are in the recorded past.");
 }
 
@@ -227,6 +236,7 @@ function handleBuilding(action: "interact" | "lock"): boolean {
   if (!result.handled) return false;
   if (result.message) {
     s.doors = next;
+    markDirty();
     showToast(result.message);
     if (result.message.startsWith("You found ")) showAction(result.message.replace(/^You found /, "took "));
   }
@@ -243,6 +253,7 @@ function handleInteract(): void {
   if (!s.inside && s.timepieceX !== null && Math.abs(s.timepieceX - s.playerX) < 55) {
     s.timepieceX = null;
     s.hasTimepiece = true;
+    markDirty();
     showAction("took the timepiece");
     showToast("You found the timepiece. Press M to choose a moment.");
     return;
@@ -255,6 +266,7 @@ function handleInteract(): void {
     if (nearby) {
       s.hasSupply = false;
       s.tasks = s.tasks.map((t) => (t.id === nearby.id ? { ...t, delivered: true } : t));
+      markDirty();
       showToast(`Delivered kit to ${nearby.name}! Press E again to open workbench.`);
       return;
     }
@@ -270,6 +282,7 @@ function handleInteract(): void {
       s.puzzles.set(ready.id, puzzle);
     }
     s.activeWardId = ready.id;
+    markDirty();
     wardPanel?.update(wardView(ready.id, ready.name, puzzle), s.stamina, s.exhausted);
     return;
   }
@@ -277,6 +290,7 @@ function handleInteract(): void {
   // 3. Take kit from the cart
   if (!s.inside && !s.hasSupply && Math.abs(s.cartX - s.playerX) < INTERACT_RANGE) {
     s.hasSupply = true;
+    markDirty();
     showAction("took a repair kit");
     showToast("Took a repair kit! Notice your slower stride and vigor drain.");
     if (s.chapter === 2) advance(3);
@@ -289,6 +303,7 @@ function handleInteract(): void {
     if (idx !== -1) {
       s.supplyDrops = s.supplyDrops.filter((_, i) => i !== idx);
       s.hasSupply = true;
+      markDirty();
       showAction("picked up a repair kit");
       showToast("Recovered dropped repair kit!");
       return;
@@ -300,6 +315,7 @@ function handleInteract(): void {
     s.hasKey = false;
     s.cagedNeighbor = false;
     s.keyX = 1980; // the key falls by the open cage
+    markDirty();
     showToast("Cage unlocked! Nils steps free in front of the bars.");
     if (s.chapter === 4) advance(5);
     return;
@@ -309,6 +325,7 @@ function handleInteract(): void {
   if (!s.inside && s.keyX !== null && !s.hasKey && Math.abs(s.keyX - s.playerX) < INTERACT_RANGE) {
     s.hasKey = true;
     s.keyX = null;
+    markDirty();
     showAction("took the iron key");
     showToast("Found the iron key! Walk to the cage in the square to unlock Nils.");
     return;
@@ -318,6 +335,7 @@ function handleInteract(): void {
   if (!s.inside && Math.abs(BELL_X - s.playerX) < INTERACT_RANGE) {
     s.bellAt = Date.now();
     s.meetingActive = true;
+    markDirty();
     showToast("The chapel bell tolls! In multiplayer, everyone gathers in the square to vote.");
     if (s.chapter === 5) advance(6);
   }
@@ -328,6 +346,7 @@ function dropSupply(): void {
   if (s.inside) { showToast("Carry the kit outside to set it down."); return; }
   s.hasSupply = false;
   s.supplyDrops = [...s.supplyDrops, s.playerX];
+  markDirty();
   showToast("Dropped repair kit on the road.");
 }
 
@@ -336,6 +355,7 @@ function hollowRuin(): void {
   if (hit) {
     s.tasks = s.tasks.map((t) => (t.id === hit.id ? { ...t, done: false, delivered: false, sabotaged: true, progress: 0 } : t));
     s.puzzles.delete(hit.id);
+    markDirty();
     showToast(`Sabotaged ${hit.name}! In real games, Hollow players can ruin mended wards.`);
   } else {
     showToast("Walk near a supplied or repaired ward to practice Hollow sabotage.");
@@ -352,6 +372,7 @@ function openPractice(kind: WardKind): void {
   s.practicePreviewUntil = kind === "scarecrow" ? now + 3200 : 0;
   s.practiceOpen = true;
   s.practiceHtml = "";
+  practiceDirty = false;
   $("practice").hidden = false;
   renderPractice();
 }
@@ -369,6 +390,7 @@ function practiceMove(index: number): void {
   if (p.kind === "scarecrow" && (index === 4 || next.values[0] !== p.values[0] || next.mistakes > p.mistakes)) {
     s.practicePreviewUntil = Date.now() + 3200;
   }
+  practiceDirty = true;
   if (wardSolved(next)) showToast(`${WARD_JOBS[s.practiceKind].title} solved! Excellent work.`);
 }
 
@@ -405,68 +427,91 @@ function renderPractice(): void {
 
 // ---- HUD ----------------------------------------------------------------
 
+const hudMemo = new Map<string, string>();
+function setText(id: string, text: string): void {
+  if (hudMemo.get(id) === text) return;
+  hudMemo.set(id, text);
+  $(id).textContent = text;
+}
+function setHidden(id: string, hidden: boolean): void {
+  const key = `h:${id}`;
+  const v = hidden ? "1" : "0";
+  if (hudMemo.get(key) === v) return;
+  hudMemo.set(key, v);
+  $(id).hidden = hidden;
+}
+
 function renderHud(): void {
-  const chap = CHAPTERS[s.chapter - 1] ?? CHAPTERS[0];
-  $("chapTitle").textContent = chap.title;
-  $("chapSummary").textContent = `· ${chap.summary}`;
-  $("chapInstr").textContent = chap.instruction;
-  $("chapNote").textContent = `“${chap.guideNote}”`;
-  const nav = $("chapNav");
-  if (!nav.childElementCount) {
-    for (const ch of CHAPTERS) {
-      const b = document.createElement("button");
-      b.className = "chap";
-      b.dataset.chapter = String(ch.id);
-      b.title = ch.title;
-      b.textContent = String(ch.id);
-      nav.append(b);
+  const chapKey = `${s.chapter}:${s.completed.join(",")}`;
+  if (hudMemo.get("chap") !== chapKey) {
+    hudMemo.set("chap", chapKey);
+    const chap = CHAPTERS[s.chapter - 1] ?? CHAPTERS[0];
+    $("chapTitle").textContent = chap.title;
+    $("chapSummary").textContent = `· ${chap.summary}`;
+    $("chapInstr").textContent = chap.instruction;
+    $("chapNote").textContent = `“${chap.guideNote}”`;
+    const nav = $("chapNav");
+    if (!nav.childElementCount) {
+      for (const ch of CHAPTERS) {
+        const b = document.createElement("button");
+        b.className = "chap";
+        b.dataset.chapter = String(ch.id);
+        b.title = ch.title;
+        b.textContent = String(ch.id);
+        nav.append(b);
+      }
+    }
+    for (const b of Array.from(nav.children) as HTMLButtonElement[]) {
+      const id = Number(b.dataset.chapter);
+      const done = s.completed.includes(id);
+      b.className = `chap${s.chapter === id ? " on" : done ? " done" : ""}`;
+      b.textContent = done ? "✓" : String(id);
     }
   }
-  for (const b of Array.from(nav.children) as HTMLButtonElement[]) {
-    const id = Number(b.dataset.chapter);
-    const done = s.completed.includes(id);
-    b.className = `chap${s.chapter === id ? " on" : done ? " done" : ""}`;
-    b.textContent = done ? "✓" : String(id);
+
+  setHidden("countdown", !s.timeVisit);
+  if (s.timeVisit) setText("countdownText", `In the past · ${Math.max(0, Math.ceil((s.timeVisit.endsAt - s.timeNow) / 1000))}s`);
+  setHidden("timeBtn", !(s.hasTimepiece || s.timeVisit));
+  setText("timeBtn", s.timeVisit ? "Return · M" : "Timepiece · M");
+
+  let doneCount = 0;
+  for (let i = 0; i < s.tasks.length; i++) if (s.tasks[i].done) doneCount++;
+  setText("wardsDone", `${doneCount} / ${s.tasks.length}`);
+  setText("carrying", s.hasSupply ? "YES (slow)" : "None");
+  setText("location", s.inside ? BUILDINGS.find((b) => b.id === s.inside)?.name ?? "" : "The road");
+  setText("position", String(Math.round(s.playerX)));
+  setText("cartPos", `x=${Math.round(s.cartX)}`);
+  setText("keyState", s.hasKey ? "In Hand" : s.keyX !== null ? "On Road" : "Used");
+
+  setText("vigorLabel", s.exhausted ? "spent — rest!" : "vigor");
+  const labelColor = s.exhausted ? "#e06a5a" : "#9c8b7a";
+  if (hudMemo.get("vc") !== labelColor) { hudMemo.set("vc", labelColor); $("vigorLabel").style.color = labelColor; }
+  const pct = `${Math.round(s.stamina * 100)}%`;
+  const barBg = s.stamina <= 0 ? "#e06a5a" : s.stamina < 0.3 ? "#d99a3d" : "#6b8e23";
+  if (hudMemo.get("vw") !== pct || hudMemo.get("vb") !== barBg) {
+    const bar = $("vigorBar");
+    if (hudMemo.get("vw") !== pct) { hudMemo.set("vw", pct); bar.style.width = pct; }
+    if (hudMemo.get("vb") !== barBg) { hudMemo.set("vb", barBg); bar.style.background = barBg; }
   }
-
-  const countdown = $("countdown");
-  countdown.hidden = !s.timeVisit;
-  if (s.timeVisit) $("countdownText").textContent = `In the past · ${Math.max(0, Math.ceil((s.timeVisit.endsAt - s.timeNow) / 1000))}s`;
-  $("timeBtn").hidden = !(s.hasTimepiece || s.timeVisit);
-  $("timeBtn").textContent = s.timeVisit ? "Return · M" : "Timepiece · M";
-
-  $("wardsDone").textContent = `${s.tasks.filter((t) => t.done).length} / ${s.tasks.length}`;
-  $("carrying").textContent = s.hasSupply ? "YES (slow)" : "None";
-  $("location").textContent = s.inside ? BUILDINGS.find((b) => b.id === s.inside)?.name ?? "" : "The road";
-  $("position").textContent = String(Math.round(s.playerX));
-  $("cartPos").textContent = `x=${Math.round(s.cartX)}`;
-  $("keyState").textContent = s.hasKey ? "In Hand" : s.keyX !== null ? "On Road" : "Used";
-
-  $("vigorLabel").textContent = s.exhausted ? "spent — rest!" : "vigor";
-  $("vigorLabel").style.color = s.exhausted ? "#e06a5a" : "#9c8b7a";
-  const bar = $("vigorBar");
-  bar.style.width = `${Math.round(s.stamina * 100)}%`;
-  bar.style.background = s.stamina <= 0 ? "#e06a5a" : s.stamina < 0.3 ? "#d99a3d" : "#6b8e23";
-  $("hauling").hidden = !s.hasSupply;
+  setHidden("hauling", !s.hasSupply);
 
   const nearKeyed = BUILDINGS.find((b) => Math.abs(doorX(b) - s.playerX) <= DOOR_REACH && s.doors.some((d) => d.id === b.id && d.holder === "me"));
-  const nearState = s.doors.find((d) => d.id === nearKeyed?.id);
-  $("lockBtn").hidden = !nearKeyed;
-  if (nearKeyed) $("lockBtn").textContent = `${nearState?.locked ? "Unlock" : "Lock"} (L)`;
-  $("dropBtn").hidden = !s.hasSupply;
-  $("pushBtn").hidden = !!s.hasSupply;
+  const nearState = nearKeyed ? s.doors.find((d) => d.id === nearKeyed.id) : undefined;
+  setHidden("lockBtn", !nearKeyed);
+  if (nearKeyed) setText("lockBtn", `${nearState?.locked ? "Unlock" : "Lock"} (L)`);
+  setHidden("dropBtn", !s.hasSupply);
+  setHidden("pushBtn", !!s.hasSupply);
 
   const nearbyJob = s.tasks.find((t) => t.inside && t.inside === s.inside && !t.done && Math.abs(t.x - s.playerX) < INTERACT_RANGE);
   let hint: string | null;
   if (!s.inside && s.timepieceX !== null && Math.abs(s.timepieceX - s.playerX) < 55) hint = "E — take the timepiece";
   else hint = buildingHint(s.doors, "me", s.playerX, s.inside)
     ?? (nearbyJob ? `E — ${nearbyJob.delivered ? "repair" : "deliver a kit to"} ${nearbyJob.name}` : null);
-  $("hint").hidden = !hint;
-  $("hint").textContent = hint ?? "";
+  setHidden("hint", !hint);
+  setText("hint", hint ?? "");
 
-  const toast = $("toast");
-  toast.hidden = !s.toast;
-  toast.textContent = s.toast ?? "";
+  setHidden("toast", !s.toast);
+  setText("toast", s.toast ?? "");
 }
 
 // ---- Settings, audio, ward panel --------------------------------------
@@ -500,6 +545,7 @@ function setupPanels(): void {
       const done = wardSolved(next);
       const prog = wardProgress(next);
       s.tasks = s.tasks.map((t) => (t.id === stationId ? { ...t, done, progress: prog } : t));
+      markDirty();
       if (done) {
         const station = STATIONS.find((st) => st.id === stationId);
         showToast(`${station ? WARD_JOBS[station.kind].title : "Ward"} repaired!`);
@@ -514,8 +560,9 @@ function setupPanels(): void {
     close: () => {
       wardPanel?.update(null, 1, false);
       s.activeWardId = null;
+      markDirty();
     },
-    opened: () => { keys.clear(); lastDir = 0; s.moving = false; },
+    opened: () => { keys.clear(); s.moving = false; },
   });
 }
 
@@ -595,21 +642,19 @@ function bindInput(): void {
 
 // ---- Loops --------------------------------------------------------------
 
-function step(): void {
-  const now = performance.now();
-  const dt = Math.min(0.12, (now - lastStepTime) / 1000);
-  lastStepTime = now;
+function step(dt: number): void {
   const dir = (keys.has("right") ? 1 : 0) - (keys.has("left") ? 1 : 0);
-  lastDir = dir;
   s.moving = dir !== 0;
   if (dir !== 0) {
     s.facing = dir;
     const pushing = !s.inside && s.cartHeld && !s.hasSupply && Math.abs(s.playerX - s.cartX) <= CART_PUSH_RANGE;
     s.cartPushers = pushing ? 1 : 0;
     const speed = pushing ? CART_SOLO_SPEED : s.hasSupply ? CARRY_SPEED : SPEED;
+    const prevInside = s.inside;
     const move = walkThroughBuildings(s.playerX, s.playerX + dir * speed * dt, s.inside, s.doors);
     s.playerX = move.x;
     s.inside = move.inside;
+    if (s.inside !== prevInside) markDirty();
     if (pushing) s.cartX = clampWorld(s.cartX + dir * speed * dt, 90);
     if (pushing || s.hasSupply) {
       s.stamina = Math.max(0, s.stamina - CARRY_VIGOR_DRAIN * (pushing ? 1.2 : 1) * dt);
@@ -618,11 +663,12 @@ function step(): void {
     if (s.chapter === 1 && Math.abs(s.playerX - 480) > 220) advance(2);
   } else {
     s.cartPushers = 0;
-    s.stamina = Math.min(1, s.stamina + STAMINA_IDLE_REGEN * dt);
-    if (s.stamina >= 0.2 && s.exhausted) s.exhausted = false;
+    if (s.stamina < 1) {
+      s.stamina = Math.min(1, s.stamina + STAMINA_IDLE_REGEN * dt);
+      if (s.stamina >= 0.2 && s.exhausted) s.exhausted = false;
+    }
   }
   if (s.chapter === 6) s.danger = Math.abs(s.playerX - BELL_X) < 400 ? 0.75 : 0.2;
-  renderHud();
 }
 
 function buildSnapshot(): Snapshot {
@@ -637,52 +683,84 @@ function buildSnapshot(): Snapshot {
   }, s.puzzles, s.history);
 }
 
+function currentSnapshot(): Snapshot {
+  if (!cachedSnap || snapDirty) {
+    cachedSnap = buildSnapshot();
+    snapDirty = false;
+  } else {
+    cachedSnap.now = Date.now();
+    cachedSnap.cartX = s.cartX;
+    cachedSnap.cartPushers = s.cartPushers;
+    cachedSnap.danger = s.danger;
+    cachedSnap.self.stamina = s.stamina;
+    cachedSnap.self.exhausted = s.exhausted;
+    const me = cachedSnap.players[0];
+    if (me) {
+      me.x = s.playerX;
+      me.facing = s.facing;
+      me.moving = s.moving;
+      if (me.action && me.action.until <= cachedSnap.now) me.action = null;
+    }
+  }
+  return cachedSnap;
+}
+
 function resize(): void {
-  const canvas = $<HTMLCanvasElement>("game");
-  const ctx = canvas.getContext("2d");
+  const canvas = (gameCanvas ??= $<HTMLCanvasElement>("game"));
+  const ctx = (gameCtx ??= canvas.getContext("2d", { alpha: false }));
   if (!ctx) return;
   const graphics = store.value.graphics;
-  const dprCap = graphics.quality === "high" ? 2 : graphics.quality === "medium" ? 1.5 : 1;
+  const dprCap = graphics.quality === "high" ? 1.5 : graphics.quality === "medium" ? 1.25 : 1;
   const dpr = Math.min(window.devicePixelRatio || 1, dprCap) * graphics.resolution;
-  const w = window.visualViewport?.width ?? window.innerWidth;
-  const h = window.visualViewport?.height ?? window.innerHeight;
-  canvas.width = Math.max(1, Math.round(w * dpr));
-  canvas.height = Math.max(1, Math.round(h * dpr));
-  canvas.style.width = `${w}px`;
-  canvas.style.height = `${h}px`;
+  viewW = window.visualViewport?.width ?? window.innerWidth;
+  viewH = window.visualViewport?.height ?? window.innerHeight;
+  canvas.width = Math.max(1, Math.round(viewW * dpr));
+  canvas.height = Math.max(1, Math.round(viewH * dpr));
+  canvas.style.width = `${viewW}px`;
+  canvas.style.height = `${viewH}px`;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
+let lastAudioAt = 0;
+
 function frame(nowMs: number, last: { t: number }): void {
   requestAnimationFrame((t) => frame(t, last));
-  const canvas = $<HTMLCanvasElement>("game");
-  const ctx = canvas.getContext("2d");
+  const ctx = gameCtx;
   if (!ctx || !renderer) return;
   const dt = Math.min(0.05, (nowMs - last.t) / 1000);
   last.t = nowMs;
-  const w = window.visualViewport?.width ?? window.innerWidth;
-  const h = window.visualViewport?.height ?? window.innerHeight;
 
-  const snap = buildSnapshot();
+  if (s.timeVisit) {
+    s.timeNow = Date.now();
+    if (s.timeNow >= s.timeVisit.endsAt) endVisit();
+  }
+  step(dt);
+  renderHud();
+
+  const snap = currentSnapshot();
   const latest = s.history[s.history.length - 1];
-  if (snap.time?.mode !== "past" && (!latest || Date.now() - latest.at >= HISTORY_SAMPLE_MS)) {
-    s.history.push({ at: Date.now(), snapshot: structuredClone(snap) });
+  if (snap.time?.mode !== "past" && (!latest || snap.now - latest.at >= HISTORY_SAMPLE_MS)) {
+    // Capture an independent frame for time travel only once per sample interval.
+    s.history.push({ at: snap.now, snapshot: buildSnapshot() });
     if (s.history.length > 7200) s.history = s.history.filter((_, i) => i % 2 === 0);
   }
   for (const p of snap.players) {
-    const cur = displayX.get(p.id);
-    if (cur === undefined || Math.abs(cur - p.x) > 300) { displayX.set(p.id, p.x); continue; }
     if (p.id === snap.self.id && !snap.self.caged) {
-      const spd = !snap.self.alive ? GHOST_SPEED : snap.self.hasSupply ? CARRY_SPEED : SPEED;
-      const pred = cur + lastDir * spd * dt;
-      displayX.set(p.id, Math.abs(p.x - pred) > 90 ? p.x : pred + (p.x - pred) * Math.min(1, dt * 25));
+      displayX.set(p.id, s.playerX);
     } else {
-      displayX.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 16));
+      const cur = displayX.get(p.id);
+      displayX.set(p.id, cur === undefined || Math.abs(cur - p.x) > 300 ? p.x : cur + (p.x - cur) * Math.min(1, dt * 16));
     }
   }
-  renderer.render(ctx, w, h, snap, displayX, nowMs / 1000, dt);
-  audio?.update(snap);
-  if (s.practiceOpen) renderPractice();
+  renderer.render(ctx, viewW, viewH, snap, displayX, nowMs / 1000, dt);
+  if (nowMs - lastAudioAt >= 120) {
+    lastAudioAt = nowMs;
+    audio?.update(snap);
+  }
+  if (s.practiceOpen && (practiceDirty || (s.practicePuzzle?.kind === "scarecrow" && s.practicePreviewUntil > 0 && Date.now() >= s.practicePreviewUntil))) {
+    practiceDirty = false;
+    renderPractice();
+  }
 }
 
 function boot(): void {
@@ -692,15 +770,6 @@ function boot(): void {
   bindInput();
   resize();
   window.addEventListener("resize", resize);
-  lastStepTime = performance.now();
-  setInterval(() => {
-    step();
-    if (s.timeVisit) {
-      s.timeNow = Date.now();
-      if (s.timeNow >= s.timeVisit.endsAt) endVisit();
-    }
-  }, 50);
-  setInterval(() => { renderHud(); }, 150);
   renderHud();
   const last = { t: performance.now() };
   requestAnimationFrame((t) => frame(t, last));

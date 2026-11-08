@@ -1,4 +1,5 @@
-// Per-frame values shared by the scene modules. Built once per render() call.
+// Per-frame values shared by the scene modules. One View instance is owned by
+// the Renderer and updated in place each frame so render() allocates nothing.
 import type { DoorState } from "../buildings";
 import type { GameSettings } from "../settings";
 import type { PublicPlayer, Snapshot, TaskView } from "../types";
@@ -19,7 +20,7 @@ export interface View {
   ground: number;
   /** Server clock in milliseconds. */
   now: number;
-  /** Night 0..1 and its 0.1 bucket (used as a cache key). */
+  /** Night 0..1 and its 0.1 bucket. */
   night: number;
   nb: number;
   snap: Snapshot;
@@ -36,19 +37,16 @@ export interface View {
   quality: Quality;
   reduced: boolean;
   glow: boolean;
-  settings: GameSettings;
+  flicker: boolean;
+  playerNames: boolean;
+  speechBubbles: boolean;
   /** Players with the viewer last, so the viewer draws on top. */
   sorted: PublicPlayer[];
-  /** Tasks by id (outdoor stations and indoor work alike). */
   tasks: Map<string, TaskView>;
-  /** The first indoor task of each house, by house id. */
   houseTask: Map<string, TaskView>;
   doors: Map<string, DoorState>;
-  /** Houses with a living occupant. */
   occupied: Set<string>;
   notesByHouse: Map<string, PinnedNote[]>;
-  /** Gradients rebuilt only when their key changes. Owned by the Renderer. */
-  grads: Map<string, CanvasGradient>;
 }
 
 /** Picks a value for the current quality preset. */
@@ -57,14 +55,3 @@ export function pick<T>(quality: Quality, high: T, medium: T, low: T): T {
 }
 
 export const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
-
-/** Canvas gradients are immutable once built, so they are cached by the values that define them. */
-export function cachedGradient(v: View, key: string, make: () => CanvasGradient): CanvasGradient {
-  let g = v.grads.get(key);
-  if (!g) {
-    if (v.grads.size > 256) v.grads.clear();
-    g = make();
-    v.grads.set(key, g);
-  }
-  return g;
-}

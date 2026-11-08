@@ -1,12 +1,10 @@
-// Structures and standing props: the station frames, the bell tower, the cages,
-// the supply cart and its kits, the cage key, the timepieces and the house keys.
-// Structures are SVG art in a fixed world box, so each frame is a bitmap copy.
+// Structures and standing props: station frames, bell tower, cages, supply cart,
+// kits, cage key, timepieces and door keys. Zero per-frame paths or text layout.
 import { BELL_X } from "../types";
 import { drawSvg } from "../svg-assets";
-import { light } from "./paint";
+import { getPillBadge, light } from "./paint";
 import type { View } from "./view";
 
-/** Each structure's box in world units, relative to the road point at (0, 0). */
 export const STRUCTURE_BOX = {
   "pumpkin-shed": [-90, -110, 180, 116],
   well: [-60, -100, 120, 106],
@@ -26,38 +24,30 @@ export const STRUCTURE_BOX = {
 
 export type StructureName = keyof typeof STRUCTURE_BOX;
 
-/** Draws structures/<name>[-<variant>].svg in its box, in a context already at the road point. */
 export function drawStructure(ctx: CanvasRenderingContext2D, name: StructureName, variant?: "broken" | "trim"): boolean {
   const [x, y, w, h] = STRUCTURE_BOX[name];
   return drawSvg(ctx, `structures/${variant ? `${name}-${variant}` : name}.svg`, x, y, w, h);
 }
 
-/** A small crate of boards, wire, iron and lamp oil. */
 export function drawKit(ctx: CanvasRenderingContext2D, x: number, ground: number) {
   drawSvg(ctx, "props/supply-kit.svg", x - 19, ground - 28, 38, 28);
 }
 
-/** The supply cart, its sign, and the count of hands pushing it. */
 export function drawCart(v: View) {
   const { ctx, w, cam, ground, snap } = v;
   const x = snap.cartX - cam;
-  if (x > -90 && x < w + 90) {
-    if (drawSvg(ctx, "props/supply-cart.svg", x - 50, ground - 82, 100, 82)) {
-      ctx.font = "bold 11px Georgia, serif";
-      ctx.textAlign = "center";
-      ctx.fillStyle = "#e4cba8";
-      ctx.fillText("SUPPLIES", x, ground - 75);
-    }
-    if (snap.cartPushers > 0) {
-      ctx.font = "bold 10px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillStyle = "#e9dfcf";
-      ctx.fillText(`${snap.cartPushers} PUSHING`, x, ground - 89);
-    }
+  if (x <= -90 || x >= w + 90) return;
+  if (drawSvg(ctx, "props/supply-cart.svg", x - 50, ground - 82, 100, 82)) {
+    const sign = getPillBadge("cart:SUPPLIES", "SUPPLIES", "bold 11px Georgia, serif", "rgba(0,0,0,0)", "#e4cba8", 4, 15);
+    ctx.drawImage(sign.canvas, x - sign.w / 2, ground - 86, sign.w, sign.h);
+  }
+  if (snap.cartPushers > 0) {
+    const label = `${snap.cartPushers} PUSHING`;
+    const badge = getPillBadge(`push:${label}`, label, "bold 10px system-ui, sans-serif", "rgba(0,0,0,0)", "#e9dfcf", 4, 14);
+    ctx.drawImage(badge.canvas, x - badge.w / 2, ground - 100, badge.w, badge.h);
   }
 }
 
-/** Supply kits lying on the road after a drop. */
 export function drawKits(v: View) {
   const { ctx, w, cam, ground, snap } = v;
   for (const drop of snap.supplyDrops) {
@@ -66,17 +56,13 @@ export function drawKits(v: View) {
   }
 }
 
-/** The bell tower: the frame is art; the bell swings and the rope follows it. */
 export function drawBellTower(v: View) {
   const { ctx, t, ground, now, snap, w, cam } = v;
   const x = BELL_X - cam;
   if (x < -200 || x > w + 200) return;
   const ringing = now - snap.bellAt < 4000;
   const swing = ringing ? Math.sin(t * 9) * 0.5 : Math.sin(t * 0.8) * 0.04;
-  ctx.save();
-  ctx.translate(x, ground);
-  drawStructure(ctx, "bell-tower");
-  ctx.restore();
+  drawSvg(ctx, "structures/bell-tower.svg", x - 50, ground - 186, 100, 190);
   ctx.save();
   ctx.translate(x, ground - 143);
   ctx.rotate(swing);
@@ -90,25 +76,25 @@ export function drawBellTower(v: View) {
     }
   }
   ctx.restore();
-  ctx.strokeStyle = "#5a4a30";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(x + 6, ground - 120);
-  ctx.lineTo(x + 6 + (ringing ? Math.sin(t * 9) * 6 : 0), ground - 30);
-  ctx.stroke();
+  // Rope as a thin 2px strip; when calm it's vertical, when ringing it tilts slightly.
+  ctx.fillStyle = "#5a4a30";
+  if (!ringing) ctx.fillRect(x + 5, ground - 120, 2, 90);
+  else {
+    ctx.strokeStyle = "#5a4a30";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x + 6, ground - 120);
+    ctx.lineTo(x + 6 + Math.sin(t * 9) * 6, ground - 30);
+    ctx.stroke();
+  }
 }
 
-/** A prisoner's cage: the back frame behind the figure, the bars in front of it. */
 export function drawCage(v: View, worldX: number, front: boolean) {
   const x = worldX - v.cam;
   if (x < -120 || x > v.w + 120) return;
-  v.ctx.save();
-  v.ctx.translate(x, v.ground);
-  drawStructure(v.ctx, front ? "cage-front" : "cage-back");
-  v.ctx.restore();
+  drawSvg(v.ctx, front ? "structures/cage-front.svg" : "structures/cage-back.svg", x - 40, v.ground - 112, 80, 112);
 }
 
-/** The cage key on the road, bobbing. */
 export function drawKey(v: View) {
   const { ctx, t, cam, ground, snap, w, glow } = v;
   if (snap.keyX === null) return;
@@ -119,7 +105,6 @@ export function drawKey(v: View) {
   drawSvg(ctx, "props/key.svg", kx - 9, ground - 32 + bob, 18, 32);
 }
 
-/** Timepieces are collectibles; several can rest on the road at once. */
 export function drawTimepieces(v: View) {
   const { ctx, w, t, cam, ground, snap, glow } = v;
   const pieces: number[] = Array.isArray(snap.timepieces) && snap.timepieces.length ? snap.timepieces
@@ -133,7 +118,6 @@ export function drawTimepieces(v: View) {
   }
 }
 
-/** Each house has its own key, separate from the cage key. */
 export function drawDoorKeys(v: View) {
   const { ctx, t, cam, ground, snap, w, glow } = v;
   for (const d of snap.doors ?? []) {

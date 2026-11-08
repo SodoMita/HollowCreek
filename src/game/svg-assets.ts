@@ -1,15 +1,13 @@
 // Browser-side art loader. Art lives as editable SVG files in public/art.
 //
-// Each file is fetched once. The renderer then asks for a sprite at a world size:
-// the SVG is rasterised once into a canvas at the device density, and every later
-// frame is a plain bitmap copy. Drawing an SVG <img> straight onto the canvas
-// re-runs its vector paint on every call, which the old renderer did for well
-// over a hundred calls a frame.
+// Each SVG is fetched once. spriteFor() rasterises it into an offscreen canvas
+// once per (path, pixel size), so every frame copies bitmaps instead of
+// re-running vector paint. Scale is bucketed to 1x, 2x, or 4x so slight window
+// or zoom adjustments do not re-rasterise mid-frame.
 //
-// Preloading: preloadArt() requests every fixed SVG in STATIC_ART, the room
-// furniture from rooms/<house>.svg and the traveller sprite. The renderer holds
-// its frame until artReady(). The wait ends after PRELOAD_TIMEOUT_MS so a slow or
-// missing file cannot stall the game, and a file that never loads is never drawn.
+// Preloading: preloadArt() fetches all STATIC_ART images, room layouts, room
+// furniture, and traveler.svg, and bakes common world sprites before artReady()
+// becomes true so the first live frame is smooth.
 
 export interface RoomArtItem {
   id: string;
@@ -63,13 +61,22 @@ let travelerRequest: Promise<void> | null = null;
 const travelers = new Map<string, HTMLCanvasElement>();
 const travelerPending = new Set<string>();
 let artScale = 1;
+let artGen = 0;
 let preloading: Promise<void> | null = null;
 let ready = false;
 
-/** Device pixels per world unit, in half steps. Sprites are rasterised at this density. */
+export function artVersion(): number {
+  return artGen;
+}
+
+/** Bucketed device density per world unit (1, 2, or 4) so small zoom changes keep bitmaps cached. */
 export function setArtScale(scale: number) {
   if (!Number.isFinite(scale) || scale <= 0) return;
-  artScale = Math.min(4, Math.max(0.5, Math.ceil(scale * 2) / 2));
+  artScale = scale <= 1.25 ? 1 : scale <= 2.3 ? 2 : 4;
+}
+
+export function getArtScale(): number {
+  return artScale;
 }
 
 function assetUrl(path: string): string {
@@ -110,7 +117,6 @@ function parseLayout(text: string): RoomArtItem[] {
   };
   return Array.from(doc.querySelectorAll("image")).flatMap((el): RoomArtItem[] => {
     const id = el.getAttribute("id");
-    // The layout sits in rooms/, so its links start with ../ to reach the art root.
     const asset = (el.getAttribute("href") ?? el.getAttribute("xlink:href") ?? "").replace(/^(\.\.\/)+/, "");
     const when = el.getAttribute("data-when");
     const item: RoomArtItem = {
@@ -124,7 +130,6 @@ function parseLayout(text: string): RoomArtItem[] {
   });
 }
 
-/** Layouts are re-read on a page reload, so positions can be edited without code. */
 function requestLayout(houseId: string): Promise<void> {
   let request = layoutRequests.get(houseId);
   if (!request) {
@@ -155,62 +160,65 @@ function requestTraveler(): Promise<void> {
   return travelerRequest;
 }
 
-/** The sprite for a same-origin SVG at a world size, or null until the file has loaded. */
-export function spriteFor(path: string, width: number, height: number): HTMLCanvasElement | null {
+/**
+ * Bitmap sprite for an SVG at a world size, cached once per (path, pixel size).
+ * Passing flip=true bakes a horizontally mirrored bitmap once so frames never save/scale/restore.
+ */
+export function spriteFor(path: string, width: number, height: number, flip = false): HTMLCanvasElement | null {
   if (typeof document === "undefined" || !(width > 0) || !(height > 0)) return null;
   const image = requestImage(path);
   if (!image.complete || !image.naturalWidth) return null;
   const pw = Math.max(1, Math.ceil(width * artScale));
   const ph = Math.max(1, Math.ceil(height * artScale));
-  const key = `${path}|${pw}x${ph}`;
+  const key = `${path}|${pw}x${ph}${flip ? "|f" : ""}`;
   const hit = sprites.get(key);
   if (hit) return hit;
   const canvas = document.createElement("canvas");
   canvas.width = pw;
   canvas.height = ph;
-  canvas.getContext("2d")?.drawImage(image, 0, 0, pw, ph);
+  const g = canvas.getContext("2d");
+  if (g) {
+    if (flip) { g.translate(pw, 0); g.scale(-1, 1); }
+    g.drawImage(image, 0, 0, pw, ph);
+  }
   if (sprites.size >= SPRITE_CAP) sprites.delete(sprites.keys().next().value as string);
   sprites.set(key, canvas);
   return canvas;
 }
 
-/** Draws a same-origin SVG at a world box. Returns false until the file has loaded. */
+/** Draws a pre-rasterised SVG bitmap at a world box. No per-frame save/scale/restore needed even when flipped. */
 export function drawSvg(
   ctx: CanvasRenderingContext2D, path: string, x: number, y: number, width: number, height: number, flip = false,
 ): boolean {
-  const sprite = spriteFor(path, width, height);
+  const sprite = spriteFor(path, width, height, flip);
   if (!sprite) return false;
-  if (flip) {
-    // Mirror about the box's centre line.
-    ctx.save();
-    ctx.translate(2 * x + width, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(sprite, x, y, width, height);
-    ctx.restore();
-  } else {
-    ctx.drawImage(sprite, x, y, width, height);
-  }
+  ctx.drawImage(sprite, x, y, width, height);
   return true;
 }
 
-/** The traveller sprite in its own colours, baked per palette and pose. Drawn in local coordinates. */
-export function drawTraveler(ctx: CanvasRenderingContext2D, color: string, redEyes: boolean, ghost: boolean, pose: number): boolean {
+/** The traveller sprite in its own colours, baked per palette, pose and direction. */
+export function drawTraveler(
+  ctx: CanvasRenderingContext2D, color: string, redEyes: boolean, ghost: boolean, pose: number, facing = 1,
+): boolean {
   if (typeof window === "undefined") return false;
   void requestTraveler();
   if (!travelerTemplate) return false;
   const cloak = /^#[0-9a-f]{6}$/i.test(color) ? color : "#3a7ca5";
   const step = pose > 0 ? 3 : pose < 0 ? -3 : 0;
-  const key = `${cloak}:${redEyes}:${ghost}:${step}:${artScale}`;
+  const flip = facing < 0;
+  const key = `${cloak}:${redEyes}:${ghost}:${step}:${flip ? -1 : 1}:${artScale}`;
   const hit = travelers.get(key);
   if (hit) {
     ctx.drawImage(hit, -20, -54, 40, 54);
     return true;
   }
-  if (!travelerPending.has(key)) bakeTraveler(key, cloak, redEyes, ghost, step, travelerTemplate);
+  if (!travelerPending.has(key)) bakeTraveler(key, cloak, redEyes, ghost, step, flip, travelerTemplate);
   return false;
 }
 
-function bakeTraveler(key: string, cloak: string, redEyes: boolean, ghost: boolean, step: number, template: string) {
+function bakeTraveler(
+  key: string, cloak: string, redEyes: boolean, ghost: boolean, step: number, flip: boolean, template: string,
+) {
   travelerPending.add(key);
   const variables = `--cloak:${cloak};--eyes:${redEyes ? "#ff5142" : "#eee6ce"};--leg-a:${step}px;--leg-b:${-step}px;--legs-opacity:${ghost ? 0 : 1};`;
   const image = new Image();
@@ -221,10 +229,15 @@ function bakeTraveler(key: string, cloak: string, redEyes: boolean, ghost: boole
     const canvas = document.createElement("canvas");
     canvas.width = pw;
     canvas.height = ph;
-    canvas.getContext("2d")?.drawImage(image, 0, 0, pw, ph);
+    const g = canvas.getContext("2d");
+    if (g) {
+      if (flip) { g.translate(pw, 0); g.scale(-1, 1); }
+      g.drawImage(image, 0, 0, pw, ph);
+    }
     if (travelers.size >= TRAVELER_CAP) travelers.clear();
     travelers.set(key, canvas);
     travelerPending.delete(key);
+    artGen++;
   };
   image.onerror = () => travelerPending.delete(key);
   image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(template.replace("/* RUNTIME PALETTE */", variables))}`;
@@ -233,6 +246,34 @@ function bakeTraveler(key: string, cloak: string, redEyes: boolean, ghost: boole
 /** Whether preloadArt() has finished (all loaded, failed, or timed out). */
 export function artReady(): boolean {
   return ready;
+}
+
+/** Pre-bake common fixed-size sprites at load time so early frames never rasterise SVGs synchronously. */
+function warmCommonSprites() {
+  const prevScale = artScale;
+  const dpr = typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1;
+  setArtScale(dpr * 1.2);
+  const fixed: [string, number, number][] = [
+    ["props/fence.svg", 140, 46], ["props/lantern-post.svg", 30, 96],
+    ["props/woodpile.svg", 64, 44], ["props/windmill.svg", 130, 160],
+    ["props/gravestone.svg", 34, 46], ["props/haystack.svg", 70, 52],
+    ["props/creek-bridge.svg", 260, 64], ["props/supply-cart.svg", 100, 82],
+    ["props/supply-kit.svg", 38, 28], ["props/key.svg", 18, 32],
+    ["props/timepiece.svg", 36, 48], ["props/timepiece.svg", 15, 20],
+    ["props/broken-fence.svg", 86, 38], ["props/blood-pool.svg", 60, 14],
+    ["scenery/stump.svg", 60, 12], ["scenery/leaf-pile.svg", 44, 8],
+    ["scenery/moon.svg", 84, 84], ["furniture/barrel.svg", 26, 34], ["furniture/crate.svg", 30, 26],
+    ["house/interior.svg", 300, 112], ["house/interior.svg", 330, 112], ["house/interior.svg", 340, 112],
+    ["house/windows.svg", 300, 158], ["house/windows.svg", 330, 158], ["house/windows.svg", 340, 158],
+    ["house/door-frame.svg", 64, 112], ["house/door-closed.svg", 64, 112], ["house/door-open.svg", 64, 112],
+    ["structures/bell-tower.svg", 100, 190], ["structures/bell.svg", 36, 40],
+    ["structures/cage-back.svg", 80, 112], ["structures/cage-front.svg", 80, 112],
+  ];
+  for (const [path, w, h] of fixed) spriteFor(path, w, h);
+  for (const houseId of ROOM_LAYOUTS) {
+    for (const item of roomLayouts.get(houseId) ?? []) spriteFor(item.asset, item.width, item.height);
+  }
+  artScale = prevScale;
 }
 
 /** Starts loading all fixed art, room furniture and the traveller sprite. Idempotent. */
@@ -250,7 +291,7 @@ export function preloadArt(): Promise<void> {
     ...STATIC_ART.map((path) => settled(requestImage(path))),
     requestTraveler(),
     rooms,
-  ]);
+  ]).then(warmCommonSprites);
   const timeout = new Promise<void>((resolve) => setTimeout(resolve, PRELOAD_TIMEOUT_MS));
   preloading = Promise.race([all, timeout]).then(() => { ready = true; });
   return preloading;

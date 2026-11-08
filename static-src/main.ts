@@ -8,11 +8,10 @@ import { AudioDirector } from "../src/game/audio";
 import { VoiceChat, type VoiceStatus } from "../src/game/voice";
 import { SettingsStore, applyDocumentPreferences, keyLabel, matchesControl, type BindableAction } from "../src/game/settings";
 import { SettingsDialog } from "../src/game/settings-ui";
-import { BELL_X, CARRY_SPEED, GHOST_SPEED, SPEED } from "../src/game/types";
-import { BUILDINGS, DOOR_REACH, doorX } from "../src/game/buildings";
+import { CARRY_SPEED, GHOST_SPEED, SPEED } from "../src/game/types";
 import type { RoomListing, Snapshot } from "../src/game/types";
-import { applyFrame, frameTouchesPlayers, type WireFrame } from "../src/game/wire";
-import { Minimap } from "./minimap";
+import { applyFrame, type WireFrame } from "../src/game/wire";
+import { RoomHud, esc } from "./hud";
 
 // Temporary author-built sandboxes run the same unified code (see SYNC.md).
 // The menu probes them in order; room-code joins also discover the backend
@@ -77,21 +76,24 @@ function getPid(): string {
   return pid;
 }
 
+interface PlayerTrack { ackX: number; ackAt: number; vx: number }
 let snap: Snapshot | null = null;
 let roomCode = "";
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+let gameVisible = false;
 let roomsTimer: ReturnType<typeof setInterval> | null = null;
-let polling = false;
+let streamEpoch = 0;
+let eventSource: EventSource | null = null;
+let pollAbort: AbortController | null = null;
 let pollFailures = 0;
 let roomError = "";
 let lastPhase = "lobby";
-let overlayKey = "";
 const keys = new Set<string>();
 let lastDir = 0;
 const displayX = new Map<string, number>();
-// Prediction bookkeeping: measured round trip, arrival of the last positions,
-// and our own steering log, replayed over the unacknowledged interval.
-const net = { rttMs: 150, arrival: 0, inputs: [] as { t: number; dir: number }[] };
+const tracks = new Map<string, PlayerTrack>();
+// Prediction bookkeeping: measured round trip, arrival of our own acknowledged
+// position, and our steering log, replayed over the unacknowledged interval.
+const net = { rttMs: 80, selfAckX: 0, selfAckAt: 0, hasSelfAck: false, inputs: [] as { t: number; dir: number }[] };
 let held: Snapshot | null = null; // what the server thinks we hold (deltas merge into it)
 let lastPollAt = 0;
 let heldRev = "";
@@ -115,14 +117,14 @@ function updateVoiceHud(status: VoiceStatus) {
   const key = JSON.stringify([status.active, status.starting, status.muted, status.speaking, status.p2pCount, status.relayCount, status.error]);
   if (lastVoiceKey !== key) {
     lastVoiceKey = key;
-    overlayKey = "";
+    hud.invalidateOverlay();
     if (snap?.phase === "lobby" || snap?.phase === "ended") renderHud(snap);
   }
   document.querySelectorAll<HTMLElement>("[data-voicepeers]").forEach((label) => {
     label.textContent = `${status.connected} connected (${status.p2pCount} P2P, ${status.relayCount} Server Relay) · ${status.nearby} in earshot${status.speaking ? " · ● Speaking" : ""}`;
   });
 }
-const minimap = new Minimap($("minimap"));
+const hud = new RoomHud();
 const wardPanel = new WardPanel(document.body, {
   move: (wardId, move) => { void send({ action: "ward_move", wardId, move }); },
   close: () => { void send({ action: "ward_cancel" }); },
@@ -130,7 +132,6 @@ const wardPanel = new WardPanel(document.body, {
 });
 const timePanel = new TimePanel(document.body, { travel: (targetAt) => { void send({ action: "time_travel", targetAt }); }, opened: releaseInputs });
 let interactToggled = false;
-let tasksOpen = window.innerWidth > 640;
 const settingsDialog = new SettingsDialog(settingsStore, document.body, { onOpen: releaseInputs });
 settingsStore.subscribe((settings) => {
   applyDocumentPreferences(settings);
@@ -257,33 +258,41 @@ async function refreshRooms() {
     $("rooms").innerHTML = `<p class="muted">The map is unreadable — is the server awake?</p>`;
   }
 }
-function esc(s: string) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!)); }
 
 // ---------------------------------------------------------------- room ----
+function stopStream() {
+  streamEpoch++;
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  if (pollAbort) { pollAbort.abort(); pollAbort = null; }
+}
+
 function enterRoom(code: string) {
   voice.stop();
   cancelProbe();
+  stopStream();
   roomCode = code;
-  held = null; heldRev = ""; net.inputs.length = 0; net.arrival = 0;
+  held = null; heldRev = ""; net.inputs.length = 0; net.hasSelfAck = false;
+  tracks.clear(); displayX.clear();
   snap = null;
   wardPanel.update(null, 1, false);
   roomError = "";
   pollFailures = 0;
-  overlayKey = "";
+  hud.invalidateOverlay();
   $("overlay").style.display = "none";
   $("menu").style.display = "none";
   $("game").style.display = "block";
+  gameVisible = true;
+  resize();
   if (roomsTimer) { clearInterval(roomsTimer); roomsTimer = null; }
   // Preserve the backend that actually accepted the join. A refresh must not
   // probe a different server and turn a valid room into an empty screen.
   history.replaceState(null, "", `${location.pathname}?room=${code}&server=${encodeURIComponent(server)}`);
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(poll, 100);
-  void poll();
+  startStream(code);
 }
 function leaveToMenu() {
   voice.stop();
   releaseInputs();
+  stopStream();
   const departingCode = roomCode;
   const departingServer = server;
   if (departingCode) {
@@ -294,10 +303,11 @@ function leaveToMenu() {
         catch { /* still return to the menu */ }
       }).finally(() => { if ($("menu").style.display !== "none") void refreshRooms(); });
   }
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  snap = null; roomCode = ""; overlayKey = ""; roomError = ""; pollFailures = 0; held = null; heldRev = ""; lowerGlass();
+  snap = null; roomCode = ""; hud.invalidateOverlay(); roomError = ""; pollFailures = 0; held = null; heldRev = ""; lowerGlass();
+  tracks.clear(); displayX.clear();
   wardPanel.update(null, 1, false);
   $("game").style.display = "none";
+  gameVisible = false;
   $("menu").style.display = "block";
   history.replaceState(null, "", location.pathname);
   void refreshRooms();
@@ -315,7 +325,7 @@ window.addEventListener("pagehide", () => voice.stop());
 function showRoomError(message: string) {
   if (roomError === message) return;
   roomError = message;
-  overlayKey = "";
+  hud.invalidateOverlay();
   $("overlay").style.display = "flex";
   $("overlaypanel").innerHTML = `
     <h2>Cannot enter the town</h2>
@@ -324,53 +334,119 @@ function showRoomError(message: string) {
       <button class="chip" data-act="menu" style="border-color:#84624c;padding:10px 12px;flex:1">← Back to towns</button>
     </div>`;
 }
-async function poll() {
-  if (polling || !roomCode) return;
-  polling = true;
-  const code = roomCode;
-  try {
-    // Long-poll wire frames: one full snapshot, then only what changed; the
-    // server answers within a second even when nothing moves (304).
+function ingestFrame(frame: WireFrame & { error?: string }) {
+  if (frame.error) { showRoomError(frame.error); return; }
+  if (frame.gone) { held = null; heldRev = ""; return; }
+  // Bare clock tick `{ now }` with no state diff.
+  if (!frame.snap && !frame.delta && !frame.patch) {
+    if (snap) {
+      snap.now = frame.now;
+      lastPollAt = performance.now();
+      hud.renderCountdowns(snap);
+    }
+    return;
+  }
+  const prevHeld = held;
+  const s = applyFrame(held, frame);
+  if (!s || !s.self) { held = null; heldRev = ""; return; }
+  const now = performance.now();
+  lastPollAt = now;
+  held = s;
+  heldRev = frame.etag ?? heldRev;
+
+  // Stamp per-player velocity tracking only for players whose position or state updated.
+  const touched = (frame.snap ? s.players : (frame.patch?.players ?? frame.delta?.players)) as Snapshot["players"] | undefined;
+  if (touched) {
+    const byId = new Map<string, Snapshot["players"][number]>();
+    for (const p of touched) byId.set(p.id, p);
+    for (const p of s.players) {
+      const part = byId.get(p.id);
+      const prevTrack = tracks.get(p.id);
+      if (part || !prevTrack) {
+        const spd = !p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : SPEED;
+        const vx = p.moving ? p.facing * spd : 0;
+        const prevX = prevTrack?.ackX ?? p.x;
+        // Keep ackAt fresh when the player moves, or when this is their first sight.
+        if (!prevTrack || p.x !== prevX || part?.moving !== undefined || part?.facing !== undefined) {
+          tracks.set(p.id, { ackX: p.x, ackAt: now, vx });
+        } else {
+          prevTrack.vx = vx;
+        }
+        if (p.id === s.self.id && (!prevHeld || p.x !== net.selfAckX || part?.moving !== undefined)) {
+          net.selfAckX = p.x;
+          net.selfAckAt = now;
+          net.hasSelfAck = true;
+        }
+      }
+    }
+  }
+
+  pollFailures = 0;
+  roomError = "";
+  snap = s;
+  if (timePanel.isOpen && (!s.self.hasTimepiece || s.phase !== "playing")) timePanel.close();
+  wardPanel.update(s.minigame, s.self.stamina, s.self.exhausted);
+  audio.update(s);
+  if (lastPhase === "lobby" && s.phase === "playing") reveal(s.self.role === "hollow");
+  lastPhase = s.phase;
+  renderHud(s);
+}
+
+function startStream(code: string) {
+  const myEpoch = ++streamEpoch;
+  if (typeof EventSource === "undefined") { void pollLoop(code, myEpoch); return; }
+  let gotFrame = false;
+  const es = new EventSource(`${server}/api/game/state/stream?code=${code}&playerId=${encodeURIComponent(getPid())}`);
+  eventSource = es;
+  es.onmessage = (ev) => {
+    if (myEpoch !== streamEpoch || code !== roomCode) { es.close(); return; }
+    gotFrame = true;
+    try { ingestFrame(JSON.parse(ev.data) as WireFrame & { error?: string }); } catch { /* ignore bad frame */ }
+  };
+  es.onerror = () => {
+    if (myEpoch !== streamEpoch || code !== roomCode) { es.close(); return; }
+    // If SSE fails before opening or disconnects twice, switch cleanly to zero-gap long-poll.
+    if (!gotFrame || ++pollFailures >= 2) {
+      es.close();
+      if (eventSource === es) eventSource = null;
+      void pollLoop(code, myEpoch);
+    }
+  };
+}
+
+/** Zero-gap continuous long-poll fallback when SSE is unavailable. */
+async function pollLoop(code: string, myEpoch: number) {
+  while (myEpoch === streamEpoch && code === roomCode) {
     const rev = held && heldRev ? `&rev=${encodeURIComponent(heldRev)}` : "";
     const ctl = new AbortController();
+    pollAbort = ctl;
     const timer = setTimeout(() => ctl.abort(), 6000);
-    let res: Response;
-    try { res = await fetch(`${server}/api/game/state?code=${code}&playerId=${getPid()}&delta=1&wait=1${rev}`, { signal: ctl.signal }); }
-    finally { clearTimeout(timer); }
-    if (code !== roomCode) return; // an old request must not paint a new room
-    if (res.status === 304) {
-      // Nothing changed: an idle town owes zero bytes. Keep countdowns alive (Clover's touch).
-      const now = performance.now();
-      if (snap && lastPollAt) snap.now += now - lastPollAt;
-      lastPollAt = now;
-      if (snap) renderHud(snap);
-      pollFailures = 0;
-      return;
+    try {
+      const res = await fetch(`${server}/api/game/state?code=${code}&playerId=${getPid()}&delta=1&wait=1${rev}`, { signal: ctl.signal });
+      clearTimeout(timer);
+      if (myEpoch !== streamEpoch || code !== roomCode) return;
+      if (res.status === 304) {
+        const now = performance.now();
+        if (snap && lastPollAt) snap.now += now - lastPollAt;
+        lastPollAt = now;
+        if (snap) hud.renderCountdowns(snap);
+        pollFailures = 0;
+        continue;
+      }
+      if (!res.ok) {
+        if (++pollFailures >= 5) showRoomError("The town server is not answering. Retrying…");
+        await new Promise((r) => setTimeout(r, 300));
+        continue;
+      }
+      const frame = (await res.json()) as WireFrame & { error?: string };
+      if (myEpoch !== streamEpoch || code !== roomCode) return;
+      ingestFrame(frame);
+    } catch {
+      clearTimeout(timer);
+      if (myEpoch !== streamEpoch || code !== roomCode) return;
+      if (++pollFailures >= 5) showRoomError("The town server is not answering. Retrying…");
+      await new Promise((r) => setTimeout(r, 250));
     }
-    lastPollAt = performance.now();
-    const frame = (await res.json()) as WireFrame & { error?: string };
-    if (frame.error) { showRoomError(frame.error); return; }
-    if (frame.gone) { held = null; heldRev = ""; return; }
-    const s = applyFrame(held, frame);
-    if (!s || !s.self) { held = null; heldRev = ""; return; } // out of sync — the next request fetches a full snapshot
-    held = s;
-    heldRev = frame.etag ?? heldRev;
-    if (frameTouchesPlayers(frame)) net.arrival = performance.now();
-    pollFailures = 0;
-    roomError = "";
-    snap = s;
-    if (timePanel.isOpen && (!s.self.hasTimepiece || s.phase !== "playing")) timePanel.close();
-    wardPanel.update(s.minigame, s.self.stamina, s.self.exhausted);
-    audio.update(s);
-    if (lastPhase === "lobby" && s.phase === "playing") reveal(s.self.role === "hollow");
-    lastPhase = s.phase;
-    renderHud(s);
-  } catch {
-    if (code === roomCode && ++pollFailures >= 5) {
-      showRoomError("The town server is not answering. Retrying…");
-    }
-  } finally {
-    polling = false;
   }
 }
 function reveal(hollow: boolean) {
@@ -383,179 +459,7 @@ function reveal(hollow: boolean) {
 }
 
 // ----------------------------------------------------------------- HUD ----
-function voiceControlsMarkup() {
-  const v = voice.current;
-  return `<div class="row" style="margin-top:10px;justify-content:center;align-items:center;flex-wrap:wrap">
-    <button class="chip" data-act="voice" ${v.starting ? "disabled" : ""}>${v.starting ? "Asking for microphone…" : v.active ? "Leave voice chat" : "Join proximity voice"}</button>
-    ${v.active ? `<button class="chip" data-act="micmute">${v.muted ? "Unmute mic" : "Mute mic"}</button>` : ""}
-    </div>${v.active ? `<p class="muted" data-voicepeers style="margin-top:4px">${v.connected} connected · ${v.nearby} within earshot · the dead hear only the dead</p>` : ""}
-    ${v.error ? `<p role="alert" style="color:#e29a84;font-size:12px">${esc(v.error)}${v.error.includes("Enable sound") ? ` <button data-act="voiceplay" style="text-decoration:underline">Enable sound</button>` : ""}</p>` : ""}`;
-}
-function renderMatchResults(s: Snapshot): string {
-  if (!s.results) return "";
-  const time = `${Math.floor(s.results.durationSec / 60)}m ${String(s.results.durationSec % 60).padStart(2, "0")}s`;
-  const cards = s.results.players.map((p) => {
-    const st = p.stats;
-    const rows: [string, number][] = [
-      ["Repaired", st.repairs], ["Kits", st.kitsDelivered], ["Kills", st.kills], ["Deaths", st.deaths],
-      ["Jailed", st.timesCaged], ["Unlocked", st.cagesOpened], ["Votes", st.votes], ["Reports", st.reports],
-      ["Ruins", st.ruins], ["Bells", st.bells], ["Snuffs", st.blackouts], ["Steps", st.distance],
-    ];
-    return `<div style="border:1px solid #3a2733;border-radius:6px;background:#1d1420;padding:9px;margin-top:6px">
-      <div style="display:flex;align-items:center;gap:8px;font-size:14px">
-        <span style="width:11px;height:11px;border-radius:50%;background:${esc(p.color)}"></span>
-        <b>${esc(p.name)}</b>
-        <span style="margin-left:auto;color:${p.role === "hollow" ? "#ff8a7a" : "#a8c98a"}">${p.role === "hollow" ? "HOLLOW" : "TOWNFOLK"}</span>
-        <small style="color:#9c8b7a">${!p.alive ? "dead" : p.caged ? "jailed" : "free"}</small>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:3px;margin-top:7px;font-size:10px;color:#9c8b7a">
-        ${rows.map(([label, value]) => `<span>${label} <b style="color:#e9dfcf">${value}</b></span>`).join("")}
-      </div>
-    </div>`;
-  }).join("");
-  return `<section aria-label="Match results" style="margin-top:16px;text-align:left">
-    <div style="display:flex;justify-content:space-between;gap:12px;color:#c9b8a4;font-size:11px;text-transform:uppercase;letter-spacing:.12em">
-      <span>Who was who · this match</span><span style="text-transform:none;letter-spacing:0">${time}</span>
-    </div>
-    <div style="max-height:42dvh;overflow-y:auto">${cards}</div>
-  </section>`;
-}
-
-function renderHud(s: Snapshot) {
-  const me = s.players.find((p) => p.id === s.self.id);
-  $("copycode").textContent = s.code;
-  $("soulcount").textContent = `${s.playerCount} souls${s.self.hasSupply ? " · kit carried" : ""}`;
-  $("supplydrop").style.display = s.phase === "playing" && s.self.hasSupply ? "inline-block" : "none";
-  const meX = me ? me.x : 0;
-  const nearNote = (s.notes ?? []).filter((n) => Math.abs(n.x - meX) <= 150).sort((a, b) => Math.abs(a.x - meX) - Math.abs(b.x - meX))[0];
-  $("readnote").style.display = s.phase === "playing" ? "inline-block" : "none";
-  $("readnote").dataset.noteId = nearNote ? nearNote.id : "";
-  $("readnote").title = nearNote ? `Raise the spyglass to the page pinned by ${nearNote.author} (Z · wheel or pinch to zoom)` : "Raise the spyglass (Z · wheel or pinch to zoom)";
-  $("pinbtn").style.display = s.phase === "playing" && s.self.alive ? "inline-block" : "none";
-  $("pushbtn").style.display = s.phase === "playing" && s.self.alive && !s.self.caged && !s.self.hasSupply ? "block" : "none";
-  $("pushbtn").textContent = `Hold Push + ◀▶${s.cartPushers > 0 ? ` · ${s.cartPushers}` : ""}`;
-  $("ruinbtn").style.display = s.phase === "playing" && s.self.alive && s.self.role === "hollow" ? "block" : "none";
-  $("ruinbtn").textContent = `Ruin ${keyLabel(settingsStore.value.controls.ruin)}${s.self.sabotageCooldownMs > 0 ? ` · ${Math.ceil(s.self.sabotageCooldownMs / 1000)}s` : ""}`;
-  ($("ruinbtn") as HTMLButtonElement).disabled = !s.self.canSabotage;
-  const role = $("role");
-  role.textContent = (!s.self.alive ? "Ghost" : s.self.role === "hollow" ? "The Hollow" : "Townfolk") + (s.self.caged && s.self.alive ? " · Caged" : "");
-  role.className = !s.self.alive ? "ghost" : s.self.role;
-  $("taskfill").style.width = `${s.taskBar.total ? (100 * s.taskBar.done) / s.taskBar.total : 0}%`;
-
-  // tasks
-  const tasks = $("tasks");
-  if (s.phase !== "lobby" && s.self.alive && s.tasks.length) {
-    tasks.style.display = "block";
-    tasks.innerHTML = `<div class="hd" id="tasktoggle">${s.self.role === "hollow" && s.time?.mode !== "past" ? "Town wards (pretend)" : "Town wards · shared"} ${tasksOpen ? "▾" : "▸"}</div>` +
-      (tasksOpen ? s.tasks.map((t) => `<div class="t ${t.done ? "done" : ""}">${t.done ? "✓" : t.delivered ? "▣" : "◇"} ${esc(t.name)}${!t.done ? ` <span style="color:${t.delivered ? "var(--moss)" : "var(--amber)"}">${t.delivered ? t.progress > 0 ? `${Math.round(t.progress * 100)}%` : "puzzle ready" : t.sabotaged ? "ruined" : "needs kit"}</span>` : ""}</div>`).join("") : "");
-  } else tasks.style.display = "none";
-
-  // feed
-  $("feed").innerHTML = s.feed.slice(-4).map((f, i) => `<p style="opacity:${0.4 + i * 0.2}">${esc(f.text)}</p>`).join("");
-
-  // meeting banner + vote
-  const banner = $("banner"), vote = $("vote");
-  if (s.phase === "meeting" && s.meeting) {
-    const secs = Math.max(0, Math.ceil((s.meeting.endsAt - s.now) / 1000));
-    banner.style.display = "block";
-    banner.querySelector(".why")!.textContent = `🔔 ${s.meeting.reason}`;
-    banner.querySelector(".sub")!.innerHTML = s.meeting.inArea
-      ? `Cast your verdict — <b>${secs}s</b>`
-      : `Walk to the town square ${me && me.x < BELL_X ? "→ east" : "← west"} — <b>${secs}s</b>`;
-    if (s.meeting.inArea && s.self.alive) {
-      vote.style.display = "block";
-      const opts = [
-        ...s.players.filter((p) => p.alive && !p.caged && p.id !== s.self.id).map((p) => ({ key: p.id, label: `Cage ${p.name}`, color: p.color })),
-        ...s.players.filter((p) => p.caged).map((p) => ({ key: `free:${p.id}`, label: `Free ${p.name}`, color: "#7fb069" })),
-        { key: "skip", label: "Abstain", color: "#7f8c8d" },
-      ];
-      vote.innerHTML = `<h3>The Verdict</h3>` + opts.map((o) =>
-        `<button data-vote="${o.key}" class="${s.self.myVote === o.key ? "mine" : ""}" ${s.self.myVote ? "disabled" : ""}><span class="dot" style="background:${o.color}"></span>${esc(o.label)}</button>`
-      ).join("") + `<div class="note">${s.self.myVote ? "Verdict cast. Wait for the toll." : "Most votes: caged in the square. Free the caged by vote or iron key."}</div>`;
-    } else vote.style.display = "none";
-  } else { banner.style.display = "none"; vote.style.display = "none"; }
-
-  // status strip
-  const status = $("status");
-  if (s.time?.mode === "past") { status.style.display = "block"; status.textContent = `In the past · ${Math.max(0, Math.ceil(((s.time.endsAt ?? s.now) - s.now) / 1000))}s remaining · M to return`; status.style.color = "#b8e3de"; }
-  else if (!s.self.alive && s.phase !== "ended") { status.style.display = "block"; status.textContent = "You are dead. Drift as a ghost — only the dead can see and hear you."; status.style.color = "#99aaaa"; }
-  else if (s.self.caged && s.self.alive) { status.style.display = "block"; status.textContent = "The iron is cold. You can still speak and vote — plead for the key."; status.style.color = "var(--amber)"; }
-  else status.style.display = "none";
-
-  // vigor
-  const st = s.self.stamina;
-  $("vigor").style.display = s.self.alive && s.phase !== "lobby" ? "flex" : "none";
-  const fill = $("vigorfill");
-  fill.style.width = `${Math.round(st * 100)}%`;
-  fill.style.background = st <= 0 ? "#e06a5a" : st < 0.3 ? "#d99a3d" : "#6b8e23";
-  $("vigorlbl").textContent = s.self.exhausted ? "spent — rest!" : "vigor";
-  $("vigorlbl").style.color = s.self.exhausted ? "#e06a5a" : "var(--dim)";
-
-  // controls
-  $("timebtn").style.display = s.self.hasTimepiece || s.time?.mode === "past" ? "inline-block" : "none";
-  $("timebtn").textContent = s.time?.mode === "past" ? "Return · M" : "Timepiece · M";
-  const hint = $("hint");
-  hint.style.display = s.hint ? "block" : "none";
-  if (s.hint) hint.textContent = s.hint;
-  $("ebtn").textContent = keyLabel(settingsStore.value.controls.interact);
-  $("ebtn").className = `rbtn ${s.hint ? "hot" : ""}`;
-  const nearbyKeyedDoor = me ? BUILDINGS.find((b) => Math.abs(doorX(b) - me.x) <= DOOR_REACH && s.self.doorKeys?.includes(b.id)) : undefined;
-  $("doorlock").style.display = nearbyKeyedDoor && s.self.alive && !s.self.caged ? "block" : "none";
-  $("doorlock").textContent = `${s.doors?.find((d) => d.id === nearbyKeyedDoor?.id)?.locked ? "Unlock" : "Lock"} · L`;
-  const ab = $("ability");
-  ab.textContent = s.abilityLabel;
-  ab.className = `rbtn kill ${s.abilityReady ? "hot" : ""}`;
-  ab.style.display = s.self.alive ? "block" : "none";
-  const snuff = $("snuffbtn");
-  snuff.style.display = s.self.role === "hollow" && s.self.alive && s.phase === "playing" ? "block" : "none";
-  snuff.querySelector("small")!.textContent = keyLabel(settingsStore.value.controls.blackout);
-  snuff.className = `rbtn snuff ${s.self.canBlackout ? "hot" : ""}`;
-  $("cd").textContent = s.self.role === "hollow" && s.self.alive
-    ? (s.self.killCooldownMs > 0 ? `${Math.ceil(s.self.killCooldownMs / 1000)}s` : "") + (s.self.blackoutCooldownMs > 0 ? ` 🌑${Math.ceil(s.self.blackoutCooldownMs / 1000)}s` : "")
-    : "";
-
-  minimap.update(s, viewZoom > 1.05);
-
-  // overlays (lobby / end) — rebuild only when changed
-  const key = JSON.stringify([s.phase, s.players.map((p) => [p.id, p.name, p.isHost]), s.self.id === s.hostId, s.round, s.winner, s.playerCount]);
-  if (key !== overlayKey) {
-    overlayKey = key;
-    const ov = $("overlay"), panel = $("overlaypanel");
-    if (s.phase === "lobby") {
-      ov.style.display = "flex";
-      panel.innerHTML = `
-        <h2>${s.round > 0 ? `Night ${s.round + 1} approaches` : "Gathering at dusk"}</h2>
-        <p class="muted" style="margin-top:4px">${s.round > 0 ? "The same souls, the same street — new roles when darkness falls" : "Share the town code with your fellow townsfolk"}</p>
-        <div class="bigcode">${s.code}</div>
-        <p style="margin-top:10px;color:#c9b8a4;font-size:13px">The wards are broken. Deliver a kit from the one cart, then press E at the ward to play its repair puzzle. More hands push the cart faster. Cages hold suspects; repair every ward to win.</p>
-        <div class="roster">${s.players.map((p) => `<div class="seat"><span class="dot" style="background:${p.color}"></span><span>${esc(p.name)}</span>${p.isHost ? `<span class="host">host</span>` : ""}</div>`).join("")}</div>
-        ${s.self.id === s.hostId
-          ? `<button class="big" data-act="start" ${s.playerCount < 4 ? "disabled" : ""}>${s.playerCount < 4 ? "Waiting for more souls… (min 4)" : "Let night fall"}</button>`
-          : `<p class="muted" style="margin-top:16px">Waiting for the host to let night fall…</p>`}
-        <div class="row" style="margin-top:14px;justify-content:center">
-          <button class="chip" data-act="settings">⚙ Settings</button>
-          <button class="chip" data-act="menu" style="border-color:#84624c;padding:10px 12px;flex:1">← Back to towns</button>
-        </div>
-        ${voiceControlsMarkup()}
-        <p class="muted">4–10 players · 1–2 of you will be Hollow</p>`;
-    } else if (s.phase === "ended") {
-      ov.style.display = "flex";
-      panel.innerHTML = `
-        <h2 style="color:${s.winner === "hollow" ? "#ff4a3a" : "#a8c98a"};font-size:44px">${s.winner === "hollow" ? "The Hollow wins" : "The town survives"}</h2>
-        <p style="margin-top:12px;font-style:italic;color:#c9b8a4">${esc(s.winReason ?? "")}</p>
-        ${renderMatchResults(s)}
-        ${voiceControlsMarkup()}
-        ${s.self.id === s.hostId ? `<button class="big" data-act="restart">Gather the same souls again</button>` : `<p class="muted" style="margin-top:14px">The lantern-bearer may gather this town for another night…</p>`}
-        <div class="row" style="margin-top:12px;justify-content:center;gap:10px">
-          <button class="chip" data-act="settings">⚙ Settings</button>
-          <button class="chip" data-act="menu" style="border-color:#84624c;padding:10px 12px;flex:1">← Back to towns</button>
-          <a class="chip" href="chronicle.html?code=${encodeURIComponent(s.code)}&server=${encodeURIComponent(server)}" target="_blank" style="text-decoration:none">Chronicle</a>
-          <a class="chip" href="records.html?server=${encodeURIComponent(server)}" target="_blank" style="text-decoration:none">Records</a>
-        </div>`;
-    } else ov.style.display = "none";
-  }
-}
-
+function renderHud(s: Snapshot) { hud.render(s, settingsStore.value, voice.current, server, viewZoom > 1.05); }
 // -------------------------------------------------------------- inputs ----
 function releaseInputs() {
   keys.clear();
@@ -684,7 +588,7 @@ function applyZoom(z: number) {
   viewZoom = Math.max(1, Math.min(ZOOM_MAX, z));
   renderer.setViewZoom(viewZoom);
   const up = viewZoom > 1.05;
-  if (snap) minimap.update(snap, up);
+  if (snap) hud.minimap.update(snap, up);
   $("noteoverlay").style.display = up ? "block" : "none";
   $("readnote").setAttribute("aria-pressed", up ? "true" : "false");
   $("readnote").textContent = up ? "🔭 Lower glass" : "🔭 Spyglass";
@@ -751,23 +655,27 @@ document.addEventListener("click", (e) => {
   }
   const v = t.closest("[data-vote]") as HTMLElement | null;
   if (v) void send({ action: "vote", vote: v.dataset.vote });
-  if (t.closest("#tasktoggle")) { tasksOpen = !tasksOpen; if (snap) renderHud(snap); }
+  if (t.closest("#tasktoggle")) { hud.tasksOpen = !hud.tasksOpen; if (snap) renderHud(snap); }
 });
 
 // -------------------------------------------------------------- canvas ----
 const canvas = $("cv") as HTMLCanvasElement;
-const ctx = canvas.getContext("2d")!;
+const ctx = canvas.getContext("2d", { alpha: false })!;
 const renderer = new Renderer();
 renderer.setSettings(settingsStore.value);
 const vw = () => window.visualViewport?.width ?? window.innerWidth;
 const vh = () => window.visualViewport?.height ?? window.innerHeight;
+let viewW = vw();
+let viewH = vh();
 function resize() {
   const graphics = settingsStore.value.graphics;
-  const dprCap = graphics.quality === "high" ? 2 : graphics.quality === "medium" ? 1.5 : 1;
+  const dprCap = graphics.quality === "high" ? 1.5 : graphics.quality === "medium" ? 1.25 : 1;
   const dpr = Math.min(window.devicePixelRatio || 1, dprCap) * graphics.resolution;
-  canvas.width = Math.max(1, Math.round(vw() * dpr));
-  canvas.height = Math.max(1, Math.round(vh() * dpr));
-  canvas.style.width = `${vw()}px`; canvas.style.height = `${vh()}px`;
+  viewW = vw();
+  viewH = vh();
+  canvas.width = Math.max(1, Math.round(viewW * dpr));
+  canvas.height = Math.max(1, Math.round(viewH * dpr));
+  canvas.style.width = `${viewW}px`; canvas.style.height = `${viewH}px`;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 settingsStore.subscribe((settings) => { renderer.setSettings(settings); resize(); });
@@ -779,31 +687,46 @@ function loop(nowMs: number) {
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, (nowMs - last) / 1000);
   last = nowMs;
-  if (!snap || $("game").style.display === "none") return;
-  const age = net.arrival ? Math.min(0.3, (nowMs - net.arrival) / 1000) : 0;
+  if (!snap || !gameVisible) return;
   for (const p of snap.players) {
     const cur = displayX.get(p.id);
     if (cur === undefined) { displayX.set(p.id, p.x); continue; }
     const spd = !p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : SPEED;
     if (p.id === snap.self.id && snap.phase === "playing" && !snap.self.caged) {
-      // Move at once on our own input; the server only corrects the replayed
-      // estimate (acknowledged x + our steering since arrival − round trip).
-      const since = net.arrival - net.rttMs;
-      let dir = 0;
-      for (const e of net.inputs) if (e.t <= since) dir = e.dir; else break;
-      let target = p.x, t0 = since;
-      for (const e of net.inputs) { if (e.t <= since) continue; target += dir * spd * (e.t - t0) / 1000; t0 = e.t; dir = e.dir; }
-      target += dir * spd * (nowMs - t0) / 1000;
       let next = cur + lastDir * spd * dt;
-      next += (target - next) * Math.min(1, dt * 8);
-      displayX.set(p.id, Math.abs(target - next) > 220 ? target : next);
+      if (net.hasSelfAck) {
+        const since = net.selfAckAt - net.rttMs * 0.5;
+        let dir = 0;
+        for (const e of net.inputs) if (e.t <= since) dir = e.dir; else break;
+        let target = net.selfAckX, t0 = since;
+        for (const e of net.inputs) {
+          if (e.t <= since) continue;
+          target += dir * spd * (e.t - t0) / 1000;
+          t0 = e.t;
+          dir = e.dir;
+        }
+        target += dir * spd * (nowMs - t0) / 1000;
+        const err = target - next;
+        if (Math.abs(err) > 220) next = target;
+        else if (lastDir === 0) next += err * Math.min(1, dt * 14);
+        else if (Math.abs(err) > 14) next += Math.sign(err) * (Math.abs(err) - 14) * Math.min(1, dt * 6);
+      }
+      displayX.set(p.id, next);
     } else {
-      const target = p.x + (p.moving ? p.facing * spd * Math.min(age, 0.12) : 0);
-      displayX.set(p.id, Math.abs(target - cur) > 300 ? p.x : cur + (target - cur) * Math.min(1, dt * 14));
+      const tr = tracks.get(p.id);
+      if (!tr || Math.abs(p.x - cur) > 260) {
+        displayX.set(p.id, p.x);
+      } else {
+        // Advance continuously at the player's last pace, then gently track the dead-reckoned target.
+        const age = Math.min(0.22, Math.max(0, (nowMs - tr.ackAt) / 1000));
+        const target = tr.ackX + tr.vx * age;
+        const advanced = cur + tr.vx * dt;
+        displayX.set(p.id, advanced + (target - advanced) * Math.min(1, dt * 10));
+      }
     }
   }
   renderer.setFocus(noteFocusX);
-  renderer.render(ctx, vw(), vh(), snap, displayX, nowMs / 1000, dt);
+  renderer.render(ctx, viewW, viewH, snap, displayX, nowMs / 1000, dt);
 }
 requestAnimationFrame(loop);
 

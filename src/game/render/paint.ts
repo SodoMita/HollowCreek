@@ -1,11 +1,10 @@
-// Painting primitives shared by the scene modules.
+// Pre-rendered painting primitives shared by the scene modules.
 //
-// Light is a pre-rendered radial sprite, not shadowBlur. The browser recomputes a
-// shadow blur for every glowing object on every frame; a sprite is one bitmap copy
-// with the same falloff.
+// Everything that would otherwise build a path, gradient, or shadowBlur per frame
+// (light halos, drop shadows, door spills, badges) is baked once into a bitmap.
 
 const lightCache = new Map<string, HTMLCanvasElement>();
-const widthCache = new Map<string, number>();
+const badgeCache = new Map<string, HTMLCanvasElement>();
 
 export function makeCanvas(width: number, height: number): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
@@ -38,15 +37,79 @@ export function light(ctx: CanvasRenderingContext2D, x: number, y: number, rx: n
   ctx.globalAlpha = prev;
 }
 
-/** Width of a string in a font. Labels repeat every frame, so widths are cached. */
-export function textWidth(ctx: CanvasRenderingContext2D, text: string, font: string): number {
-  const key = `${font}\u0000${text}`;
-  let width = widthCache.get(key);
-  if (width === undefined) {
-    ctx.font = font;
-    width = ctx.measureText(text).width;
-    if (widthCache.size > 800) widthCache.clear();
-    widthCache.set(key, width);
+let darkOval: HTMLCanvasElement | null = null;
+/** Pre-baked dark contact shadow oval (unit size 64x16). */
+export function drawShadowOval(ctx: CanvasRenderingContext2D, cx: number, cy: number, rx: number, ry: number, alpha = 0.36) {
+  if (!darkOval) {
+    darkOval = makeCanvas(64, 16);
+    const g = darkOval.getContext("2d")!;
+    g.fillStyle = "#040306";
+    g.beginPath();
+    g.ellipse(32, 8, 31, 7.5, 0, 0, Math.PI * 2);
+    g.fill();
   }
-  return width;
+  const prev = ctx.globalAlpha;
+  ctx.globalAlpha = prev * alpha;
+  ctx.drawImage(darkOval, cx - rx, cy - ry, rx * 2, ry * 2);
+  ctx.globalAlpha = prev;
+}
+
+let warmOval: HTMLCanvasElement | null = null;
+/** Pre-baked warm oval spill (door threshold). */
+export function drawWarmOval(ctx: CanvasRenderingContext2D, cx: number, cy: number, rx: number, ry: number, alpha: number) {
+  if (alpha <= 0.004) return;
+  if (!warmOval) {
+    warmOval = makeCanvas(64, 16);
+    const g = warmOval.getContext("2d")!;
+    g.fillStyle = "#e6aa69";
+    g.beginPath();
+    g.ellipse(32, 8, 31, 7.5, 0, 0, Math.PI * 2);
+    g.fill();
+  }
+  const prev = ctx.globalAlpha;
+  ctx.globalAlpha = prev * alpha;
+  ctx.drawImage(warmOval, cx - rx, cy - ry, rx * 2, ry * 2);
+  ctx.globalAlpha = prev;
+}
+
+export interface PillSprite { canvas: HTMLCanvasElement; w: number; h: number }
+const pillCache = new Map<string, PillSprite>();
+
+/** Cached pill label (roundRect + text baked at 2x density). Zero path or fillText calls per frame. */
+export function getPillBadge(
+  key: string, text: string, font: string, bg: string, fg: string, padX: number, h: number,
+): PillSprite {
+  const hit = pillCache.get(key);
+  if (hit) return hit;
+  const s = 2;
+  const measure = makeCanvas(1, 1).getContext("2d")!;
+  measure.font = font;
+  const w = Math.ceil(measure.measureText(text).width + padX * 2);
+  const canvas = makeCanvas(w * s, h * s);
+  const g = canvas.getContext("2d")!;
+  g.scale(s, s);
+  g.fillStyle = bg;
+  g.beginPath();
+  g.roundRect(0, 0, w, h, 5);
+  g.fill();
+  g.font = font;
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillStyle = fg;
+  g.fillText(text, w / 2, h / 2 + 0.5);
+  const entry = { canvas, w, h };
+  if (pillCache.size > 512) pillCache.clear();
+  pillCache.set(key, entry);
+  return entry;
+}
+
+/** Cache any small bitmap by string key. */
+export function cachedSprite(key: string, cap: number, make: () => HTMLCanvasElement): HTMLCanvasElement {
+  let c = badgeCache.get(key);
+  if (!c) {
+    if (badgeCache.size >= cap) badgeCache.clear();
+    c = make();
+    badgeCache.set(key, c);
+  }
+  return c;
 }

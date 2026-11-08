@@ -1,17 +1,16 @@
-// Houses: the interior cutaway (painted before the people) and the exterior
-// (painted after the people inside, so an occupied house reads as a cutaway).
+// Houses: interior cutaway (painted before the people inside) and exterior
+// (painted after the people inside). Facade cutouts and nameplate signs are
+// baked once per house so per-frame work is plain bitmap copies.
 import { BUILDINGS, doorX, type Building } from "../buildings";
 import { drawSvg, roomItems, spriteFor } from "../svg-assets";
-import { light, makeCanvas } from "./paint";
-import { drawNote } from "./notes";
 import type { TaskView } from "../types";
+import { cachedSprite, drawShadowOval, drawWarmOval, light, makeCanvas } from "./paint";
+import { drawNote } from "./notes";
 import { clamp, type View } from "./view";
 
 const WALL_HEIGHT = 112;
 const ROOF_HEIGHT = 158;
 
-/** Facades with the windows and doorway already cut out, baked once per house and size.
- *  The old renderer clipped every facade with an even-odd path on every frame. */
 const cutaways = new Map<string, HTMLCanvasElement>();
 
 function cutawayFacade(b: Building, facade: HTMLCanvasElement, boxW: number, overhang: number, scaleX: number): HTMLCanvasElement {
@@ -21,7 +20,6 @@ function cutawayFacade(b: Building, facade: HTMLCanvasElement, boxW: number, ove
   const canvas = makeCanvas(facade.width, facade.height);
   const g = canvas.getContext("2d")!;
   g.drawImage(facade, 0, 0);
-  // Coordinates below are relative to the facade box's top-left corner, in world units.
   const kx = facade.width / boxW;
   const ky = facade.height / ROOF_HEIGHT;
   g.globalCompositeOperation = "destination-out";
@@ -39,9 +37,24 @@ function cutawayFacade(b: Building, facade: HTMLCanvasElement, boxW: number, ove
   return canvas;
 }
 
-/** Interiors and the pages pinned on their walls. */
+function signSprite(b: Building): HTMLCanvasElement | null {
+  const bg = spriteFor("house/sign.svg", 112, 18);
+  if (!bg) return null;
+  return cachedSprite(`hsign:${b.id}`, 16, () => {
+    const c = makeCanvas(224, 36);
+    const g = c.getContext("2d")!;
+    g.drawImage(bg, 0, 0, 224, 36);
+    g.scale(2, 2);
+    g.font = "600 10px system-ui, sans-serif";
+    g.textAlign = "center";
+    g.fillStyle = "#f1d7b7";
+    g.fillText(b.name.toUpperCase(), 56, 13, 103);
+    return c;
+  });
+}
+
 export function drawHouseInteriors(v: View) {
-  const { ctx, w, cam, ground } = v;
+  const { w, cam, ground } = v;
   for (const b of BUILDINGS) {
     const sx = b.x - cam;
     if (sx < -b.width || sx > w + b.width) continue;
@@ -57,18 +70,13 @@ export function drawHouseInteriors(v: View) {
 function drawInterior(v: View, b: Building, x: number, ground: number, task: TaskView | undefined, occupied: boolean) {
   const { ctx } = v;
   const left = x - b.width / 2;
-  // A contact shadow ties the building to the road.
-  ctx.fillStyle = "rgba(4,3,6,.38)";
-  ctx.beginPath();
-  ctx.ellipse(x, ground + 2, b.width * 0.52, 7, 0, 0, Math.PI * 2);
-  ctx.fill();
+  drawShadowOval(ctx, x, ground + 2, b.width * 0.52, 7, 0.38);
   drawSvg(ctx, "house/interior.svg", left, ground - WALL_HEIGHT, b.width, WALL_HEIGHT);
   for (const item of roomItems(b.id)) {
     if (item.when === "done" && !task?.done) continue;
     if (item.when === "unfinished" && task?.done) continue;
     drawSvg(ctx, item.asset, x + item.x, ground + item.y, item.width, item.height);
   }
-  // The work marker follows the authoritative task coordinate.
   if (occupied && task && !task.done) {
     const workX = x + task.x - b.x;
     if (v.glow) light(ctx, workX, ground - 90, 14, 14, "217,154,61", 0.5);
@@ -79,8 +87,6 @@ function drawInterior(v: View, b: Building, x: number, ground: number, task: Tas
   }
 }
 
-/** Exteriors, doors, and the barrel and crate by each door. Doors swing toward their open
- *  amount over time, tracked per house in `doorOpen`. */
 export function drawHouseExteriors(v: View, doorOpen: Map<string, number>) {
   const { ctx, w, dt, cam, ground } = v;
   for (const b of BUILDINGS) {
@@ -107,7 +113,6 @@ function drawExterior(v: View, b: Building, x: number, occupied: boolean, openAm
   const opening = clamp(openAmount, 0, 1);
   const base = ctx.globalAlpha;
 
-  // Warm light from each unshuttered window, spilling onto the road.
   if (!occupied && glow) {
     for (const wxs of [61, 197]) {
       light(ctx, left + (wxs + 13.5) * scaleX, ground + 6, 46 * scaleX + 18, 12, "255,178,92", 0.2);
@@ -123,33 +128,27 @@ function drawExterior(v: View, b: Building, x: number, occupied: boolean, openAm
   drawSvg(ctx, "house/windows.svg", left, ground - ROOF_HEIGHT, b.width, ROOF_HEIGHT);
   ctx.globalAlpha = base;
 
-  // A small warm spill marks an open threshold.
-  if (opening > 0.01) {
-    ctx.fillStyle = `rgba(230,170,105,${opening * 0.16})`;
-    ctx.beginPath();
-    ctx.ellipse(dx + b.side * 12, ground + 1, 28, 5, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  if (opening > 0.01) drawWarmOval(ctx, dx + b.side * 12, ground + 1, 28, 5, opening * 0.16);
 
-  // Door frame, with the closed and open leaves cross-faded by the swing amount.
-  ctx.save();
-  ctx.translate(dx, ground - WALL_HEIGHT);
-  ctx.scale(b.side, 1); // one side-profile asset serves both gables
+  // Side-profile door sprites are pre-mirrored when b.side === -1 (zero save/scale/restore).
+  const flip = b.side < 0;
+  const doorLeft = flip ? dx - 44 : dx - 20;
+  const doorTop = ground - WALL_HEIGHT;
   const doorAlpha = occupied ? 0.86 : 1;
   ctx.globalAlpha = base * doorAlpha;
-  drawSvg(ctx, "house/door-frame.svg", -20, 0, 64, WALL_HEIGHT);
-  ctx.globalAlpha = base * doorAlpha * (1 - opening);
-  drawSvg(ctx, "house/door-closed.svg", -20, 0, 64, WALL_HEIGHT);
-  ctx.globalAlpha = base * doorAlpha * opening;
-  drawSvg(ctx, "house/door-open.svg", -20, 0, 64, WALL_HEIGHT);
-  ctx.restore();
+  drawSvg(ctx, "house/door-frame.svg", doorLeft, doorTop, 64, WALL_HEIGHT, flip);
+  if (opening < 0.99) {
+    ctx.globalAlpha = base * doorAlpha * (1 - opening);
+    drawSvg(ctx, "house/door-closed.svg", doorLeft, doorTop, 64, WALL_HEIGHT, flip);
+  }
+  if (opening > 0.01) {
+    ctx.globalAlpha = base * doorAlpha * opening;
+    drawSvg(ctx, "house/door-open.svg", doorLeft, doorTop, 64, WALL_HEIGHT, flip);
+  }
   ctx.globalAlpha = base;
 
   if (!occupied) {
-    drawSvg(ctx, "house/sign.svg", x - 56, ground - 145, 112, 18);
-    ctx.font = "600 10px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#f1d7b7";
-    ctx.fillText(b.name.toUpperCase(), x, ground - 132, 103);
+    const sign = signSprite(b);
+    if (sign) ctx.drawImage(sign, x - 56, ground - 145, 112, 18);
   }
 }
