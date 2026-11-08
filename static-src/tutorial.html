@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0710" />
+<title>Singleplayer Tutorial — Hollow Creek</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Pirata+One&family=Alegreya:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0710; color: #d8c9b4; font: 15px/1.45 Alegreya, Georgia, serif; overflow: hidden; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  [hidden] { display: none !important; }
+  #stage { position: fixed; inset: 0; height: 100dvh; width: 100%; user-select: none; overflow: hidden; touch-action: none; }
+  #game { position: absolute; inset: 0; }
+  .panel { background: rgba(20, 13, 24, .9); border: 1px solid #3a2733; border-radius: 6px; backdrop-filter: blur(4px); }
+  .btn { background: rgba(20, 13, 24, .9); border: 1px solid #3a2733; border-radius: 6px; padding: .35rem .7rem; font-size: .8rem; color: #c9b8a4; }
+  .btn:hover { border-color: #c9762f; color: #ffd98a; }
+  .btn.amber { background: #2a1a16; border-color: #6b5038; color: #f0caa0; }
+  .btn.teal { background: #243b3c; border-color: #7ba9a6; color: #cbeae1; }
+  .btn.round { border-radius: 999px; width: 3.5rem; height: 3.5rem; font-size: 1.4rem; }
+  .btn.wide { border-radius: 999px; background: rgba(51, 35, 31, .9); border-color: #84624c; color: #f2cf91; padding: .7rem 1rem; }
+  .btn.danger { background: rgba(42, 14, 14, .9); border-color: #4a1210; color: #ff8a7a; }
+  .top { position: absolute; left: 0; right: 0; top: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; gap: .5rem; padding: .5rem; }
+  .row { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: .5rem; }
+  .card { width: min(96vw, 720px); padding: .9rem 1rem; border-color: rgba(217, 154, 61, .5); box-shadow: 0 12px 45px rgba(0,0,0,.7); }
+  .card header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #3a2733; padding-bottom: .4rem; font-size: .75rem; }
+  .card .title { font-family: ui-monospace, Menlo, monospace; text-transform: uppercase; letter-spacing: .15em; color: #d99a3d; }
+  .card .summary { color: #8f7d6b; margin-left: .5rem; }
+  .chapters { display: flex; gap: .35rem; }
+  .chap { width: 1.4rem; height: 1.4rem; border-radius: 4px; border: 1px solid #3a2733; color: #705f55; font: 11px ui-monospace, Menlo, monospace; background: none; }
+  .chap.on { background: #d99a3d; color: #140d18; font-weight: 700; border-color: #d99a3d; }
+  .chap.done { border-color: #6b8e23; background: #1d2a1a; color: #a8c98a; }
+  .card .instr { margin: .5rem 0 0; color: #e9dfcf; }
+  .card .note { margin: .25rem 0 0; color: #9c8b7a; font-style: italic; font-size: .85rem; }
+  .status { position: absolute; left: .75rem; top: 12rem; z-index: 10; width: 14rem; padding: .75rem; font-size: .8rem; }
+  .status h4 { margin: 0 0 .4rem; font-weight: normal; text-transform: uppercase; letter-spacing: .12em; color: #9c8b7a; font-size: .7rem; }
+  .status .kv { display: flex; justify-content: space-between; gap: .5rem; margin-top: .25rem; }
+  .status .kv span:last-child { font-family: ui-monospace, Menlo, monospace; color: #c9b8a4; }
+  .bottom { position: absolute; left: 0; right: 0; bottom: 0; z-index: 20; display: flex; align-items: flex-end; justify-content: space-between; gap: .5rem; padding: .5rem; }
+  .vigor { display: flex; align-items: center; gap: .4rem; font-size: .7rem; }
+  .bar { width: 7rem; height: .5rem; border-radius: 999px; border: 1px solid #3a2733; background: rgba(20,13,24,.8); overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 100%; background: #6b8e23; transition: width .3s; }
+  .dpad { display: flex; gap: .5rem; margin-top: .5rem; }
+  .actions { display: flex; align-items: flex-end; gap: .6rem; }
+  .interact { display: flex; flex-direction: column; align-items: center; gap: .2rem; }
+  .interact .E { width: 3.5rem; height: 3.5rem; border-radius: 999px; border: 2px solid #d99a3d; background: rgba(58, 36, 16, .95); color: #ffd98a; font: 1.25rem Pirata One, Georgia, serif; }
+  .hint { max-width: 12rem; text-align: center; font-size: .8rem; color: #ffd98a; background: rgba(13,8,16,.9); border-radius: 4px; padding: .2rem .4rem; }
+  .small { font-size: .7rem; color: #9c8b7a; }
+  .toast { position: absolute; bottom: 7rem; left: 50%; transform: translateX(-50%); z-index: 30; padding: .6rem 1.2rem; border: 1px solid rgba(217,154,61,.6); border-radius: 8px; background: rgba(20,13,24,.95); color: #ffd98a; font-weight: 600; text-align: center; white-space: nowrap; }
+  .countdown { position: absolute; right: .75rem; top: 12rem; z-index: 20; padding: .5rem .75rem; border: 1px solid #83b9b4; border-radius: 6px; background: rgba(23,44,50,.95); color: #d2eee5; font-size: .8rem; }
+  .modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 1rem; background: rgba(0,0,0,.8); }
+  .sheet { width: min(94vw, 600px); padding: 1.2rem; border-radius: 10px; border: 1px solid rgba(217,154,61,.6); background: #160e18; box-shadow: 0 20px 60px rgba(0,0,0,.8); }
+  .sheet header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid #3a2733; padding-bottom: .6rem; }
+  .sheet h2 { margin: .2rem 0 0; font: 1.9rem Pirata One, Georgia, serif; color: #e9dfcf; font-weight: normal; }
+  .kinds { display: flex; flex-wrap: wrap; gap: .35rem; border-bottom: 1px solid #3a2733; padding: .6rem 0; }
+  .kinds button { border-radius: 4px; padding: .25rem .5rem; font-size: .75rem; border: 1px solid #3a2733; background: #1d1420; color: #c9b8a4; }
+  .kinds button.on { background: #d99a3d; color: #140d18; border-color: #d99a3d; font-weight: 700; }
+  .meta { display: flex; justify-content: space-between; font-size: .75rem; color: #9c8b7a; margin-top: .6rem; }
+  .board { margin-top: .6rem; display: flex; justify-content: center; }
+  .solved { text-align: center; }
+  .solved p { font: 1.5rem Pirata One, Georgia, serif; color: #a8c98a; margin: 0; }
+</style>
+</head>
+<body>
+<main id="stage">
+  <canvas id="game"></canvas>
+
+  <div class="top">
+    <div class="row">
+      <div style="display:flex;align-items:center;gap:.5rem">
+        <a class="btn" href="./index.html">← Back to Town Menu</a>
+        <span class="small" style="font: 1.1rem Pirata One, Georgia, serif; color:#d99a3d">Singleplayer School</span>
+        <button id="timeBtn" class="btn teal" hidden>Timepiece · M</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:.5rem">
+        <button id="practiceBtn" class="btn amber">🔧 Practice Any Ward</button>
+        <button id="muteBtn" class="btn" title="Mute">🔊</button>
+        <button id="settingsBtn" class="btn">⚙</button>
+      </div>
+    </div>
+
+    <section class="panel card">
+      <header>
+        <div><span class="title" id="chapTitle"></span><span class="summary" id="chapSummary"></span></div>
+        <div class="chapters" id="chapNav"></div>
+      </header>
+      <p class="instr" id="chapInstr"></p>
+      <p class="note" id="chapNote"></p>
+    </section>
+  </div>
+
+  <div id="countdown" class="countdown" data-testid="past-countdown" hidden><span id="countdownText"></span> <button id="returnNow" class="underline" style="background:none;border:0;color:inherit;margin-left:.5rem;text-decoration:underline">Return now</button></div>
+
+  <aside class="panel status" id="status">
+    <h4>Tutorial Town Status</h4>
+    <div class="kv"><span>Repaired Wards:</span><span id="wardsDone">0 / 9</span></div>
+    <div class="kv"><span>Carrying Kit:</span><span id="carrying">None</span></div>
+    <div class="kv"><span>Location:</span><span id="location" data-testid="tutorial-location">The road</span></div>
+    <div class="kv"><span>Your position:</span><span id="position" data-testid="tutorial-position">480</span></div>
+    <div class="kv"><span>Cart Position:</span><span id="cartPos">x=900</span></div>
+    <div class="kv"><span>Iron Key:</span><span id="keyState">On Road</span></div>
+  </aside>
+
+  <div class="bottom">
+    <div>
+      <div class="vigor">
+        <span id="vigorLabel">vigor</span>
+        <div class="bar"><i id="vigorBar"></i></div>
+        <span id="hauling" class="small" hidden>hauling kit</span>
+      </div>
+      <div class="dpad">
+        <button id="left" class="btn round" aria-label="Walk left">◀</button>
+        <button id="right" class="btn round" aria-label="Walk right">▶</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="lockBtn" class="btn wide" hidden>Lock (L)</button>
+      <button id="dropBtn" class="btn wide" hidden>Drop Kit (G)</button>
+      <button id="pushBtn" class="btn wide">Hold Push (Shift)</button>
+      <div class="interact">
+        <span id="hint" class="hint" hidden></span>
+        <button id="interact" class="E">E</button>
+        <span class="small">Interact</span>
+      </div>
+      <button id="ruin" class="btn danger wide" title="Practice Hollow Sabotage">Ruin (R)</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <div id="practice" class="modal" hidden>
+    <div class="sheet">
+      <header>
+        <div>
+          <span class="small" style="font-family:ui-monospace,Menlo,monospace;text-transform:uppercase;color:#d99a3d">Free Practice Workbench</span>
+          <h2 id="practiceTitle"></h2>
+        </div>
+        <button id="practiceClose" class="btn">✕ Close</button>
+      </header>
+      <div id="practiceKinds" class="kinds"></div>
+      <p id="practiceInstr" style="margin:.7rem 0 0;color:#c9b8a4;font-size:.9rem"></p>
+      <div class="meta"><span id="practiceProgress">Progress: 0%</span><span id="practiceMoves">Moves: 0</span></div>
+      <div id="practiceBoardWrap" class="board"><div id="practiceBoard" style="width:100%"></div></div>
+      <div id="practiceSolved" class="solved" hidden>
+        <p>✓ Ward Solved Successfully!</p>
+        <button id="practiceReset" class="btn" style="margin-top:.7rem">Reset &amp; Practice Again</button>
+      </div>
+    </div>
+  </div>
+</main>
+<script type="module" src="./tutorial.js"></script>
+</body>
+</html>

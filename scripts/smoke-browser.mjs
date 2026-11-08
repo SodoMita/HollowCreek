@@ -98,7 +98,7 @@ try {
   assert.ok(colors > 20, `canvas should be painted, got ${colors} colors`);
   console.log(`PASS canvas renders the street (${colors} sampled colors)`);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(`${base}/tutorial`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${base}/play/tutorial.html`, { waitUntil: "domcontentloaded" });
   await page.locator("canvas").waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
   console.log("PASS mobile tutorial has no horizontal overflow");

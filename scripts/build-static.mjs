@@ -15,7 +15,7 @@ await build({
   logLevel: "info",
 });
 // Hall of Records and the Chronicle: plain pages that read the same API.
-for (const page of ["records", "chronicle"]) {
+for (const page of ["records", "chronicle", "tutorial"]) {
   await build({
     entryPoints: [`static-src/${page}.ts`],
     bundle: true,

@@ -21,7 +21,7 @@ async function aperturePixels() {
   }, x);
 }
 try {
-  await page.goto(`${base}/tutorial`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${base}/play/tutorial.html`, { waitUntil: "domcontentloaded" });
   await page.getByTestId("tutorial-position").waitFor();
   await page.getByRole("button", { name: "7", exact: true }).click();
   await page.getByText("Chapter VII: The Houses Beyond").waitFor();
@@ -62,7 +62,7 @@ try {
     await fetch("/api/game/leave", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code, playerId: localStorage.getItem("hc_pid") }) });
   }, testCode);
   console.log("PASS standalone lobby renders using its own relative SVG paths");
-  await page.goto(`${base}/tutorial`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${base}/play/tutorial.html`, { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "⚙" }).click();
   await page.getByRole("tab", { name: "Graphics" }).click();
   const slider = page.locator('[data-setting="graphics.worldZoom"]');

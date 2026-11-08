@@ -212,7 +212,7 @@ export default function Home() {
                 aria-label="Open settings"
               >⚙ Settings</button>
               <Link
-                href="/tutorial"
+                href="/play/tutorial.html"
                 className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition-colors hover:border-[#c9762f]/40 hover:text-[#ffd98a]"
               >
                 <BookOpen className="h-3.5 w-3.5 text-[#d99a3d]" /> Tutorial
@@ -245,7 +245,7 @@ export default function Home() {
             <Plus className="h-5 w-5" strokeWidth={2.5} /> Found a new town
           </button>
           <Link
-            href="/tutorial"
+            href="/play/tutorial.html"
             className="mt-2.5 flex w-full items-center justify-center gap-2 rounded border border-[#84624c]/80 bg-[#1f151c]/90 px-4 py-2.5 font-display text-lg tracking-wide text-[#ffd98a] transition-colors hover:bg-[#321f28]"
           >
             <BookOpen className="h-4 w-4 text-[#d99a3d]" /> Walk Alone · Singleplayer Tutorial

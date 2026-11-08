@@ -10,7 +10,7 @@ const waitX = (x, direction) => page.waitForFunction(([target, dir]) => {
   return dir > 0 ? n >= target : n <= target;
 }, [x, direction], { timeout: 15000, polling: 25 });
 try {
-  await page.goto(`${base}/tutorial`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${base}/play/tutorial.html`, { waitUntil: "domcontentloaded" });
   await page.locator(".hc-time-root").waitFor({ state: "attached", timeout: 15000 });
   await page.getByRole("button", { name: "8", exact: true }).click();
   await page.getByText("Chapter VIII: A Minute Borrowed").waitFor();

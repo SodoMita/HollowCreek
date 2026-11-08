@@ -41,3 +41,12 @@ Consequence: HANDOFF §6.1–6.2 (client parity) no longer applies to the landin
 - **Still React:** `src/app/tutorial/TutorialClient.tsx` (716 lines, about 50 state hooks), `TutorialOverlay.tsx` (347 lines, uses `next/link` and `lucide-react`), `WardJobSurface.tsx` (uses `useLayoutEffect`).
 - **Plan:** port the state into one plain object with a fixed-step loop and a DOM overlay in `static-src/tutorial.ts` and `tutorial.html`. Keep the existing `Renderer`, `WardPanel`, `TimePanel`, `AudioDirector`, and `SettingsDialog` from `src/game`. Then point the standalone menu's "Singleplayer Tutorial" link at `tutorial.html` (no server URL) and delete `src/app/tutorial/`.
 - **Verify:** rewrite `smoke-tutorial` for the standalone selectors. The 29 checks still define the behaviour.
+
+## Tutorial port: done (turn 52)
+
+- `static-src/tutorial.ts` and `static-src/tutorial.html` replace `src/app/tutorial/` (deleted). The controller keeps the old state, input, step loop, render loop, time-travel visit and practice workbench. It uses the same `src/game` modules.
+- The standalone menu's "Singleplayer Tutorial" link is `tutorial.html` (no server URL). The landing page and the room overlay link to `/play/tutorial.html`.
+- The tutorial bundle (`public/play/tutorial.js`) contains no React or Next code.
+- Checks: `scripts/smoke-tutorial-static.mjs` (6 checks, offline: no `/api` calls, walking moves the player, chapter II unlocks, workbench opens and closes, no runtime errors). It passes against a static server over `public/play`.
+- Replaced `scripts/smoke-tutorial.mjs` (it tested the React route). `smoke-art`, `smoke-browser` and `smoke-time-browser` now open `/play/tutorial.html`. They still need a run on the prod build with the database.
+- Not yet covered by an automated check: the time-travel visit (timepiece, `M`, Return now) and the ward workbench from inside a house. Those paths are ported but untested.

@@ -53,7 +53,7 @@ export function LobbyOverlay(props: {
         )}
         <div className="mt-4 flex justify-center gap-2">
           <button onClick={onSettings} className="rounded border border-[#3a2733] px-3 py-1.5 text-sm text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]">⚙ Settings</button>
-          <Link href="/tutorial" className="flex items-center gap-1.5 rounded border border-[#3a2733] px-3 py-1.5 text-sm text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]">
+          <Link href="/play/tutorial.html" className="flex items-center gap-1.5 rounded border border-[#3a2733] px-3 py-1.5 text-sm text-[#c9b8a4] hover:border-[#c9762f] hover:text-[#ffd98a]">
             <BookOpen className="h-3.5 w-3.5 text-[#d99a3d]" /> Tutorial
           </Link>
         </div>
