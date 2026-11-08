@@ -80,10 +80,19 @@ function drawInterior(v: View, b: Building, x: number, ground: number, task: Tas
   if (occupied && task && !task.done) {
     const workX = x + task.x - b.x;
     if (v.glow) light(ctx, workX, ground - 90, 14, 14, "217,154,61", 0.5);
-    ctx.font = "bold 13px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillStyle = task.delivered ? "#f0c276" : "#dc8a64";
-    ctx.fillText("◇", workX, ground - 90);
+    const color = task.delivered ? "#f0c276" : "#dc8a64";
+    const diamond = cachedSprite(`indiamond:${color}`, 4, () => {
+      const c = makeCanvas(32, 32);
+      const g = c.getContext("2d")!;
+      g.scale(2, 2);
+      g.font = "bold 13px system-ui, sans-serif";
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      g.fillStyle = color;
+      g.fillText("◇", 8, 8);
+      return c;
+    });
+    ctx.drawImage(diamond, workX - 8, ground - 101, 16, 16);
   }
 }
 

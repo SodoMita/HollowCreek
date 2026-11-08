@@ -70,6 +70,9 @@ export class Renderer {
   private view: View | null = null;
   private lastStaticKey = "";
   private lastRenderedSnap: Snapshot | null = null;
+  private hasCamera = false;
+  private wasFocused = false;
+  private lastPhase = "";
 
   cameraX = 0;
   focusX: number | null = null;
@@ -125,8 +128,15 @@ export class Renderer {
     const meX = ix.me ? displayX.get(ix.me.id) ?? ix.me.x : WORLD_W / 2;
     const lookX = focused ? this.focusX! : meX;
     const targetCam = clamp(lookX - vw / 2, WORLD_MIN, WORLD_MAX - vw);
-    if (graphics.cameraSmoothing) this.cameraX += (targetCam - this.cameraX) * Math.min(1, dt * 12);
-    else this.cameraX = targetCam;
+    if (!this.hasCamera || !graphics.cameraSmoothing || snap.phase !== this.lastPhase || Math.abs(targetCam - this.cameraX) > vw * 0.4 || focused !== this.wasFocused) {
+      this.cameraX = targetCam;
+      if (!this.hasCamera) this.visionR = snap.visionRadius;
+      this.hasCamera = true;
+    } else {
+      this.cameraX += (targetCam - this.cameraX) * Math.min(1, dt * 12);
+    }
+    this.lastPhase = snap.phase;
+    this.wasFocused = focused;
     if (WORLD_MAX - WORLD_MIN < vw) this.cameraX = (WORLD_MIN + WORLD_MAX - vw) / 2;
 
     const night = snap.time?.mode === "past" ? 0.05 : clamp(snap.nightT ?? 0.2, 0, 1);

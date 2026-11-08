@@ -48,9 +48,11 @@ export const STATIC_ART: readonly string[] = [
 /** Each house's layout: rooms/<house>.svg, one <image> per placed object. */
 export const ROOM_LAYOUTS: readonly string[] = ["ferryman", "foreman", "lodge", "orchard", "quarry", "tollhouse"];
 
+import { PLAYER_COLORS } from "./types";
+
 const PRELOAD_TIMEOUT_MS = 4000;
-const SPRITE_CAP = 1200;
-const TRAVELER_CAP = 600;
+const SPRITE_CAP = 1800;
+const TRAVELER_CAP = 900;
 
 const images = new Map<string, HTMLImageElement>();
 const sprites = new Map<string, HTMLCanvasElement>();
@@ -59,7 +61,7 @@ const layoutRequests = new Map<string, Promise<void>>();
 let travelerTemplate: string | null = null;
 let travelerRequest: Promise<void> | null = null;
 const travelers = new Map<string, HTMLCanvasElement>();
-const travelerPending = new Set<string>();
+const travelerPending = new Map<string, Promise<void>>();
 let artScale = 1;
 let artGen = 0;
 let preloading: Promise<void> | null = null;
@@ -196,6 +198,57 @@ export function drawSvg(
   return true;
 }
 
+function travKey(cloak: string, redEyes: boolean, ghost: boolean, step: number, flip: boolean, scale: number): string {
+  return `${cloak}:${redEyes}:${ghost}:${step}:${flip ? -1 : 1}:${scale}`;
+}
+
+function mirrorCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = src.width;
+  c.height = src.height;
+  const g = c.getContext("2d");
+  if (g) {
+    g.translate(c.width, 0);
+    g.scale(-1, 1);
+    g.drawImage(src, 0, 0);
+  }
+  return c;
+}
+
+/** Find an already-baked forward canvas for this traveler, synchronously mirroring if facing < 0. */
+function findTravelerSprite(cloak: string, redEyes: boolean, ghost: boolean, step: number, flip: boolean, scale: number): HTMLCanvasElement | undefined {
+  const k = travKey(cloak, redEyes, ghost, step, flip, scale);
+  const direct = travelers.get(k);
+  if (direct) return direct;
+  if (flip) {
+    const fwd = travelers.get(travKey(cloak, redEyes, ghost, step, false, scale));
+    if (fwd) {
+      const mirrored = mirrorCanvas(fwd);
+      travelers.set(k, mirrored);
+      return mirrored;
+    }
+  }
+  return undefined;
+}
+
+/** Synchronous fallback so a character never drops for even one frame while a pose/eye/zoom variant bakes. */
+function fallbackTravelerSprite(cloak: string, redEyes: boolean, ghost: boolean, step: number, flip: boolean): HTMLCanvasElement | undefined {
+  for (const sc of [artScale, 2, 1, 4]) {
+    for (const [re, gh, st] of [
+      [redEyes, ghost, step],
+      [redEyes, ghost, 0],
+      [redEyes, false, step],
+      [redEyes, false, 0],
+      [false, false, step],
+      [false, false, 0],
+    ] as const) {
+      const hit = findTravelerSprite(cloak, re, gh, st, flip, sc);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
 /** The traveller sprite in its own colours, baked per palette, pose and direction. */
 export function drawTraveler(
   ctx: CanvasRenderingContext2D, color: string, redEyes: boolean, ghost: boolean, pose: number, facing = 1,
@@ -203,44 +256,53 @@ export function drawTraveler(
   if (typeof window === "undefined") return false;
   void requestTraveler();
   if (!travelerTemplate) return false;
-  const cloak = /^#[0-9a-f]{6}$/i.test(color) ? color : "#3a7ca5";
+  const cloak = /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : "#3a7ca5";
   const step = pose > 0 ? 3 : pose < 0 ? -3 : 0;
   const flip = facing < 0;
-  const key = `${cloak}:${redEyes}:${ghost}:${step}:${flip ? -1 : 1}:${artScale}`;
-  const hit = travelers.get(key);
+  const hit = findTravelerSprite(cloak, redEyes, ghost, step, flip, artScale);
   if (hit) {
     ctx.drawImage(hit, -20, -54, 40, 54);
     return true;
   }
-  if (!travelerPending.has(key)) bakeTraveler(key, cloak, redEyes, ghost, step, flip, travelerTemplate);
+  // Never decode facing=-1 via an async Image; bake facing=1 once and mirror synchronously.
+  const fwdKey = travKey(cloak, redEyes, ghost, step, false, artScale);
+  if (!travelers.has(fwdKey) && !travelerPending.has(fwdKey)) {
+    void bakeTraveler(fwdKey, cloak, redEyes, ghost, step, artScale, travelerTemplate);
+  }
+  const fb = fallbackTravelerSprite(cloak, redEyes, ghost, step, flip);
+  if (fb) {
+    ctx.drawImage(fb, -20, -54, 40, 54);
+    return true;
+  }
   return false;
 }
 
 function bakeTraveler(
-  key: string, cloak: string, redEyes: boolean, ghost: boolean, step: number, flip: boolean, template: string,
-) {
-  travelerPending.add(key);
-  const variables = `--cloak:${cloak};--eyes:${redEyes ? "#ff5142" : "#eee6ce"};--leg-a:${step}px;--leg-b:${-step}px;--legs-opacity:${ghost ? 0 : 1};`;
-  const image = new Image();
-  const scale = artScale;
-  image.onload = () => {
-    const pw = Math.max(1, Math.ceil(40 * scale));
-    const ph = Math.max(1, Math.ceil(54 * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = pw;
-    canvas.height = ph;
-    const g = canvas.getContext("2d");
-    if (g) {
-      if (flip) { g.translate(pw, 0); g.scale(-1, 1); }
-      g.drawImage(image, 0, 0, pw, ph);
-    }
-    if (travelers.size >= TRAVELER_CAP) travelers.clear();
-    travelers.set(key, canvas);
-    travelerPending.delete(key);
-    artGen++;
-  };
-  image.onerror = () => travelerPending.delete(key);
-  image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(template.replace("/* RUNTIME PALETTE */", variables))}`;
+  key: string, cloak: string, redEyes: boolean, ghost: boolean, step: number, scale: number, template: string,
+): Promise<void> {
+  const existing = travelerPending.get(key);
+  if (existing) return existing;
+  const p = new Promise<void>((resolve) => {
+    const variables = `--cloak:${cloak};--eyes:${redEyes ? "#ff5142" : "#eee6ce"};--leg-a:${step}px;--leg-b:${-step}px;--legs-opacity:${ghost ? 0 : 1};`;
+    const image = new Image();
+    image.onload = () => {
+      const pw = Math.max(1, Math.ceil(40 * scale));
+      const ph = Math.max(1, Math.ceil(54 * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = pw;
+      canvas.height = ph;
+      canvas.getContext("2d")?.drawImage(image, 0, 0, pw, ph);
+      if (travelers.size >= TRAVELER_CAP) travelers.clear();
+      travelers.set(key, canvas);
+      travelerPending.delete(key);
+      artGen++;
+      resolve();
+    };
+    image.onerror = () => { travelerPending.delete(key); resolve(); };
+    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(template.replace("/* RUNTIME PALETTE */", variables))}`;
+  });
+  travelerPending.set(key, p);
+  return p;
 }
 
 /** Whether preloadArt() has finished (all loaded, failed, or timed out). */
@@ -248,10 +310,10 @@ export function artReady(): boolean {
   return ready;
 }
 
-/** Pre-bake common fixed-size sprites at load time so early frames never rasterise SVGs synchronously. */
-function warmCommonSprites() {
+/** Pre-bake common sprites and all player palette poses so first frames never flicker or hitch. */
+function warmCommonSprites(): Promise<void> {
   const prevScale = artScale;
-  const dpr = typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1;
+  const dpr = typeof window !== "undefined" ? Math.min(1.5, window.devicePixelRatio || 1) : 1;
   setArtScale(dpr * 1.2);
   const fixed: [string, number, number][] = [
     ["props/fence.svg", 140, 46], ["props/lantern-post.svg", 30, 96],
@@ -266,14 +328,49 @@ function warmCommonSprites() {
     ["house/interior.svg", 300, 112], ["house/interior.svg", 330, 112], ["house/interior.svg", 340, 112],
     ["house/windows.svg", 300, 158], ["house/windows.svg", 330, 158], ["house/windows.svg", 340, 158],
     ["house/door-frame.svg", 64, 112], ["house/door-closed.svg", 64, 112], ["house/door-open.svg", 64, 112],
+    ["house/door-frame.svg", 64, 112], ["house/sign.svg", 112, 18],
     ["structures/bell-tower.svg", 100, 190], ["structures/bell.svg", 36, 40],
     ["structures/cage-back.svg", 80, 112], ["structures/cage-front.svg", 80, 112],
+    ["structures/pumpkin-shed.svg", 180, 116], ["structures/pumpkin-shed-broken.svg", 180, 116], ["structures/pumpkin-shed-trim.svg", 180, 116],
+    ["structures/well.svg", 120, 106], ["structures/well-broken.svg", 120, 106],
+    ["structures/scarecrow.svg", 120, 124], ["structures/scarecrow-broken.svg", 120, 124],
+    ["structures/lantern.svg", 80, 119], ["structures/lantern-broken.svg", 80, 119],
+    ["structures/chapel.svg", 280, 476], ["structures/chapel-broken.svg", 280, 476], ["structures/chapel-trim.svg", 280, 476],
+    ["structures/mill.svg", 190, 124], ["structures/mill-broken.svg", 190, 124], ["structures/mill-trim.svg", 190, 124],
+    ["structures/mill-sails.svg", 92, 92], ["structures/mill-sails-broken.svg", 92, 92],
+    ["structures/graves.svg", 200, 60], ["structures/graves-broken.svg", 200, 60],
+    ["structures/radio.svg", 140, 214], ["structures/radio-broken.svg", 140, 214],
+    ["structures/silo.svg", 90, 184], ["structures/silo-broken.svg", 90, 184],
   ];
   for (const [path, w, h] of fixed) spriteFor(path, w, h);
+  for (const f of ["house/facade-ferryman.svg", "house/facade-tollhouse.svg"]) spriteFor(f, 332, 158);
+  for (const f of ["house/facade-orchard.svg", "house/facade-foreman.svg", "house/facade-lodge.svg"]) spriteFor(f, 365.2, 158);
+  spriteFor("house/facade-quarry.svg", 376.27, 158);
+  for (const flip of [false, true]) {
+    spriteFor("house/door-frame.svg", 64, 112, flip);
+    spriteFor("house/door-closed.svg", 64, 112, flip);
+    spriteFor("house/door-open.svg", 64, 112, flip);
+  }
+  for (let i = 0; i < 92; i++) {
+    const th = 74 + ((i * 53) % 56);
+    spriteFor("scenery/autumn-tree.svg", th * 0.75, th, (i & 1) === 1);
+  }
   for (const houseId of ROOM_LAYOUTS) {
     for (const item of roomLayouts.get(houseId) ?? []) spriteFor(item.asset, item.width, item.height);
   }
   artScale = prevScale;
+
+  if (!travelerTemplate || typeof window === "undefined") return Promise.resolve();
+  const colors = [...new Set([...PLAYER_COLORS, "#d9a441", "#c44a3a"])];
+  const jobs: Promise<void>[] = [];
+  for (const c of colors) {
+    const cloak = c.toLowerCase();
+    for (const step of [-3, 0, 3]) {
+      jobs.push(bakeTraveler(travKey(cloak, false, false, step, false, 2), cloak, false, false, step, 2, travelerTemplate));
+    }
+    jobs.push(bakeTraveler(travKey(cloak, true, false, 0, false, 2), cloak, true, false, 0, 2, travelerTemplate));
+  }
+  return Promise.all(jobs).then(() => {});
 }
 
 /** Starts loading all fixed art, room furniture and the traveller sprite. Idempotent. */

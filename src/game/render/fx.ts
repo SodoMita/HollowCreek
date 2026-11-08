@@ -60,21 +60,22 @@ function getLeafSprites(): HTMLCanvasElement[][] {
 }
 
 export function drawLeaves(v: View, leaves: Leaf[], count: number) {
-  const { ctx, cam, w, h, ground, dt } = v;
+  const { ctx, cam, w, h, ground, lift, dt } = v;
   const sprites = getLeafSprites();
-  const yScale = h / 700;
+  const yMax = 556; // fixed 700 * 0.78 + 10 so zooming never collapses leaves onto one line
+  const yScale = (ground + lift) / yMax;
   const inv2Pi = LEAF_ANGLES / (Math.PI * 2);
   for (let li = 0; li < count && li < leaves.length; li++) {
     const l = leaves[li];
     l.x += l.vx * dt;
     l.y += l.vy * dt;
     l.r += dt * 2;
-    if (l.y > ground + 10) { l.y = -20; l.x = cam + nextRand() * w; }
+    if (l.y > yMax) { l.y = -20; l.x = cam + nextRand() * w; }
     if (l.x < cam - 60) l.x = cam + w + 40;
     const sx = l.x - cam;
     if (sx < -20 || sx > w + 20) continue;
-    const sy = l.y * yScale;
-    if (sy < -20 || sy > h + 20) continue;
+    const sy = l.y * yScale - lift;
+    if (sy < -lift - 20 || sy > h - lift + 20) continue;
     const size = l.s * 2.6;
     const ang = ((Math.floor(l.r * inv2Pi) % LEAF_ANGLES) + LEAF_ANGLES) % LEAF_ANGLES;
     ctx.drawImage(sprites[l.c][ang], sx - size * 0.5, sy - size * 0.5, size, size);
@@ -255,7 +256,7 @@ export function drawDarkness(v: View, visionR: number): number {
 
 export function drawPastWash(v: View) {
   v.ctx.fillStyle = "rgba(72,133,151,.10)";
-  v.ctx.fillRect(0, 0, v.w, v.h);
+  v.ctx.fillRect(0, -v.lift, v.w, v.h);
 }
 
 let overlayCanvas: HTMLCanvasElement | null = null;
@@ -332,6 +333,6 @@ export function drawFlicker(v: View) {
   if (v.flicker && !v.reduced && since >= 0 && since < 900) {
     const a = Math.random() < 0.5 ? 0.55 : 0.15;
     v.ctx.fillStyle = `rgba(0,0,0,${a * (1 - since / 900)})`;
-    v.ctx.fillRect(0, 0, v.w, v.h);
+    v.ctx.fillRect(0, -v.lift, v.w, v.h);
   }
 }

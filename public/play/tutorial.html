@@ -34,6 +34,11 @@
   .card .instr { margin: .5rem 0 0; color: #e9dfcf; }
   .card .note { margin: .25rem 0 0; color: #9c8b7a; font-style: italic; font-size: .85rem; }
   .status { position: absolute; left: .75rem; top: 12rem; z-index: 10; width: 14rem; padding: .75rem; font-size: .8rem; }
+  @media (max-width: 720px) {
+    .card { box-sizing: border-box; width: calc(100vw - 1rem); padding: .5rem .65rem; font-size: 13px; }
+    .card .note { display: none; }
+    .status { top: 13.8rem; left: .5rem; width: 12.2rem; padding: .45rem .6rem; font-size: .72rem; }
+  }
   .status h4 { margin: 0 0 .4rem; font-weight: normal; text-transform: uppercase; letter-spacing: .12em; color: #9c8b7a; font-size: .7rem; }
   .status .kv { display: flex; justify-content: space-between; gap: .5rem; margin-top: .25rem; }
   .status .kv span:last-child { font-family: ui-monospace, Menlo, monospace; color: #c9b8a4; }

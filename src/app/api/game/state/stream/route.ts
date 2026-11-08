@@ -48,10 +48,13 @@ export async function GET(req: NextRequest) {
       };
       // Room events fire every 50 ms tick; snapshots are computed at most
       // once per FRAME_MS per viewer, and only the diff goes down the wire.
+      // Allow every 50 ms server tick through without timer jitter (49 ms -> +50 ms stall)
+      // while coalescing rapid bursts of actions within 35 ms.
+      const COALESCE_MS = Math.max(20, FRAME_MS - 15);
       const push = () => {
         if (closed) return;
         const t = Date.now();
-        if (t - computedAt < FRAME_MS) { later(FRAME_MS - (t - computedAt)); return; }
+        if (t - computedAt < COALESCE_MS) { later(COALESCE_MS - (t - computedAt)); return; }
         computedAt = t;
         const r = nextFrame(room, playerId, holds, t);
         if (!r) { send({ gone: true, now: t }); cleanup(); return; }

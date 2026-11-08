@@ -8,6 +8,7 @@ import { AudioDirector } from "../src/game/audio";
 import { VoiceChat, type VoiceStatus } from "../src/game/voice";
 import { SettingsStore, applyDocumentPreferences, keyLabel, matchesControl, type BindableAction } from "../src/game/settings";
 import { SettingsDialog } from "../src/game/settings-ui";
+import { BUILDINGS, WORLD_MAX, WORLD_MIN, clampWorld, doorX } from "../src/game/buildings";
 import { CARRY_SPEED, GHOST_SPEED, SPEED } from "../src/game/types";
 import type { RoomListing, Snapshot } from "../src/game/types";
 import { applyFrame, type WireFrame } from "../src/game/wire";
@@ -682,6 +683,21 @@ settingsStore.subscribe((settings) => { renderer.setSettings(settings); resize()
 resize();
 window.addEventListener("resize", resize);
 window.visualViewport?.addEventListener("resize", resize);
+function clampPredicted(x: number, inside: string | null, doors: Snapshot["doors"]): number {
+  let out = clampWorld(x);
+  if (!inside) return out;
+  const b = BUILDINGS.find((item) => item.id === inside);
+  const d = doors?.find((item) => item.id === inside);
+  if (!b || !d) return out;
+  const farWall = b.x - b.side * (b.width / 2 - 25);
+  out = b.side === 1 ? Math.max(farWall, out) : Math.min(farWall, out);
+  if (!d.open) {
+    const threshold = doorX(b);
+    if ((out - threshold) * b.side >= 0) out = threshold - b.side * 0.01;
+  }
+  return out;
+}
+
 let last = performance.now();
 function loop(nowMs: number) {
   requestAnimationFrame(loop);
@@ -693,9 +709,9 @@ function loop(nowMs: number) {
     if (cur === undefined) { displayX.set(p.id, p.x); continue; }
     const spd = !p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : SPEED;
     if (p.id === snap.self.id && snap.phase === "playing" && !snap.self.caged) {
-      let next = cur + lastDir * spd * dt;
+      let next = clampPredicted(cur + lastDir * spd * dt, p.inside ?? null, snap.doors);
       if (net.hasSelfAck) {
-        const since = net.selfAckAt - net.rttMs * 0.5;
+        const since = net.selfAckAt - net.rttMs * 0.5 - 25;
         let dir = 0;
         for (const e of net.inputs) if (e.t <= since) dir = e.dir; else break;
         let target = net.selfAckX, t0 = since;
@@ -705,13 +721,13 @@ function loop(nowMs: number) {
           t0 = e.t;
           dir = e.dir;
         }
-        target += dir * spd * (nowMs - t0) / 1000;
+        target = clampPredicted(target + dir * spd * (nowMs - t0) / 1000, p.inside ?? null, snap.doors);
         const err = target - next;
         if (Math.abs(err) > 220) next = target;
         else if (lastDir === 0) next += err * Math.min(1, dt * 14);
         else if (Math.abs(err) > 14) next += Math.sign(err) * (Math.abs(err) - 14) * Math.min(1, dt * 6);
       }
-      displayX.set(p.id, next);
+      displayX.set(p.id, Math.max(WORLD_MIN + 30, Math.min(WORLD_MAX - 30, next)));
     } else {
       const tr = tracks.get(p.id);
       if (!tr || Math.abs(p.x - cur) > 260) {
