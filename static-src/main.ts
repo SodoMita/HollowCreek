@@ -47,7 +47,7 @@ function cancelProbe() { probeEpoch++; }
 function bindServer(s: string) {
   server = s.replace(/\/$/, "");
   ($("server") as HTMLInputElement).value = server;
-  ($("fullsite") as HTMLAnchorElement).href = server + "/";
+  ($("fullsite") as HTMLAnchorElement).href = "records.html";
   if ($("tutoriallink")) ($("tutoriallink") as HTMLAnchorElement).href = server + "/tutorial";
 }
 async function probeServers() {
@@ -169,7 +169,7 @@ function initMenu() {
   $("name").setAttribute("value", localStorage.getItem("hc_name") ?? "");
   ($("name") as HTMLInputElement).value = localStorage.getItem("hc_name") ?? "";
   ($("server") as HTMLInputElement).value = server;
-  ($("fullsite") as HTMLAnchorElement).href = server + "/";
+  ($("fullsite") as HTMLAnchorElement).href = "records.html";
   if ($("tutoriallink")) ($("tutoriallink") as HTMLAnchorElement).href = server + "/tutorial";
   $("server").addEventListener("change", () => {
     cancelProbe();

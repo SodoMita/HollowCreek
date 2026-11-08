@@ -14,6 +14,19 @@ await build({
   outfile: "public/play/game.js",
   logLevel: "info",
 });
+// Hall of Records and the Chronicle: plain pages that read the same API.
+for (const page of ["records", "chronicle"]) {
+  await build({
+    entryPoints: [`static-src/${page}.ts`],
+    bundle: true,
+    minify: true,
+    format: "iife",
+    target: "es2020",
+    outfile: `public/play/${page}.js`,
+    logLevel: "info",
+  });
+  copyFileSync(`static-src/${page}.html`, `public/play/${page}.html`);
+}
 copyFileSync("static-src/index.html", "public/play/index.html");
 if (existsSync("public/art")) cpSync("public/art", "public/play/art", { recursive: true });
 // icons: canonical ladder lives in public/ (see release/README.md)

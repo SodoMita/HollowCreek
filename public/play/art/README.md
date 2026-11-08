@@ -1,6 +1,6 @@
 # Hollow Creek editable art
 
-These are the actual SVG files used by the game, not reference images. Open `/art` in the full site to preview and download them. Edit the files in any SVG editor (for example Inkscape), save, and reload the game. The SVGs are hand-authored vectors; no generated artwork is required.
+These are the actual SVG files used by the game, not reference images. Edit the files in any SVG editor (for example Inkscape), save, and reload the game. The SVGs are hand-authored vectors; no generated artwork is required.
 
 ## Files
 

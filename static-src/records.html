@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hall of Records — Hollow Creek</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Pirata+One&family=Alegreya:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+<style>
+  body { margin: 0; background: #0b0710; color: #d8c9b4; font: 16px/1.5 Alegreya, Georgia, serif; }
+  main { max-width: 64rem; margin: 0 auto; padding: 2.5rem 1rem; }
+  a { color: #9c8b7a; text-decoration: none; }
+  a:hover { color: #d99a3d; }
+  h1 { font: 3.5rem Pirata One, Georgia, serif; color: #e9dfcf; margin: .75rem 0 0; }
+  .muted { color: #9c8b7a; font-style: italic; }
+  .notice { border: 1px solid #6e3433; background: #1c1216; color: #e29a84; padding: .5rem .75rem; border-radius: 4px; margin: 1rem 0; }
+  .totals { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; border: 1px solid #3a2733; background: #140d18; padding: .75rem 1rem; border-radius: 4px; margin: 1.5rem 0; font-size: .95rem; }
+  .totals b { color: #d99a3d; }
+  .wrap { overflow-x: auto; border: 1px solid #3a2733; background: #140d18; border-radius: 4px; margin-top: 1.5rem; }
+  table { width: 100%; min-width: 860px; border-collapse: collapse; font-size: .9rem; }
+  th { text-align: left; font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: #9c8b7a; padding: .75rem; border-bottom: 1px solid #3a2733; }
+  td { padding: .6rem .75rem; border-bottom: 1px solid #241a26; font-family: ui-monospace, Menlo, monospace; color: #c9b8a4; }
+  td.name { font-family: inherit; color: #e9dfcf; font-weight: 700; }
+  td.wins { color: #a8c98a; }
+  td.kills, td.deaths { color: #e08a7a; }
+  tr.top td { background: rgba(28, 18, 16, .4); }
+  .pct { color: #9a877f; font-weight: 400; font-size: .8rem; margin-left: .4rem; }
+  .fine { margin-top: 1rem; font-size: .8rem; color: #9a877f; }
+</style>
+</head>
+<body>
+<main>
+  <a href="./index.html">← back to the crossroads</a>
+  <h1>Hall of Records</h1>
+  <p id="status" class="notice" role="status" hidden></p>
+  <p class="muted">The town clerk writes down everything — every night endured, every blade, every cage, every letter spoken into the fog. He does not judge. He only counts.</p>
+  <div id="totals" class="totals" hidden></div>
+  <p id="empty" class="muted" hidden>The ledger is empty. No soul has yet finished a night in Hollow Creek.</p>
+  <div id="tablewrap" class="wrap" hidden>
+    <table>
+      <thead><tr id="head"></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <p class="fine">Records follow the soul (your browser identity) across towns and nights. Playtime counts nights seen through to the end.</p>
+</main>
+<script type="module" src="./records.js"></script>
+</body>
+</html>

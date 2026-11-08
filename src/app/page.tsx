@@ -218,7 +218,7 @@ export default function Home() {
                 <BookOpen className="h-3.5 w-3.5 text-[#d99a3d]" /> Tutorial
               </Link>
               <Link
-                href="/stats"
+                href="/play/records.html"
                 className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition-colors hover:border-[#c9762f]/40 hover:text-[#d99a3d]"
               >
                 <Trophy className="h-3.5 w-3.5" /> Records

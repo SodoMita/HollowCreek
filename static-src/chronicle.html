@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>The Chronicle — Hollow Creek</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Pirata+One&family=Alegreya:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+<style>
+  body { margin: 0; background: #0b0710; color: #d8c9b4; font: 16px/1.5 Alegreya, Georgia, serif; }
+  main { max-width: 48rem; margin: 0 auto; padding: 2.5rem 1rem; }
+  a { color: #9c8b7a; text-decoration: none; }
+  a:hover { color: #d99a3d; }
+  h1 { font: 3rem Pirata One, Georgia, serif; color: #e9dfcf; margin: .75rem 0 0; }
+  .muted { color: #9c8b7a; font-style: italic; }
+  .notice { border: 1px solid #6e3433; background: #1c1216; color: #e29a84; padding: .5rem .75rem; border-radius: 4px; margin: 1rem 0; }
+  .sealed { text-align: center; padding-top: 4rem; }
+  .sealed h1 { font-size: 3rem; }
+  .entries { margin-top: 2rem; display: grid; gap: .4rem; }
+  .entry { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem; border: 1px solid #241a26; background: rgba(20, 13, 24, .6); padding: .5rem .75rem; border-radius: 4px; font-size: .95rem; }
+  .entry.danger { border-color: #4a1210; background: rgba(28, 14, 14, .6); }
+  .time { font: .8rem ui-monospace, Menlo, monospace; color: #9a877f; }
+  .who { color: #e9dfcf; font-weight: 700; }
+  .detail { color: #9c8b7a; font-style: italic; }
+  .pos { margin-left: auto; font: .8rem ui-monospace, Menlo, monospace; color: #8a7a82; }
+  .btn { display: inline-block; margin-top: 1.5rem; padding: .5rem 1.25rem; background: #8f3b1f; color: #f3e6d0; border-radius: 4px; font: 1.2rem Pirata One, Georgia, serif; }
+  .btn:hover { background: #a84a26; color: #f3e6d0; }
+</style>
+</head>
+<body>
+<main>
+  <div id="sealed" class="sealed" hidden>
+    <h1>The ledger is sealed</h1>
+    <p class="muted" id="sealedText"></p>
+    <a class="btn" id="backSealed" href="./index.html">Back to the street</a>
+  </div>
+  <div id="open" hidden>
+    <a href="./index.html">← back to the crossroads</a>
+    <h1 id="title"></h1>
+    <p id="status" class="notice" role="status" hidden></p>
+    <p class="muted">Every step, word, vote and kill — written down by the town clerk, who saw more than he said.</p>
+    <div id="entries" class="entries"></div>
+  </div>
+</main>
+<script type="module" src="./chronicle.js"></script>
+</body>
+</html>
