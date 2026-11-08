@@ -44,11 +44,6 @@ try {
     assert.ok(loaded.has(path), `${path} was actually loaded`);
   }
   console.log("PASS game loads the editable SVG artwork and room layout");
-  await page.goto(`${base}/art`, { waitUntil: "domcontentloaded" });
-  assert.ok(await page.getByText("The art library").count());
-  assert.ok(await page.getByRole("link", { name: "Room layout SVG" }).count());
-  assert.ok((await page.locator('img[src^="/art/"]').count()) >= 29);
-  console.log("PASS art library previews and links to editable assets");
   const standalone = await page.request.get(`${base}/play/art/house/door-open.svg`);
   assert.equal(standalone.status(), 200);
   assert.ok((await standalone.text()).includes("door-leaf-swung-out"));

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, BookOpen, DoorOpen, Flame, Moon, Palette, Plus, RefreshCw, Skull, Trophy, Users } from "lucide-react";
+import { Bell, BookOpen, DoorOpen, Flame, Moon, Plus, RefreshCw, Skull, Trophy, Users } from "lucide-react";
 import Link from "next/link";
 import type { RoomListing } from "@/game/types";
 import { SettingsStore, applyDocumentPreferences, createDefaultSettings, keyLabel, type GameSettings } from "@/game/settings";
@@ -222,9 +222,6 @@ export default function Home() {
                 className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition-colors hover:border-[#c9762f]/40 hover:text-[#d99a3d]"
               >
                 <Trophy className="h-3.5 w-3.5" /> Records
-              </Link>
-              <Link href="/art" className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition-colors hover:border-[#c9762f]/40 hover:text-[#ffd98a]">
-                <Palette className="h-3.5 w-3.5" /> Art
               </Link>
             </div>
           </div>
