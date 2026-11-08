@@ -8,8 +8,10 @@ import type { DrawEnv } from "./env";
 import type { Frame } from "./frame";
 import { GROUND_DUSK, GROUND_NIGHT, lerpHex } from "./palette";
 
-export function drawGround(f: Frame, env: DrawEnv) {
-  const { ctx, w, h, cam, ground, night, nb, graphics } = f;
+/** Road surface only: vertical gradient plus the two rut lines. Screen-wide and
+ *  cheap, so it is painted every frame and never belongs to a world tile. */
+export function drawGroundSurface(f: Frame, env: DrawEnv) {
+  const { ctx, w, h, cam, ground, night, nb } = f;
 
   // --- ground ---
   const gg = env.grad(`ground:${ground}:${h}:${nb}`, () => {
@@ -32,6 +34,12 @@ export function drawGround(f: Frame, env: DrawEnv) {
     }
     ctx.stroke();
   }
+}
+
+/** World-anchored street props. Depends only on the night bucket and the detail
+ *  preset, so the renderer bakes them into cached world tiles. */
+export function drawGroundProps(f: Frame) {
+  const { ctx, w, cam, ground, graphics } = f;
   for (let i = TREE_MIN; i <= TREE_MAX; i++) {
     const sx = treeX(i) - cam;
     if (sx < -60 || sx > w + 60) continue;
@@ -54,13 +62,28 @@ export function drawGround(f: Frame, env: DrawEnv) {
   }
 }
 
-/** Hollow Creek crosses the road's west end; drawn after the ground so the water
- *  and plank bridge sit in the foreground, in front of the road surface. */
-export function drawCreek(f: Frame) {
-  const { ctx, w, t, cam, ground } = f;
+/** The plank bridge is static world geometry; the glints are animated. */
+export function drawCreekBridge(f: Frame) {
+  const { ctx, w, cam, ground } = f;
   const sx = -2660 - cam;
   if (sx > -300 && sx < w + 300) drawSvg(ctx, "props/creek-bridge.svg", sx, ground - 6, 260, 64);
-  drawCreekGlints(ctx, cam, w, ground, t);
+}
+
+/** Animated water: painted every frame, after the cached bridge tile. */
+export function drawCreekGlintLayer(f: Frame) {
+  drawCreekGlints(f.ctx, f.cam, f.w, f.ground, f.t);
+}
+
+/** Compatibility wrapper: surface + props in the original order. */
+export function drawGround(f: Frame, env: DrawEnv) {
+  drawGroundSurface(f, env);
+  drawGroundProps(f);
+}
+
+/** Compatibility wrapper: bridge + glints in the original order. */
+export function drawCreek(f: Frame) {
+  drawCreekBridge(f);
+  drawCreekGlintLayer(f);
 }
 
 /** Pulsing highlight over the meeting square, only during a meeting. */
