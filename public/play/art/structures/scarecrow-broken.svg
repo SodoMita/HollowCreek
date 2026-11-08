@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-60 -120 120 124" width="240" height="248">
+  <title>Scarecrow (fallen)</title>
+  <path d="M0 0V-85M-30-62H30" fill="none" stroke="#3a2a18" stroke-width="6"/>
+  <path d="M-14-60H14L9-25H-9Z" fill="#6b5433"/>
+  <path d="M-29-63L34-40" fill="none" stroke="#392a1c" stroke-width="6"/>
+  <circle cx="38" cy="-8" r="13" fill="#bd9860"/>
+  <path d="M24-19L46-21L53-10Z" fill="#131013"/>
+  <path d="M-8-44L-16-24M10-36L18-17" fill="none" stroke="#9d7850" stroke-width="2"/>
+</svg>

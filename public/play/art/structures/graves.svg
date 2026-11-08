@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-75 -50 200 60" width="400" height="120">
+  <title>Graves (upright stones)</title>
+  <g fill="#3d3a42">
+    <path transform="translate(-55 0)" d="M-11 0V-24A10 10 0 0 1-1-34H1A10 10 0 0 1 11-24V0Z"/>
+    <path transform="translate(-20 0)" d="M-11 0V-32A10 10 0 0 1-1-42H1A10 10 0 0 1 11-32V0Z"/>
+    <path transform="translate(18 0)" d="M-11 0V-20A10 10 0 0 1-1-30H1A10 10 0 0 1 11-20V0Z"/>
+    <path transform="translate(52 0)" d="M-11 0V-28A10 10 0 0 1-1-38H1A10 10 0 0 1 11-28V0Z"/>
+  </g>
+  <ellipse cx="85" cy="-2" rx="28" ry="6" fill="#493120"/>
+</svg>

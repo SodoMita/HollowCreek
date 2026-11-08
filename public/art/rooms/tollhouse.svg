@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="349" height="105" viewBox="-133 -97 349 105">
+  <title>Room layout: tollhouse</title>
+  <!-- Furniture placement for one house. Each image element is one object. href is its SVG file, relative to this folder.
+       x is world units from the house centre; y is from the ground line (negative is up). width and height are its size.
+       Optional data-when="done" or data-when="unfinished" shows the object only in that task state.
+       Move or resize objects in an SVG editor, then reload the game. -->
+  <line id="ground" x1="-133" y1="0" x2="216" y2="0" stroke="#8a7a66" stroke-width="1" stroke-dasharray="4 3"/>
+  <image id="rug" href="../furniture/rug.svg" x="-70" y="-11" width="140" height="11"/>
+  <image id="shelf" href="../furniture/shelf.svg" x="-125" y="-78" width="56" height="19"/>
+  <image id="hearth" href="../furniture/hearth.svg" x="-52" y="-58" width="64" height="58"/>
+  <image id="fire" data-when="done" href="../furniture/fire.svg" x="-34" y="-37" width="28" height="31"/>
+  <image id="table" href="../furniture/table.svg" x="65" y="-42" width="56" height="42"/>
+  <image id="frame" href="../furniture/frame.svg" x="100" y="-89" width="28" height="25"/>
+  <image id="entrance-barrel" href="../furniture/barrel.svg" x="176" y="-36" width="32" height="36"/>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-95 -120 190 124" width="380" height="248">
+  <title>Windmill window frames</title>
+  <g fill="none" stroke="#1f110f" stroke-opacity=".9" stroke-width="2">
+    <rect x="-50" y="-60" width="20" height="22"/>
+    <path d="M-40-60V-38M-50-49H-30"/>
+    <rect x="28" y="-60" width="20" height="22"/>
+    <path d="M38-60V-38M28-49H48"/>
+  </g>
+</svg>

@@ -18,7 +18,7 @@ These are the actual SVG files used by the game, not reference images. Open `/ar
 - `props/gravestone.svg`, `props/haystack.svg` — graves-ward and harvest dressing; `scenery/autumn-tree.svg` was enriched with layered canopy and trunk shading.
 - `props/creek-bridge.svg` — Hollow Creek water, reeds and plank bridge at the road's far west end (the world grew from −1500..5750 to −2800..7400; every pre-existing tree, building, station and key coordinate kept its exact x).
 - House facades carry carved bargeboard fretwork along both gable slopes; `house/door-frame.svg` gained porch steps; `house/interior.svg` gained a dark ceiling beam and a hanging lantern glow (the warm glow ellipses at cx 74/210 are unchanged). The renderer also spills warm window light onto the road and places a barrel and crate beside each house.
-- `rooms.json` — furniture placement. Each room item has an asset path, `x` relative to the house center, `y` relative to the ground (negative is upward), `width`, `height`, and optional `when: "done"` or `"unfinished"` for task state. Change these numbers to move or resize objects; reload to see changes.
+- `rooms/<house>.svg` — furniture placement, one file per house (`ferryman`, `foreman`, `lodge`, `orchard`, `quarry`, `tollhouse`). Each object is an `<image>` element: `href` is its furniture file, relative to the `rooms/` folder (`../furniture/rug.svg`); `x` is in world units from the house centre; `y` is from the ground line (negative is up); `width` and `height` are its size. An optional `data-when="done"` or `data-when="unfinished"` shows it only in that task state. Open a layout in an SVG editor to move or resize objects, then reload the game. The dashed line is the ground. Every object's `id` must be unique within its file.
 
 ## Reference houses (Malye Korely)
 
@@ -38,7 +38,7 @@ These are the actual SVG files used by the game, not reference images. Open `/ar
 
 ## Loading and fallbacks
 
-The game preloads the art before the first frame (`src/game/svg-assets.ts`, `preloadArt()`). A renderer starts the preload when it is created, and `render()` draws a blank frame until it has finished. The preload covers every fixed file in `STATIC_ART`, the furniture named in `rooms.json`, and the traveller sprite. Structure and facade files are listed too, because their paths are built at runtime. `scripts/test-art-manifest.mjs` checks that the list matches the art the code draws, so a new SVG must be added to `STATIC_ART`.
+The game preloads the art before the first frame (`src/game/svg-assets.ts`, `preloadArt()`). A renderer starts the preload when it is created, and `render()` draws a blank frame until it has finished. The preload covers every fixed file in `STATIC_ART`, the furniture named in the room layouts, and the traveller sprite. Structure and facade files are listed too, because their paths are built at runtime. `scripts/test-art-manifest.mjs` checks that the list matches the art the code draws, so a new SVG must be added to `STATIC_ART`.
 
 The wait ends after 4 seconds even if some files are still loading. A file that is still loading then appears as soon as it arrives. A missing or broken file is never drawn, and nothing is substituted for it. The traveller's colour and pose variants are generated on first sight, so a new colour can take a moment to appear.
 
@@ -52,4 +52,4 @@ Keep each SVG's `viewBox` unless intentionally changing its game alignment. Hous
 
 Avoid external images, fonts, scripts, or remote references inside SVGs: keeping them self-contained lets the canvas render safely and keeps the standalone client portable. The sky, fog, and effects, plus the state-driven light listed above, are still canvas-drawn; the objects listed above and the `structures/` files are editable SVGs.
 
-The full site reads `public/art` directly. After editing art or `rooms.json`, run `node scripts/build-static.mjs` to copy the same assets into `public/play/art` for the standalone client. A browser refresh reloads the art. Gameplay positions and server-authoritative door/task rules are separate from the artwork.
+The full site reads `public/art` directly. After editing art or the room layouts, run `node scripts/build-static.mjs` to copy the same assets into `public/play/art` for the standalone client. A browser refresh reloads the art. Gameplay positions and server-authoritative door/task rules are separate from the artwork.

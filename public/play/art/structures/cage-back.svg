@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-40 -112 80 112" width="160" height="224">
+  <title>Prisoner's cage (back frame)</title>
+  <rect x="-32" y="-96" width="64" height="96" fill="#0f0a0e" fill-opacity=".6"/>
+  <path d="M-24-92V0M-12-92V0M0-92V0M12-92V0M24-92V0" fill="none" stroke="#2e2a33" stroke-width="3"/>
+</svg>

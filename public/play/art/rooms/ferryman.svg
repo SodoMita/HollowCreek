@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="262" height="88" viewBox="-126 -80 262 88">
+  <title>Room layout: ferryman</title>
+  <!-- Furniture placement for one house. Each image element is one object. href is its SVG file, relative to this folder.
+       x is world units from the house centre; y is from the ground line (negative is up). width and height are its size.
+       Optional data-when="done" or data-when="unfinished" shows the object only in that task state.
+       Move or resize objects in an SVG editor, then reload the game. -->
+  <line id="ground" x1="-126" y1="0" x2="136" y2="0" stroke="#8a7a66" stroke-width="1" stroke-dasharray="4 3"/>
+  <image id="rug" href="../furniture/rug.svg" x="-70" y="-11" width="140" height="11"/>
+  <image id="bed" href="../furniture/bed.svg" x="-118" y="-38" width="82" height="38"/>
+  <image id="hearth" href="../furniture/hearth.svg" x="-52" y="-58" width="64" height="58"/>
+  <image id="fire" data-when="done" href="../furniture/fire.svg" x="-34" y="-37" width="28" height="31"/>
+  <image id="shelf" href="../furniture/shelf.svg" x="70" y="-72" width="56" height="19"/>
+  <image id="crate" href="../furniture/crate.svg" x="80" y="-25" width="38" height="25"/>
+  <image id="entrance-barrel" href="../furniture/barrel.svg" x="96" y="-36" width="32" height="36"/>
+</svg>

@@ -72,7 +72,7 @@ HollowCreek/
 │   ├── art/ ............. SVG art library served to both clients (Next + /play)
 │   │   ├── characters/ · furniture/ · house/ · props/ · scenery/
 │   │   ├── reference/ ... reference drawings + houses.json (provenance: public/art/README.md)
-│   │   ├── rooms.json ... interior layouts for house art
+│   │   ├── rooms/ ....... one interior layout SVG per house
 │   │   └── town/ ........ houses.json has 0 entries; 4 unused house-00N.svg (dead, trap T7)
 │   └── play/ ............ BUILD OUTPUT of scripts/build-static.mjs (committed)
 │       ├── index.html · game.js (≈126 KB minified) · art/ · icons
@@ -231,7 +231,7 @@ See `docs/time-travel.md` for the design.
 | `wards.ts` | 315 | Nine physical structures and 13 named jobs. `createWardPuzzle`, `validWardMove`, `applyWardMove`, `wardSolved`, `wardProgress`, `wardView`. The server owns every move. | recovered-wards |
 | `recovered-wards.ts` | 111 | Pure deterministic mechanics recovered from the Gloamwing experiments (Lantern Rites, The Long Draw, Nine Candles, Crow Call, The Furrow). No timers, no client-claimed positions. | — |
 | `buildings.ts` | 147 | Houses (`BUILDINGS`), doors (`DoorState`, `doorX`, `newDoors`), trees (`treeX`, `TREE_MIN/MAX`), `snapAnchor` for pinned pages, `interactWithBuilding`, `walkThroughBuildings`, `clampWorld`. | types, units |
-| `house-art.ts` | 128 | `drawHouseExterior`, `drawHouseInterior`. Data-driven from `public/art/rooms.json` and SVGs. [client] | buildings, svg-assets, types |
+| `house-art.ts` | 128 | `drawHouseExterior`, `drawHouseInterior`. Data-driven from `public/art/rooms/*.svg` and SVGs. [client] | buildings, svg-assets, types |
 
 ### 4.5 Presentation (browser only; pure drawing, no game logic)
 

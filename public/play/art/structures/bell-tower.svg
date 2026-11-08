@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-50 -186 100 190" width="200" height="380">
+  <title>Bell tower frame (the bell and rope are separate)</title>
+  <path d="M-42 0L-14-150M42 0L14-150" fill="none" stroke="#241611" stroke-width="9"/>
+  <polygon points="-30,-148 30,-148 0,-178" fill="#1c100c"/>
+  <rect x="-24" y="-152" width="48" height="7" fill="#1c100c"/>
+</svg>

@@ -2,7 +2,7 @@
 // Static exports set hc-art-base so the same files work on portal hosts.
 //
 // Preloading: preloadArt() requests every fixed SVG in STATIC_ART, the room
-// furniture named in rooms.json, and the traveller sprite. The renderer holds
+// furniture placed by each room layout, and the traveller sprite. The renderer holds
 // its frame until artReady() is true, so the first visible frame is complete.
 // If a file is slow or missing, the wait ends after PRELOAD_TIMEOUT_MS and the
 // game continues; an object whose file never loads is simply not drawn.
@@ -16,7 +16,7 @@ export interface RoomArtItem {
   when?: "done" | "unfinished";
 }
 
-/** Every fixed SVG the game draws by path. Room furniture is added from rooms.json. */
+/** Every fixed SVG the game draws by path. Room furniture is added from the room layouts. */
 export const STATIC_ART: readonly string[] = [
   "house/interior.svg", "house/windows.svg", "house/door-frame.svg", "house/door-closed.svg",
   "house/door-open.svg", "house/sign.svg",
@@ -45,8 +45,10 @@ export const STATIC_ART: readonly string[] = [
 const PRELOAD_TIMEOUT_MS = 4000;
 
 const images = new Map<string, HTMLImageElement>();
-let roomLayouts: Record<string, RoomArtItem[]> | null = null;
-let layoutsRequest: Promise<void> | null = null;
+/** Each house's layout: rooms/<house>.svg, one <image> per placed object. */
+export const ROOM_LAYOUTS: readonly string[] = ["ferryman", "foreman", "lodge", "orchard", "quarry", "tollhouse"];
+const roomLayouts = new Map<string, RoomArtItem[]>();
+const layoutRequests = new Map<string, Promise<void>>();
 let travelerTemplate: string | null = null;
 let travelerRequest: Promise<void> | null = null;
 const travelers = new Map<string, HTMLImageElement>();
@@ -88,39 +90,52 @@ export function drawSvg(ctx: CanvasRenderingContext2D, path: string, x: number, 
   return true;
 }
 
-function parseLayouts(data: unknown): Record<string, RoomArtItem[]> | null {
-  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-  const result: Record<string, RoomArtItem[]> = {};
-  for (const [key, value] of Object.entries(data)) {
-    if (!/^[a-z-]+$/.test(key) || !Array.isArray(value)) continue;
-    result[key] = value.filter((item): item is RoomArtItem => {
-      if (!item || typeof item !== "object") return false;
-      const v = item as Record<string, unknown>;
-      return typeof v.id === "string" && typeof v.asset === "string" && /^furniture\/[a-z0-9][a-z0-9_-]*\.svg$/i.test(v.asset) &&
-        [v.x, v.y, v.width, v.height].every((n) => typeof n === "number" && Number.isFinite(n) && Math.abs(n) <= 1000) &&
-        (v.width as number) > 0 && (v.height as number) > 0 &&
-        (v.when === undefined || v.when === "done" || v.when === "unfinished");
-    });
-  }
-  return result;
+const FURNITURE_PATH = /^furniture\/[a-z0-9][a-z0-9_-]*\.svg$/i;
+
+/** Reads the <image> objects of a room layout. A layout is a normal SVG, so editors can move and resize them.
+ *  Invalid objects are skipped, as the JSON layout did. */
+function parseLayout(text: string): RoomArtItem[] {
+  const doc = new DOMParser().parseFromString(text, "image/svg+xml");
+  if (doc.querySelector("parsererror")) return [];
+  const num = (el: Element, name: string): number => {
+    const value = el.getAttribute(name);
+    return value === null || value.trim() === "" ? NaN : Number(value);
+  };
+  return Array.from(doc.querySelectorAll("image")).flatMap((el): RoomArtItem[] => {
+    const id = el.getAttribute("id");
+    // The layout sits in rooms/, so its links start with ../ to reach the art root.
+    const asset = (el.getAttribute("href") ?? el.getAttribute("xlink:href") ?? "").replace(/^(\.\.\/)+/, "");
+    const when = el.getAttribute("data-when");
+    const item: RoomArtItem = {
+      id: id ?? "", asset, x: num(el, "x"), y: num(el, "y"), width: num(el, "width"), height: num(el, "height"),
+      when: when === "done" || when === "unfinished" ? when : undefined,
+    };
+    const valid = id !== null && id !== "" && FURNITURE_PATH.test(asset) &&
+      [item.x, item.y, item.width, item.height].every((n) => Number.isFinite(n) && Math.abs(n) <= 1000) &&
+      item.width > 0 && item.height > 0 && (when === null || when === "done" || when === "unfinished");
+    return valid ? [item] : [];
+  });
 }
 
-/** Layout JSON is re-read on a page reload, so positions can be edited without code. */
-function requestLayouts(): Promise<void> {
-  if (!layoutsRequest) {
-    layoutsRequest = fetch(assetUrl("rooms.json"), { cache: "no-store" }).then((response) => {
+/** Layouts are re-read on a page reload, so positions can be edited without code. */
+function requestLayout(houseId: string): Promise<void> {
+  let request = layoutRequests.get(houseId);
+  if (!request) {
+    request = fetch(assetUrl(`rooms/${houseId}.svg`), { cache: "no-store" }).then((response) => {
       if (!response.ok) throw new Error("Room artwork layout unavailable");
-      return response.json();
-    }).then((data: unknown) => {
-      roomLayouts = parseLayouts(data);
+      return response.text();
+    }).then((text) => {
+      roomLayouts.set(houseId, parseLayout(text));
     }).catch(() => { /* The game remains playable if optional art is unavailable. */ });
+    layoutRequests.set(houseId, request);
   }
-  return layoutsRequest;
+  return request;
 }
 
 export function roomItems(houseId: string): RoomArtItem[] {
-  if (typeof window !== "undefined") void requestLayouts();
-  return roomLayouts?.[houseId] ?? [];
+  if (!/^[a-z-]+$/.test(houseId)) return [];
+  if (typeof window !== "undefined") void requestLayout(houseId);
+  return roomLayouts.get(houseId) ?? [];
 }
 
 function requestTraveler(): Promise<void> {
@@ -169,8 +184,8 @@ export function preloadArt(): Promise<void> {
     preloading = Promise.resolve();
     return preloading;
   }
-  const rooms = requestLayouts().then(() => Promise.all(
-    Object.values(roomLayouts ?? {}).flat().map((item) => settled(requestImage(item.asset))),
+  const rooms = Promise.all(ROOM_LAYOUTS.map((houseId) => requestLayout(houseId))).then(() => Promise.all(
+    ROOM_LAYOUTS.flatMap((houseId) => roomLayouts.get(houseId) ?? []).map((item) => settled(requestImage(item.asset))),
   ));
   const all = Promise.all([
     ...STATIC_ART.map((path) => settled(requestImage(path))),

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-45 -180 90 184" width="180" height="368">
+  <title>Grain silo (collapsed roof)</title>
+  <rect x="-34" y="-140" width="68" height="140" fill="#332622"/>
+  <path d="M-34-140A34 34 0 0 1 34-140Z" fill="#332622"/>
+  <path d="M-34-28H34M-34-56H34M-34-84H34M-34-112H34" fill="none" stroke="#000" stroke-opacity=".3" stroke-width="2"/>
+  <rect x="-12" y="-36" width="24" height="36" fill="#17100c"/>
+  <polygon points="5,-173 30,-163 37,-136 13,-143" fill="#111015"/>
+  <path d="M-26-119L-3-89L-13-56M28-70L9-50" fill="none" stroke="#141015" stroke-width="3"/>
+  <rect x="-16" y="-38" width="32" height="38" fill="#161014"/>
+</svg>

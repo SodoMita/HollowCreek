@@ -40,24 +40,25 @@ try {
   assert.ok(difference > 3, `open and closed doorway pixels should differ (${difference.toFixed(1)})`);
   assert.ok(brightness > 22, `open doorway should reveal the room, not a black panel (${brightness.toFixed(1)})`);
   console.log(`PASS open doorway reveals the room; its pixels change (${difference.toFixed(1)})`);
-  for (const path of ["/art/rooms.json", "/art/characters/traveler.svg", "/art/scenery/autumn-tree.svg", "/art/house/facade-tollhouse.svg", "/art/house/door-frame.svg", "/art/house/door-closed.svg", "/art/house/door-open.svg", "/art/furniture/hearth.svg"]) {
+  for (const path of ["/art/rooms/tollhouse.svg", "/art/characters/traveler.svg", "/art/scenery/autumn-tree.svg", "/art/house/facade-tollhouse.svg", "/art/house/door-frame.svg", "/art/house/door-closed.svg", "/art/house/door-open.svg", "/art/furniture/hearth.svg"]) {
     assert.ok(loaded.has(path), `${path} was actually loaded`);
   }
   console.log("PASS game loads the editable SVG artwork and room layout");
   await page.goto(`${base}/art`, { waitUntil: "domcontentloaded" });
   assert.ok(await page.getByText("The art library").count());
-  assert.ok(await page.getByRole("link", { name: "Room layout JSON" }).count());
+  assert.ok(await page.getByRole("link", { name: "Room layout SVG" }).count());
   assert.ok((await page.locator('img[src^="/art/"]').count()) >= 29);
   console.log("PASS art library previews and links to editable assets");
   const standalone = await page.request.get(`${base}/play/art/house/door-open.svg`);
   assert.equal(standalone.status(), 200);
   assert.ok((await standalone.text()).includes("door-leaf-swung-out"));
-  const standaloneLayout = await page.request.get(`${base}/play/art/rooms.json`);
+  const standaloneLayout = await page.request.get(`${base}/play/art/rooms/tollhouse.svg`);
   assert.equal(standaloneLayout.status(), 200);
   console.log("PASS standalone client has the same SVG files and layout");
+  // The standalone lobby already preloads the art, so listen from before the page loads.
+  const artResponse = page.waitForResponse((response) => response.url().includes("/play/art/") && response.status() === 200, { timeout: 12000 });
   await page.goto(`${base}/play`, { waitUntil: "domcontentloaded" });
   await page.locator("#name").fill("ArtSmoke");
-  const artResponse = page.waitForResponse((response) => response.url().includes("/play/art/") && response.status() === 200, { timeout: 12000 });
   await page.locator("#create").click();
   await page.locator("#game").waitFor({ state: "visible", timeout: 12000 });
   await artResponse;

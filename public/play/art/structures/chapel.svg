@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-140 -470 280 476" width="560" height="952">
+  <title>Meeting house (intact)</title>
+  <!-- Units: 1 unit = 1/28.2 m. Walls 240 x 141, ridge at -209, belfry floor -305, spire tip -438. -->
+  <rect x="-120" y="-141" width="240" height="141" fill="#2b2129"/>
+  <path d="M-120-133H120M-120-125H120M-120-117H120M-120-109H120M-120-101H120M-120-93H120M-120-85H120M-120-77H120M-120-69H120M-120-61H120M-120-53H120M-120-45H120M-120-37H120M-120-29H120M-120-21H120M-120-13H120M-120-5H120" fill="none" stroke="#000" stroke-opacity=".28" stroke-width="1"/>
+  <g fill="#3a2f38">
+    <rect x="-120" y="-141" width="6" height="141"/>
+    <rect x="114" y="-141" width="6" height="141"/>
+    <rect x="-120" y="-8" width="240" height="8"/>
+  </g>
+  <polygon points="-134,-141 0,-209 134,-141" fill="#17111a"/>
+  <path d="M-134-141L0-209L134-141M-134-139H134" fill="none" stroke="#5a4f58" stroke-width="3"/>
+  <rect x="-25.5" y="-305" width="51" height="108" fill="#2b2129"/>
+  <rect x="-29.5" y="-309" width="59" height="6" fill="#3a2f38"/>
+  <rect x="-21.5" y="-353" width="43" height="48" fill="#241a22"/>
+  <path d="M-11.73-309V-331.4A11.73 11.73 0 0 1 11.73-331.4V-309Z" fill="#120a0e"/>
+  <circle cx="0" cy="-322.02" r="5.87" fill="#8c6a2f"/>
+  <rect x="-27.5" y="-359" width="55" height="6" fill="#3a2f38"/>
+  <polygon points="-27.5,-359 0,-438 27.5,-359" fill="#17111a"/>
+  <path d="M0-438V-464M-9-454H9" fill="none" stroke="#c9b98a" stroke-width="2"/>
+  <path d="M-89.4-47.85V-101.85A16.5 16.5 0 0 1-56.4-101.85V-47.85Z M56.4-47.85V-101.85A16.5 16.5 0 0 1 89.4-101.85V-47.85Z" fill="#1a1219"/>
+  <rect x="-23.5" y="-88" width="47" height="88" fill="#1a1219"/>
+  <rect x="-18.5" y="-68" width="37" height="68" fill="#120a0e"/>
+  <path d="M0-68V0" fill="none" stroke="#3a2f38" stroke-width="2"/>
+  <rect x="-33.5" y="-6" width="67" height="6" fill="#3d3a42"/>
+  <rect x="-39.5" y="-3" width="79" height="3" fill="#3d3a42"/>
+</svg>

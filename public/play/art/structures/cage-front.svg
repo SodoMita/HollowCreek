@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-40 -112 80 112" width="160" height="224">
+  <title>Prisoner's cage (front bars)</title>
+  <path d="M-19-94V0M-7-94V0M5-94V0M17-94V0M29-94V0" fill="none" stroke="#4a4552" stroke-width="3.5"/>
+  <rect x="-32" y="-96" width="64" height="96" fill="none" stroke="#57515f" stroke-width="5"/>
+  <path d="M-32-66H32" fill="none" stroke="#57515f" stroke-width="5"/>
+  <path d="M0-96V-112" fill="none" stroke="#3a3542" stroke-width="2"/>
+</svg>

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-140 -470 280 476" width="560" height="952">
+  <title>Meeting house window frames</title>
+  <!-- Drawn over the lit glass: two arched-window frames with muntins and the fan light over the door. -->
+  <g fill="none" stroke="#1f110f" stroke-opacity=".9" stroke-width="2">
+    <rect x="-86.4" y="-101.85" width="27" height="54"/>
+    <path d="M-72.9-101.85V-47.85M-86.4-74.85H-59.4"/>
+    <rect x="59.4" y="-101.85" width="27" height="54"/>
+    <path d="M72.9-101.85V-47.85M59.4-74.85H86.4"/>
+    <rect x="-18.5" y="-84" width="37" height="12"/>
+    <path d="M0-84V-72M-18.5-78H18.5"/>
+  </g>
+</svg>

@@ -1,5 +1,6 @@
-// House composition is intentionally data-driven: editable SVGs and rooms.json
-// supply the artwork; this module only places layers in the existing world.
+// House composition is intentionally data-driven: editable SVGs and the room
+// layout SVGs (rooms/<house>.svg) supply the artwork; this module only places
+// layers in the existing world.
 import { doorX, type Building, type DoorState } from "./buildings";
 import { drawSvg, roomItems } from "./svg-assets";
 import type { TaskView } from "./types";
