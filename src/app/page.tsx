@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, BookOpen, DoorOpen, Flame, Moon, Plus, RefreshCw, Skull, Trophy, Users } from "lucide-react";
 import Link from "next/link";
@@ -18,7 +17,6 @@ function getPid(): string {
 }
 
 export default function Home() {
-  const router = useRouter();
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -80,7 +78,9 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed");
-      router.push(`/room/${data.code}`);
+      // The room is played by the standalone client; a full navigation keeps the
+      // landing page (React) out of the game.
+      window.location.assign(`/play/?room=${encodeURIComponent(data.code)}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");
       setBusy(false);
@@ -101,7 +101,7 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to join");
       if (data.playerId) localStorage.setItem("hc_pid", data.playerId);
-      router.push(`/room/${c}`);
+      window.location.assign(`/play/?room=${encodeURIComponent(c)}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");
       setBusy(false);

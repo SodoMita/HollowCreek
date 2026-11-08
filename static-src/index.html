@@ -142,7 +142,31 @@
   #reveal { position:absolute; inset:0; z-index:30; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,.6); pointer-events:none; text-align:center; }
   #reveal .r1 { font-family:"Pirata One"; font-size:clamp(44px,9vw,80px); }
   #reveal .r2 { color:#c9b8a4; font-size:17px; margin-top:8px; }
-  @media (max-width:640px) { #taskwrap{display:none} #tasks{width:180px} .rbtn{width:50px;height:50px} #feed{font-size:11px;bottom:88px} }
+  #minimap { position:absolute; z-index:5; left:50%; transform:translateX(-50%); top:3.1rem; width:min(92vw,540px); pointer-events:none; display:none; }
+  @media (min-width:640px) { #minimap { top:4.2rem; } #minimap.past { top:6.9rem; } }
+  #minimap.hc-on { display:block; }
+  #minimap.hc-on.past { display:none; }
+  @media (min-width:640px) { #minimap.hc-on.past { display:block; } }
+  #minimap .mm-rail { position:relative; height:1.75rem; overflow:hidden; border-radius:999px; border:1px solid rgba(58,39,51,.7); background:rgba(13,8,16,.7); }
+  #minimap span, #minimap svg, #minimap .mm-road, #minimap .mm-meet, #minimap .mm-reach { position:absolute; }
+  #minimap .mm-road { left:8px; right:8px; top:50%; height:1px; transform:translateY(-50%); background:linear-gradient(90deg, rgba(63,122,114,.6), rgba(132,98,76,.7), rgba(192,122,47,.6)); }
+  #minimap .mm-meet { top:0; height:100%; background:rgba(217,154,61,.08); }
+  #minimap .mm-meet-live { background:rgba(217,154,61,.25); }
+  #minimap .mm-reach { top:0; height:100%; background:linear-gradient(90deg, transparent, rgba(255,217,138,.12), transparent); }
+  #minimap .mm-ward { top:50%; width:8px; height:8px; margin:-4px 0 0 -4px; border-radius:50%; }
+  #minimap .mm-diamond { transform:rotate(45deg); border-radius:0; }
+  #minimap .mm-done { background:#6b8e5a; }
+  #minimap .mm-ruin { background:#e06a5a; }
+  #minimap .mm-ready { background:#ffd98a; box-shadow:0 0 5px rgba(255,217,138,.8); }
+  #minimap .mm-idle { background:#8a6f4d; }
+  #minimap .mm-bell { top:50%; width:10px; height:10px; margin:-6px 0 0 -5px; transform:translateY(-3px); }
+  #minimap .mm-cart { top:50%; width:10px; height:6px; margin:-3px 0 0 -5px; border:1px solid #e2be83; border-radius:2px; background:#4a3323; }
+  #minimap .mm-cage { top:50%; width:4px; height:8px; margin:-4px 0 0 -2px; border-radius:1px; background:#4a4552; }
+  #minimap .mm-cage-full { background:#c9b8a4; }
+  #minimap .mm-soul { top:50%; width:6px; height:6px; margin:-3px 0 0 -3px; border-radius:50%; }
+  #minimap .mm-dead { opacity:.4; }
+  #minimap .mm-you { top:50%; width:0; height:0; margin:-9px 0 0 -4px; border-left:4px solid transparent; border-right:4px solid transparent; border-top:6px solid #ffd98a; filter:drop-shadow(0 0 4px rgba(255,217,138,.9)); }
+  @media (max-width:640px) { #taskwrap{display:none} #tasks{width:180px;top:5.6rem} .rbtn{width:50px;height:50px} #feed{font-size:11px;bottom:88px} }
   @media (max-height:520px) { #feed,#tasks{display:none} .rbtn{width:46px;height:46px} }
 </style>
 </head>
@@ -188,6 +212,7 @@
 
   <div id="game">
     <canvas id="cv"></canvas>
+    <div id="minimap" aria-hidden="true"></div>
     <div class="hud" id="topbar">
       <div class="chip"><button id="copycode" style="font-family:monospace;letter-spacing:.3em;color:var(--ink)"></button> <span id="soulcount" style="color:var(--dim)"></span></div>
       <div class="right">

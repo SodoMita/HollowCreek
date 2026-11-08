@@ -12,6 +12,7 @@ import { BELL_X, CARRY_SPEED, GHOST_SPEED, SPEED } from "../src/game/types";
 import { BUILDINGS, DOOR_REACH, doorX } from "../src/game/buildings";
 import type { RoomListing, Snapshot } from "../src/game/types";
 import { applyFrame, frameTouchesPlayers, type WireFrame } from "../src/game/wire";
+import { Minimap } from "./minimap";
 
 // Temporary author-built sandboxes run the same unified code (see SYNC.md).
 // The menu probes them in order; room-code joins also discover the backend
@@ -121,6 +122,7 @@ function updateVoiceHud(status: VoiceStatus) {
     label.textContent = `${status.connected} connected (${status.p2pCount} P2P, ${status.relayCount} Server Relay) · ${status.nearby} in earshot${status.speaking ? " · ● Speaking" : ""}`;
   });
 }
+const minimap = new Minimap($("minimap"));
 const wardPanel = new WardPanel(document.body, {
   move: (wardId, move) => { void send({ action: "ward_move", wardId, move }); },
   close: () => { void send({ action: "ward_cancel" }); },
@@ -512,6 +514,8 @@ function renderHud(s: Snapshot) {
     ? (s.self.killCooldownMs > 0 ? `${Math.ceil(s.self.killCooldownMs / 1000)}s` : "") + (s.self.blackoutCooldownMs > 0 ? ` 🌑${Math.ceil(s.self.blackoutCooldownMs / 1000)}s` : "")
     : "";
 
+  minimap.update(s, viewZoom > 1.05);
+
   // overlays (lobby / end) — rebuild only when changed
   const key = JSON.stringify([s.phase, s.players.map((p) => [p.id, p.name, p.isHost]), s.self.id === s.hostId, s.round, s.winner, s.playerCount]);
   if (key !== overlayKey) {
@@ -545,8 +549,8 @@ function renderHud(s: Snapshot) {
         <div class="row" style="margin-top:12px;justify-content:center;gap:10px">
           <button class="chip" data-act="settings">⚙ Settings</button>
           <button class="chip" data-act="menu" style="border-color:#84624c;padding:10px 12px;flex:1">← Back to towns</button>
-          <a class="chip" href="${server}/chronicle/${s.code}" target="_blank" style="text-decoration:none">Chronicle</a>
-          <a class="chip" href="${server}/stats" target="_blank" style="text-decoration:none">Records</a>
+          <a class="chip" href="chronicle.html?code=${encodeURIComponent(s.code)}&server=${encodeURIComponent(server)}" target="_blank" style="text-decoration:none">Chronicle</a>
+          <a class="chip" href="records.html?server=${encodeURIComponent(server)}" target="_blank" style="text-decoration:none">Records</a>
         </div>`;
     } else ov.style.display = "none";
   }
@@ -680,6 +684,7 @@ function applyZoom(z: number) {
   viewZoom = Math.max(1, Math.min(ZOOM_MAX, z));
   renderer.setViewZoom(viewZoom);
   const up = viewZoom > 1.05;
+  if (snap) minimap.update(snap, up);
   $("noteoverlay").style.display = up ? "block" : "none";
   $("readnote").setAttribute("aria-pressed", up ? "true" : "false");
   $("readnote").textContent = up ? "🔭 Lower glass" : "🔭 Spyglass";

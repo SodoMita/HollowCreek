@@ -11,8 +11,9 @@ for that process.
 | Piece | Where | Notes |
 | --- | --- | --- |
 | Authoritative server | this repo (`npm start`) | owns every position, role, cooldown and outcome |
-| In-app client | `/` and `/room/CODE` | React client served by the same process |
-| Static client | `/play` | built by `node scripts/build-static.mjs` from `static-src/` |
+| Landing page | `/` | the only React page (Next.js + Tailwind); create and join hand off to `/play/?room=CODE` |
+| Standalone client | `/play/` (room, tutorial at `/play/tutorial.html`, records, chronicle) | plain TypeScript, built by `node scripts/build-static.mjs` from `static-src/`; no framework runtime |
+| Old room links | `/room/CODE` | redirect (307) to `/play/?room=CODE` |
 | Published static client | https://sodomita.github.io/HollowCreek/ | the `gh-pages` branch |
 | itch.io / Newgrounds build | GitHub Releases | a direct static ZIP; **no nested iframe** |
 
