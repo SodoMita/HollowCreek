@@ -114,7 +114,7 @@ await page.waitForFunction(() => {
   const g = document.getElementById("game");
   return g && getComputedStyle(g).display !== "none";
 }, null, { timeout: 30000 }).catch(() => {});
-await page.waitForTimeout(3000); // art preload + first snapshots
+await page.waitForTimeout(6000); // art preload + first snapshots
 
 // Warm-up done; measure.
 if (process.env.PROF === "1") await page.evaluate(() => { const p = window.__prof; if (p) { p.acc = {}; p.on = true; } });
@@ -135,7 +135,7 @@ const { profile } = await cdp.send("Profiler.stop");
 const stages = process.env.PROF === "1" ? await page.evaluate(() => { const p = window.__prof; if (!p) return null; p.on = false; return p.acc; }) : null;
 const opsCounts = process.env.OPS === "1" ? await page.evaluate(() => window.__ops) : null;
 const m1 = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map((m) => [m.name, m.value]));
-if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT });
+if (process.env.SHOT) { try { await page.screenshot({ path: process.env.SHOT, timeout: 8000 }); } catch { console.log("screenshot skipped (headless capture unsupported on this GPU path)"); } }
 const canvasPx = await page.evaluate(() => { const c = document.getElementById("cv"); return c ? [c.width, c.height] : null; });
 const heap = await page.evaluate(() => performance.memory ? performance.memory.usedJSHeapSize : 0);
 

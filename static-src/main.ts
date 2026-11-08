@@ -756,31 +756,44 @@ document.addEventListener("click", (e) => {
 
 // -------------------------------------------------------------- canvas ----
 const canvas = $("cv") as HTMLCanvasElement;
-const ctx = canvas.getContext("2d")!;
-const renderer = new Renderer();
+const renderer = new Renderer(canvas);
 renderer.setSettings(settingsStore.value);
 const vw = () => window.visualViewport?.width ?? window.innerWidth;
 const vh = () => window.visualViewport?.height ?? window.innerHeight;
 function resize() {
-  const graphics = settingsStore.value.graphics;
-  const dprCap = graphics.quality === "high" ? 2 : graphics.quality === "medium" ? 1.5 : 1;
-  const dpr = Math.min(window.devicePixelRatio || 1, dprCap) * graphics.resolution;
-  canvas.width = Math.max(1, Math.round(vw() * dpr));
-  canvas.height = Math.max(1, Math.round(vh() * dpr));
-  canvas.style.width = `${vw()}px`; canvas.style.height = `${vh()}px`;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  renderer.resize(vw(), vh());
 }
 settingsStore.subscribe((settings) => { renderer.setSettings(settings); resize(); });
 resize();
 window.addEventListener("resize", resize);
 window.visualViewport?.addEventListener("resize", resize);
+// Other players are drawn on a short interpolation delay between the last two
+// server positions (plus a capped extrapolation past the newest), so state
+// frames arriving ~10×/s read as continuous motion instead of visible steps.
+const interp = new Map<string, { fromX: number; toX: number; fromT: number; toT: number; facing: number; moving: boolean; spd: number }>();
+let interpSnap: Snapshot | null = null;
 let last = performance.now();
 function loop(nowMs: number) {
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, (nowMs - last) / 1000);
   last = nowMs;
   if (!snap || $("game").style.display === "none") return;
-  const age = net.arrival ? Math.min(0.3, (nowMs - net.arrival) / 1000) : 0;
+  if (snap !== interpSnap) {
+    interpSnap = snap;
+    for (const p of snap.players) {
+      if (p.id === snap.self.id) continue;
+      const prev = interp.get(p.id);
+      interp.set(p.id, {
+        fromX: displayX.get(p.id) ?? p.x,
+        toX: p.x,
+        fromT: prev ? prev.toT : nowMs - 100,
+        toT: nowMs,
+        facing: p.facing,
+        moving: p.moving,
+        spd: !p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : SPEED,
+      });
+    }
+  }
   for (const p of snap.players) {
     const cur = displayX.get(p.id);
     if (cur === undefined) { displayX.set(p.id, p.x); continue; }
@@ -798,12 +811,22 @@ function loop(nowMs: number) {
       next += (target - next) * Math.min(1, dt * 8);
       displayX.set(p.id, Math.abs(target - next) > 220 ? target : next);
     } else {
-      const target = p.x + (p.moving ? p.facing * spd * Math.min(age, 0.12) : 0);
-      displayX.set(p.id, Math.abs(target - cur) > 300 ? p.x : cur + (target - cur) * Math.min(1, dt * 14));
+      const it = interp.get(p.id);
+      if (!it || Math.abs(it.toX - cur) > 300) {
+        displayX.set(p.id, p.x);
+        if (it) { it.fromX = it.toX; it.fromT = it.toT; }
+        continue;
+      }
+      const rt = nowMs - 90; // interpolation delay: render 90 ms in the past
+      let x: number;
+      if (rt <= it.fromT) x = it.fromX;
+      else if (rt <= it.toT) x = it.fromX + (it.toX - it.fromX) * ((rt - it.fromT) / Math.max(1, it.toT - it.fromT));
+      else x = it.moving ? it.toX + it.facing * it.spd * Math.min(0.15, (rt - it.toT) / 1000) : it.toX;
+      displayX.set(p.id, x);
     }
   }
   renderer.setFocus(noteFocusX);
-  renderer.render(ctx, vw(), vh(), snap, displayX, nowMs / 1000, dt);
+  renderer.render(vw(), vh(), snap, displayX, nowMs / 1000, dt);
 }
 requestAnimationFrame(loop);
 

@@ -1,8 +1,11 @@
-// People on the street: the living, the caged, the ghosts, and the dead on the road.
-import { drawSvg, drawTraveler } from "../svg-assets";
+// People on the street: the living, the caged, the ghosts, and the dead on the
+// road. One rig per player (body, shadow, kit, key, timepiece, name, action,
+// speech) is created on first sight and then only moved, retextured or hidden.
+import { Container, Sprite } from "pixi.js";
+import { artTexture, bakedTexture, ellipseTexture, labelTexture, lightTexture, travelerTexture, wrapText } from "./textures";
+import { measureTextWidth } from "./paint";
+import { getArtScale } from "../svg-assets";
 import type { Snapshot } from "../types";
-import { light, textWidth } from "./paint";
-import { drawKit } from "./props";
 import type { View } from "./view";
 
 /** Where a figure was last drawn, so facing and gait follow what is shown, not the server's view. */
@@ -10,205 +13,319 @@ export interface Motion { x: number; facing: number; movingUntil: number }
 
 type Body = Snapshot["bodies"][number];
 
-/** A traveller at its ground point. Facing mirrors the sprite; gait is driven by time. */
-export function drawFigure(
-  ctx: CanvasRenderingContext2D, x: number, groundY: number, color: string,
-  facing: number, moving: boolean, ghost: boolean, redEyes: boolean, t: number,
-) {
-  const gait = Math.sin(t * 11 + x * 0.1);
-  const bob = moving ? gait * 1.8 : Math.sin(t * 1.7 + x) * 0.35;
-  ctx.save();
-  ctx.translate(x, groundY + bob);
-  ctx.scale(facing, 1);
-  const pose = moving ? (gait > 0.25 ? 1 : gait < -0.25 ? -1 : 0) : 0;
-  drawTraveler(ctx, color, redEyes, ghost, pose);
-  ctx.restore();
+export interface ActorGroups {
+  bodiesIn: Container;
+  playersIn: Container;
+  bodiesOut: Container;
+  playersCaged: Container;
+  playersOut: Container;
 }
 
-/** Corpses on the road (or inside a house), with the flash of the death and circling crows. */
-export function drawBodies(v: View, inside: boolean) {
-  for (const b of v.snap.bodies) if (!!b.inside === inside) drawBody(v, b);
+interface PlayerRig {
+  root: Container;
+  shadow: Sprite;
+  body: Sprite;
+  kit: Sprite;
+  keyIcon: Sprite;
+  tpLight: Sprite;
+  tp: Sprite;
+  label: Sprite;
+  labelKey: string;
+  action: Sprite;
+  actionKey: string;
+  bubble: Sprite;
+  bubbleKey: string;
 }
 
-function drawBody(v: View, b: Body) {
-  const { ctx, cam, ground, now, t, reduced } = v;
-  const bx = b.x - cam;
-  const age = b.at ? now - b.at : 9999;
-  if (age >= 0 && age < 950 && !reduced) {
-    const p = age / 950;
-    const prev = ctx.globalAlpha;
-    ctx.globalAlpha = prev * (1 - p) * 0.7;
-    light(ctx, bx, ground - 45, 70 + p * 80, 70 + p * 80, "220,40,28", 0.9);
-    ctx.globalAlpha = prev;
-    if (p < 0.55) {
-      ctx.strokeStyle = "#f1b1a0";
-      ctx.lineWidth = 4 * (1 - p);
-      ctx.beginPath();
-      for (let i = 0; i < 3; i++) {
-        ctx.moveTo(bx - 35 + i * 12, ground - 105);
-        ctx.quadraticCurveTo(bx + 8 + i * 12, ground - 65, bx + 35 + i * 12, ground - 25);
-      }
-      ctx.stroke();
-    }
-  }
-  drawSvg(ctx, "props/blood-pool.svg", bx - 30, ground - 9, 60, 14);
-  ctx.save();
-  ctx.translate(bx, ground - 10);
-  ctx.rotate(Math.PI / 2);
-  drawFigure(ctx, 0, 0, b.color, 1, false, false, false, t);
-  ctx.restore();
-  // Three crows circle the body.
-  ctx.strokeStyle = "#0a0608";
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
+interface BodyRig {
+  root: Container;
+  blood: Sprite;
+  flash: Sprite;
+  slashes: Sprite;
+  figure: Sprite;
+  crows: Sprite[];
+}
+
+function spr(parent: Container, tex?: import("pixi.js").Texture): Sprite {
+  const s = new Sprite(tex);
+  parent.addChild(s);
+  return s;
+}
+
+const keyIconTex = () => bakedTexture(`keyicon|${getArtScale()}`, Math.ceil(24 * getArtScale()), Math.ceil(24 * getArtScale()), getArtScale(), (g, pw, ph) => {
+  g.font = `${12 * getArtScale()}px serif`;
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText("🗝", pw / 2, ph / 2);
+  void pw; void ph;
+});
+
+const crowTex = () => bakedTexture("crow", 28, 16, 1, (g) => {
+  g.strokeStyle = "#0a0608";
+  g.lineWidth = 2.5;
+  g.beginPath();
+  g.moveTo(2, 6);
+  g.quadraticCurveTo(14, 12, 26, 6);
+  g.stroke();
+});
+
+const slashTex = () => bakedTexture("slashes", 96, 96, 1, (g) => {
+  g.strokeStyle = "#f1b1a0";
+  g.lineWidth = 4;
   for (let i = 0; i < 3; i++) {
-    const a = t * (0.9 + i * 0.2) + i * 2.1;
-    const cx = bx + Math.cos(a) * (34 + i * 14);
-    const cy = ground - 120 - i * 16 + Math.sin(a * 1.7) * 10;
-    const flap = Math.sin(t * 9 + i * 2) * 4;
-    ctx.moveTo(cx - 7, cy - flap);
-    ctx.quadraticCurveTo(cx, cy + 3, cx + 7, cy - flap);
+    g.beginPath();
+    g.moveTo(13 + i * 12, 5);
+    g.quadraticCurveTo(56 + i * 12, 45, 83 + i * 12, 85);
+    g.stroke();
   }
-  ctx.stroke();
-}
+});
 
-/** Players matching `pick`, in the viewer-last order that the snapshot indexes provide. */
-export function drawPlayers(v: View, motion: Map<string, Motion>, pick: (p: View["sorted"][number]) => boolean) {
-  for (const p of v.sorted) if (pick(p)) drawPlayer(v, motion, p);
-}
+export class Actors {
+  private rigs = new Map<string, PlayerRig>();
+  private bodyRigs: BodyRig[] = [];
 
-/** One player: body, carried kit, key and timepiece icons, name, action and speech. */
-function drawPlayer(v: View, motion: Map<string, Motion>, p: View["sorted"][number]) {
-  const { ctx, w, t, cam, ground, now, snap, displayX, glassUp, settings } = v;
-  const shownX = displayX.get(p.id) ?? p.x;
-  const px = shownX - cam;
-  if (px < -100 || px > w + 100) return;
-  const ghost = !p.alive;
-  if (ghost && snap.self.alive) return; // the living cannot see ghosts
-  const isMate = snap.self.teammates.includes(p.id);
-  const floatY = ghost ? -14 + Math.sin(t * 2 + p.x) * 5 : 0;
-
-  let seen = motion.get(p.id);
-  if (!seen) {
-    seen = { x: shownX, facing: p.facing, movingUntil: 0 };
-    motion.set(p.id, seen);
-  }
-  const dx = shownX - seen.x;
-  if (Math.abs(dx) > 0.6) {
-    seen.facing = dx > 0 ? 1 : -1;
-    seen.movingUntil = t + 0.12;
-  } else if (p.moving && p.id !== snap.self.id) {
-    seen.movingUntil = Math.max(seen.movingUntil, t + 0.05);
-  }
-  seen.x = shownX;
-
-  const prev = ctx.globalAlpha;
-  if (ghost) ctx.globalAlpha = prev * 0.45;
-  else if (p.echo) ctx.globalAlpha = prev * 0.52;
-  if (!ghost) {
-    ctx.fillStyle = "rgba(0,0,0,.35)";
-    ctx.beginPath();
-    ctx.ellipse(px, ground + 2, 17, 4, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  drawFigure(ctx, px, ground + floatY, p.color, seen.facing, t < seen.movingUntil, ghost,
-    isMate || (p.id === snap.self.id && snap.self.role === "hollow"), t);
-  ctx.globalAlpha = prev;
-
-  // A kit stays on its carrier until someone delivers it.
-  if (p.hasSupply) drawKit(ctx, px - 23, ground - 16 + floatY);
-  if (p.hasKey || (p.doorKeys?.length ?? 0) > 0) {
-    ctx.fillStyle = "#e8b93c";
-    ctx.font = "12px serif";
-    ctx.textAlign = "center";
-    ctx.fillText("🗝", px + 16, ground - 52 + floatY);
-  }
-  if (p.hasTimepiece) {
-    if (v.glow) light(ctx, px + 20, ground - 52 + floatY, 14, 16, "156,218,211", 0.5);
-    drawSvg(ctx, "props/timepiece.svg", px + 12, ground - 62 + floatY, 15, 20);
+  constructor(private groups: ActorGroups) {
+    groups.playersIn.sortableChildren = true;
+    groups.playersOut.sortableChildren = true;
+    groups.playersCaged.sortableChildren = true;
   }
 
-  // Name and speech are optional HUD layers; figures stay identifiable by colour.
-  if (settings.interface.playerNames && !glassUp) {
-    const font = "600 12px system-ui, sans-serif";
-    const label = p.name + (p.echo ? " · echo" : snap.phase === "meeting" && p.voted ? " ✓" : "");
-    const width = textWidth(ctx, label, font);
-    ctx.font = font;
-    ctx.textAlign = "center";
-    ctx.fillStyle = "rgba(5,3,8,.55)";
-    ctx.beginPath();
-    ctx.roundRect(px - width / 2 - 5, ground - 75 + floatY, width + 10, 17, 5);
-    ctx.fill();
-    ctx.fillStyle = p.id === snap.self.id ? "#ffd98a" : p.echo ? "#b9d9d5" : isMate ? "#ff7a6a" : "rgba(245,235,220,.96)";
-    ctx.fillText(label, px, ground - 62 + floatY);
+  private playerRig(): PlayerRig {
+    const root = new Container();
+    const shadow = spr(root, ellipseTexture());
+    shadow.anchor.set(0.5, 0.5);
+    shadow.position.set(0, 2);
+    shadow.width = 34;
+    shadow.height = 8;
+    shadow.tint = 0x000000;
+    shadow.alpha = 0.35;
+    const body = spr(root);
+    body.anchor.set(0.5, 1);
+    const kit = spr(root);
+    kit.position.set(-42, -44);
+    kit.width = 38;
+    kit.height = 28;
+    const keyIcon = spr(root, keyIconTex());
+    keyIcon.anchor.set(0.5, 0.5);
+    keyIcon.position.set(16, -58);
+    keyIcon.width = 14;
+    keyIcon.height = 14;
+    const tpLight = spr(root, lightTexture("156,218,211"));
+    tpLight.anchor.set(0.5, 0.5);
+    tpLight.position.set(20, -52);
+    tpLight.width = 28;
+    tpLight.height = 32;
+    tpLight.alpha = 0.5;
+    const tp = spr(root);
+    tp.position.set(12, -62);
+    tp.width = 15;
+    tp.height = 20;
+    const label = spr(root);
+    label.anchor.set(0.5, 1);
+    label.position.set(0, -58);
+    const action = spr(root);
+    action.anchor.set(0.5, 1);
+    action.position.set(0, -82);
+    const bubble = spr(root);
+    bubble.anchor.set(0.5, 1);
+    return { root, shadow, body, kit, keyIcon, tpLight, tp, label, labelKey: "", action, actionKey: "", bubble, bubbleKey: "" };
   }
-  if (p.action && p.action.until > now && !glassUp) {
-    const font = "600 10px system-ui, sans-serif";
-    const width = textWidth(ctx, p.action.text, font);
-    ctx.font = font;
-    ctx.textAlign = "center";
-    ctx.fillStyle = "rgba(20,27,29,.9)";
-    ctx.beginPath();
-    ctx.roundRect(px - width / 2 - 6, ground - 98 + floatY, width + 12, 16, 5);
-    ctx.fill();
-    ctx.fillStyle = p.echo ? "#bde6dc" : "#f2d1a2";
-    ctx.fillText(p.action.text, px, ground - 87 + floatY);
-  }
-  if (p.bubble && settings.interface.speechBubbles && !glassUp) {
-    drawBubble(v, px, ground - (p.action ? 100 : 72) + floatY, p.bubble.text, Math.min(1, (p.bubble.until - now) / 800));
-  }
-}
 
-const bubbleCache = new Map<string, { lines: string[]; bw: number }>();
+  /** Draws every player into its layer group, in the viewer-last order of `sorted`. */
+  update(v: View, motion: Map<string, Motion>): void {
+    const seen = new Set<string>();
+    let zIn = 0;
+    let zCaged = 0;
+    let zOut = 0;
+    for (const p of v.sorted) {
+      seen.add(p.id);
+      let rig = this.rigs.get(p.id);
+      if (!rig) {
+        rig = this.playerRig();
+        this.rigs.set(p.id, rig);
+      }
+      const group = p.caged ? this.groups.playersCaged : p.inside ? this.groups.playersIn : this.groups.playersOut;
+      if (rig.root.parent !== group) group.addChild(rig.root);
+      rig.root.zIndex = p.caged ? zCaged++ : p.inside ? zIn++ : zOut++;
+      this.updatePlayer(v, motion, rig, p);
+    }
+    for (const [id, rig] of this.rigs) if (!seen.has(id)) rig.root.visible = false;
+    this.updateBodies(v);
+  }
 
-/** Speech above a figure. Wrapped lines are cached by text; at most four lines. */
-function bubbleLayout(ctx: CanvasRenderingContext2D, text: string): { lines: string[]; bw: number } {
-  const hit = bubbleCache.get(text);
-  if (hit) return hit;
-  ctx.font = "12px system-ui, sans-serif";
-  const lines: string[] = [];
-  let line = "";
-  let truncated = false;
-  for (const word of text.split(" ")) {
-    const test = line ? `${line} ${word}` : word;
-    if (ctx.measureText(test).width > 150 && line) {
-      lines.push(line);
-      line = word;
-    } else line = test;
-    if (lines.length >= 4) {
-      truncated = true;
-      break;
+  private updatePlayer(v: View, motion: Map<string, Motion>, rig: PlayerRig, p: View["sorted"][number]): void {
+    const shownX = v.displayX.get(p.id) ?? p.x;
+    const ghost = !p.alive;
+    if (ghost && v.snap.self.alive) { rig.root.visible = false; return; } // the living cannot see ghosts
+    if (shownX < v.cam - 100 || shownX > v.cam + v.w + 100) { rig.root.visible = false; return; }
+    rig.root.visible = true;
+    const isMate = v.snap.self.teammates.includes(p.id);
+    const floatY = ghost ? -14 + Math.sin(v.t * 2 + p.x) * 5 : 0;
+
+    let seenMotion = motion.get(p.id);
+    if (!seenMotion) {
+      seenMotion = { x: shownX, facing: p.facing, movingUntil: 0 };
+      motion.set(p.id, seenMotion);
+    }
+    const dx = shownX - seenMotion.x;
+    if (Math.abs(dx) > 0.6) {
+      seenMotion.facing = dx > 0 ? 1 : -1;
+      seenMotion.movingUntil = v.t + 0.12;
+    } else if (p.moving && p.id !== v.snap.self.id) {
+      seenMotion.movingUntil = Math.max(seenMotion.movingUntil, v.t + 0.05);
+    }
+    seenMotion.x = shownX;
+
+    rig.root.position.set(shownX, floatY);
+    const moving = v.t < seenMotion.movingUntil;
+    const gait = Math.sin(v.t * 11 + shownX * 0.1);
+    const bob = ghost ? 0 : moving ? gait * 1.8 : Math.sin(v.t * 1.7 + shownX) * 0.35;
+    const pose = moving ? (gait > 0.25 ? 1 : gait < -0.25 ? -1 : 0) : 0;
+    const tex = travelerTexture(p.color, isMate || (p.id === v.snap.self.id && v.snap.self.role === "hollow"), ghost, pose);
+    if (tex) {
+      if (rig.body.texture !== tex) rig.body.texture = tex;
+      rig.body.renderable = true;
+    } else rig.body.renderable = false;
+    rig.body.position.set(0, bob);
+    rig.body.scale.x = seenMotion.facing;
+    rig.body.alpha = ghost ? 0.45 : p.echo ? 0.52 : 1;
+    rig.shadow.visible = !ghost;
+
+    const kitTex = p.hasSupply ? artTexture("props/supply-kit.svg", 38, 28) : null;
+    rig.kit.visible = !!kitTex;
+    if (kitTex && rig.kit.texture !== kitTex) rig.kit.texture = kitTex;
+    rig.kit.position.set(-42, -44 + floatY - floatY); // kit rides at ground level in rig space
+    rig.kit.position.y = -44;
+    rig.keyIcon.visible = p.hasKey || (p.doorKeys?.length ?? 0) > 0;
+    const tpTex = p.hasTimepiece ? artTexture("props/timepiece.svg", 15, 20) : null;
+    rig.tp.visible = !!tpTex;
+    if (tpTex && rig.tp.texture !== tpTex) rig.tp.texture = tpTex;
+    rig.tpLight.visible = !!tpTex && v.glow;
+
+    // Name, action and speech are optional HUD layers; figures stay identifiable by colour.
+    const showLabels = !v.glassUp;
+    if (showLabels && v.settings.interface.playerNames) {
+      const label = p.name + (p.echo ? " · echo" : v.snap.phase === "meeting" && p.voted ? " ✓" : "");
+      const colorKey = p.id === v.snap.self.id ? "self" : p.echo ? "echo" : isMate ? "mate" : "other";
+      const key = `${colorKey}|${label}`;
+      if (rig.labelKey !== key) {
+        rig.labelKey = key;
+        const baked = labelTexture(`name|${key}`, label, "600 12px system-ui, sans-serif",
+          colorKey === "self" ? "#ffd98a" : colorKey === "echo" ? "#b9d9d5" : colorKey === "mate" ? "#ff7a6a" : "rgba(245,235,220,0.96)",
+          { bg: "rgba(5,3,8,0.55)", h: 17, padX: 5 });
+        rig.label.texture = baked.tex;
+      }
+      rig.label.visible = true;
+    } else rig.label.visible = false;
+
+    if (showLabels && p.action && p.action.until > v.now) {
+      if (rig.actionKey !== p.action.text) {
+        rig.actionKey = p.action.text;
+        const baked = labelTexture(`action|${p.action.text}`, p.action.text, "600 10px system-ui, sans-serif",
+          p.echo ? "#bde6dc" : "#f2d1a2", { bg: "rgba(20,27,29,0.9)", h: 16, padX: 6 });
+        rig.action.texture = baked.tex;
+      }
+      rig.action.visible = true;
+    } else rig.action.visible = false;
+
+    if (showLabels && p.bubble && v.settings.interface.speechBubbles && p.bubble.text) {
+      if (rig.bubbleKey !== p.bubble.text) {
+        rig.bubbleKey = p.bubble.text;
+        rig.bubble.texture = bubbleTexture(p.bubble.text);
+      }
+      rig.bubble.visible = true;
+      rig.bubble.alpha = Math.max(0.15, Math.min(1, (p.bubble.until - v.now) / 800));
+      rig.bubble.position.set(0, (p.action ? -100 : -72) + 7);
+    } else rig.bubble.visible = false;
+  }
+
+  private updateBodies(v: View): void {
+    const bodies = v.snap.bodies;
+    while (this.bodyRigs.length < bodies.length) {
+      const root = new Container();
+      const blood = spr(root);
+      blood.position.set(-30, -9);
+      blood.width = 60;
+      blood.height = 14;
+      const flash = spr(root, lightTexture("220,40,28"));
+      flash.anchor.set(0.5, 0.5);
+      flash.position.set(0, -45);
+      const slashes = spr(root, slashTex());
+      slashes.position.set(-48, -110);
+      slashes.width = 96;
+      slashes.height = 96;
+      const figure = spr(root);
+      figure.anchor.set(0.5, 1);
+      figure.rotation = Math.PI / 2;
+      figure.position.set(0, -10);
+      const crows: Sprite[] = [];
+      for (let i = 0; i < 3; i++) {
+        const crow = spr(root, crowTex());
+        crow.anchor.set(0.5, 0.5);
+        crow.width = 14;
+        crow.height = 8;
+        crows.push(crow);
+      }
+      this.bodyRigs.push({ root, blood, flash, slashes, figure, crows });
+    }
+    for (let i = 0; i < this.bodyRigs.length; i++) {
+      const rig = this.bodyRigs[i];
+      if (i >= bodies.length) { rig.root.visible = false; continue; }
+      const b: Body = bodies[i];
+      const group = b.inside ? this.groups.bodiesIn : this.groups.bodiesOut;
+      if (rig.root.parent !== group) group.addChild(rig.root);
+      if (b.x < v.cam - 160 || b.x > v.cam + v.w + 160) { rig.root.visible = false; continue; }
+      rig.root.visible = true;
+      rig.root.position.set(b.x, 0);
+      const bloodTex = artTexture("props/blood-pool.svg", 60, 14);
+      if (bloodTex && rig.blood.texture !== bloodTex) rig.blood.texture = bloodTex;
+      rig.blood.renderable = !!bloodTex;
+      const figTex = travelerTexture(b.color, false, false, 0);
+      if (figTex && rig.figure.texture !== figTex) rig.figure.texture = figTex;
+      rig.figure.renderable = !!figTex;
+      const age = b.at ? v.now - b.at : 9999;
+      const showFlash = age >= 0 && age < 950 && !v.reduced;
+      rig.flash.visible = showFlash;
+      rig.slashes.visible = showFlash && age / 950 < 0.55;
+      if (showFlash) {
+        const p = age / 950;
+        const r = (70 + p * 80) * 2;
+        rig.flash.width = r;
+        rig.flash.height = r;
+        rig.flash.alpha = (1 - p) * 0.7 * 0.9;
+        rig.slashes.alpha = 1 - p;
+      }
+      for (let c = 0; c < 3; c++) {
+        const a = v.t * (0.9 + c * 0.2) + c * 2.1;
+        rig.crows[c].position.set(
+          Math.cos(a) * (34 + c * 14),
+          -120 - c * 16 + Math.sin(a * 1.7) * 10,
+        );
+      }
     }
   }
-  if (line && lines.length < 4) lines.push(line);
-  else if (line) truncated = true;
-  if (truncated && lines.length > 0) lines[lines.length - 1] = `${lines[lines.length - 1].slice(0, -1)}…`;
-  const bw = (lines.length ? Math.max(...lines.map((l) => ctx.measureText(l).width)) : 0) + 16;
-  const layout = { lines, bw };
-  if (bubbleCache.size > 256) bubbleCache.clear();
-  bubbleCache.set(text, layout);
-  return layout;
 }
 
-function drawBubble(v: View, x: number, topY: number, text: string, alpha: number) {
-  if (!text) return;
-  const { ctx } = v;
-  const { lines, bw } = bubbleLayout(ctx, text);
+/** A speech bubble (plate, tail, wrapped lines) baked per text. */
+function bubbleTexture(text: string): import("pixi.js").Texture {
+  const asc = getArtScale();
+  const font = "12px system-ui, sans-serif";
+  const lines = wrapText(text, 150, font, 4);
+  const bw = (lines.length ? Math.max(...lines.map((l) => measureTextWidth(l, font))) : 0) + 16;
   const bh = lines.length * 15 + 10;
-  const bx = x - bw / 2;
-  const by = topY - bh;
-  const prev = ctx.globalAlpha;
-  ctx.globalAlpha = prev * Math.max(0.15, alpha);
-  ctx.fillStyle = "rgba(245,240,228,0.95)";
-  ctx.beginPath();
-  ctx.roundRect(bx, by, bw, bh, 8);
-  ctx.moveTo(x - 5, by + bh);
-  ctx.lineTo(x + 5, by + bh);
-  ctx.lineTo(x, by + bh + 7);
-  ctx.fill();
-  ctx.fillStyle = "#241a14";
-  ctx.font = "12px system-ui, sans-serif";
-  ctx.textAlign = "center";
-  for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], x, by + 17 + i * 15);
-  ctx.globalAlpha = prev;
+  return bakedTexture(`bubble|${text}|${asc}`, Math.ceil(bw * asc), Math.ceil((bh + 7) * asc), asc, (g, pw, ph) => {
+    const s = asc;
+    g.fillStyle = "rgba(245,240,228,0.95)";
+    g.beginPath();
+    g.roundRect(0, 0, bw * s, bh * s, 8 * s);
+    g.moveTo((bw / 2 - 5) * s, bh * s);
+    g.lineTo((bw / 2 + 5) * s, bh * s);
+    g.lineTo((bw / 2) * s, ph);
+    g.fill();
+    g.fillStyle = "#241a14";
+    g.font = `${12 * s}px system-ui, sans-serif`;
+    g.textAlign = "center";
+    lines.forEach((l, i) => g.fillText(l, pw / 2, (17 + i * 15) * s));
+    void ph;
+  });
 }

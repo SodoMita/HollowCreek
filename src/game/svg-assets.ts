@@ -193,21 +193,32 @@ export function drawSvg(
   return true;
 }
 
-/** The traveller sprite in its own colours, baked per palette and pose. Drawn in local coordinates. */
-export function drawTraveler(ctx: CanvasRenderingContext2D, color: string, redEyes: boolean, ghost: boolean, pose: number): boolean {
-  if (typeof window === "undefined") return false;
+/** The baked traveller canvas in its own colours (palette and pose), or null while it bakes.
+ *  The Pixi renderer turns this into a GPU texture; drawTraveler below keeps the 2D path. */
+export function travelerCanvas(color: string, redEyes: boolean, ghost: boolean, pose: number): HTMLCanvasElement | null {
+  if (typeof window === "undefined") return null;
   void requestTraveler();
-  if (!travelerTemplate) return false;
+  if (!travelerTemplate) return null;
   const cloak = /^#[0-9a-f]{6}$/i.test(color) ? color : "#3a7ca5";
   const step = pose > 0 ? 3 : pose < 0 ? -3 : 0;
   const key = `${cloak}:${redEyes}:${ghost}:${step}:${artScale}`;
   const hit = travelers.get(key);
-  if (hit) {
-    ctx.drawImage(hit, -20, -54, 40, 54);
-    return true;
-  }
+  if (hit) return hit;
   if (!travelerPending.has(key)) bakeTraveler(key, cloak, redEyes, ghost, step, travelerTemplate);
-  return false;
+  return null;
+}
+
+/** Current raster density (device px per world unit, half-step bucketed). */
+export function getArtScale(): number {
+  return artScale;
+}
+
+/** The traveller sprite in its own colours, baked per palette and pose. Drawn in local coordinates. */
+export function drawTraveler(ctx: CanvasRenderingContext2D, color: string, redEyes: boolean, ghost: boolean, pose: number): boolean {
+  const canvas = travelerCanvas(color, redEyes, ghost, pose);
+  if (!canvas) return false;
+  ctx.drawImage(canvas, -20, -54, 40, 54);
+  return true;
 }
 
 function bakeTraveler(key: string, cloak: string, redEyes: boolean, ghost: boolean, step: number, template: string) {

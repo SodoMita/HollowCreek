@@ -118,6 +118,7 @@ const keys = new Set<string>();
 let lastDir = 0;
 const displayX = new Map<string, number>();
 let lastStepTime = 0;
+let lastHudAt = 0;
 
 const store = new SettingsStore();
 let audio: AudioDirector | null = null;
@@ -622,7 +623,11 @@ function step(): void {
     if (s.stamina >= 0.2 && s.exhausted) s.exhausted = false;
   }
   if (s.chapter === 6) s.danger = Math.abs(s.playerX - BELL_X) < 400 ? 0.75 : 0.2;
-  renderHud();
+  // step() now runs at display rate; the HUD only needs ~8 updates a second.
+  if (now - lastHudAt >= 120) {
+    lastHudAt = now;
+    renderHud();
+  }
 }
 
 function buildSnapshot(): Snapshot {
@@ -680,26 +685,19 @@ function frame(nowMs: number, last: { t: number }): void {
       displayX.set(p.id, cur + (p.x - cur) * Math.min(1, dt * 16));
     }
   }
-  renderer.render(ctx, w, h, snap, displayX, nowMs / 1000, dt);
+  renderer.render(w, h, snap, displayX, nowMs / 1000, dt);
   audio?.update(snap);
   if (s.practiceOpen) renderPractice();
 }
 
 function boot(): void {
-  renderer = new Renderer();
+  renderer = new Renderer($<HTMLCanvasElement>("game"));
   renderer.setSettings(store.value);
   setupPanels();
   bindInput();
   resize();
   window.addEventListener("resize", resize);
   lastStepTime = performance.now();
-  setInterval(() => {
-    step();
-    if (s.timeVisit) {
-      s.timeNow = Date.now();
-      if (s.timeNow >= s.timeVisit.endsAt) endVisit();
-    }
-  }, 50);
   setInterval(() => { renderHud(); }, 150);
   renderHud();
   const last = { t: performance.now() };
