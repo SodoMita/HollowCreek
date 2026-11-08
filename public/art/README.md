@@ -38,7 +38,11 @@ These are the actual SVG files used by the game, not reference images. Open `/ar
 
 ## Loading and fallbacks
 
-The game draws each SVG once its file has loaded (`src/game/svg-assets.ts`). There is no code fallback for SVG-backed objects: a shape that exists as an SVG is not also drawn in code. The one exception is trees: `src/game/render/tree.ts` keeps its procedural drawing alongside `scenery/autumn-tree.svg`, by the scope decision. Two consequences: art is blank for the first moments after the page loads (the local files load quickly), and a missing or broken file leaves its object undrawn rather than drawing a substitute. Check the browser console and the `public/art` files when an object is missing.
+The game preloads the art before the first frame (`src/game/svg-assets.ts`, `preloadArt()`). A renderer starts the preload when it is created, and `render()` draws a blank frame until it has finished. The preload covers every fixed file in `STATIC_ART`, the furniture named in `rooms.json`, and the traveller sprite. Structure and facade files are listed too, because their paths are built at runtime. `scripts/test-art-manifest.mjs` checks that the list matches the art the code draws, so a new SVG must be added to `STATIC_ART`.
+
+The wait ends after 4 seconds even if some files are still loading. A file that is still loading then appears as soon as it arrives. A missing or broken file is never drawn, and nothing is substituted for it. The traveller's colour and pose variants are generated on first sight, so a new colour can take a moment to appear.
+
+There is no code fallback for SVG-backed objects: a shape that exists as an SVG is not also drawn in code. The one exception is trees: `src/game/render/tree.ts` keeps its procedural drawing alongside `scenery/autumn-tree.svg`, by the scope decision.
 
 What stays in code, by design: the sky gradient, stars, moon halo and rays, smoke, creek water and glints, the road ruts, hills, grass, reeds and plants, trees (procedural, in `tree.ts`), note paper and its text, the marker's diamond, label box and progress bar, animated crows and the death flash, and window light, lanterns and the lit glass (all driven by game state).
 

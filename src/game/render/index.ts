@@ -24,6 +24,7 @@ import { drawBellTower, drawCage, drawDoorKeys, drawKey, drawTimepieces } from "
 import { drawBody, drawPlayer, type Motion } from "./player";
 import { drawDarkness, drawFireflyLayer, drawFlicker, drawFog, drawLeaves, drawPastWash, drawVignette, makeLeaves, type Leaf } from "./effects";
 import { drawForeground, drawGrade, makeGrainTile } from "../atmosphere";
+import { artReady, preloadArt } from "../svg-assets";
 
 export { ZOOM_MAX, ZOOM_READ };
 /** World x of each cage, for the wider game code that needs cage positions. */
@@ -51,6 +52,11 @@ export class Renderer {
   focusX: number | null = null;
   /** A multiplier on the settings' world zoom (1 = lowered). */
   viewZoom = 1;
+
+  constructor() {
+    // Art starts loading as soon as a renderer exists; render() holds frames until it is ready.
+    void preloadArt();
+  }
 
   setSettings(settings: GameSettings) {
     this.env.settings = settings;
@@ -83,6 +89,11 @@ export class Renderer {
     t: number, // seconds
     dt: number,
   ) {
+    if (!artReady()) {
+      // Blank frame while the SVG art loads, so no scene is drawn half-dressed.
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); ctx.restore();
+      return;
+    }
     const env = this.env;
     const graphics = env.settings.graphics;
     // Zoom the world, not the DOM HUD. Gameplay and server vision stay in world units.

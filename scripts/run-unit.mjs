@@ -2,7 +2,7 @@
 // test-command-replay, test-replay-determinism) are excluded — they need
 // DATABASE_URL and belong to CI.
 import { spawnSync } from "node:child_process";
-const SUITES = ["test-rng", "test-fingerprint", "test-wards", "test-house-wards", "test-ward-ui", "test-voice", "test-voice-client", "test-input", "test-history", "test-proximity", "test-focus-trap", "test-polish-gate"];
+const SUITES = ["test-art-manifest", "test-rng", "test-fingerprint", "test-wards", "test-house-wards", "test-ward-ui", "test-voice", "test-voice-client", "test-input", "test-history", "test-proximity", "test-focus-trap", "test-polish-gate"];
 // DB-backed suites run too when a database is reachable (DATABASE_URL set).
 const DB_SUITES = ["test-notes", "test-time-engine", "test-time-multi", "test-time-nested", "test-time-seeing", "test-command-replay", "test-replay-determinism"];
 if (process.env.DATABASE_URL) SUITES.push(...DB_SUITES);

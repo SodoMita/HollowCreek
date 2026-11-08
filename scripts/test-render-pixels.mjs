@@ -31,6 +31,7 @@ const wrapper = join(cacheDir, "entry.ts");
 writeFileSync(wrapper, [
   `export * from ${JSON.stringify(entry)};`,
   `export { createDefaultSettings } from ${JSON.stringify(join(repo, "src/game/settings.ts"))};`,
+  `export { preloadArt } from ${JSON.stringify(join(repo, "src/game/svg-assets.ts"))};`,
   `export { STATIONS, CAGE_XS } from ${JSON.stringify(join(repo, "src/game/types.ts"))};`,
   `export { BUILDINGS } from ${JSON.stringify(join(repo, "src/game/buildings.ts"))};`,
 ].join("\n"));
@@ -140,6 +141,7 @@ window.__scenarios = function (H) {
 const RUNNER = `
 window.__run = async function (scenario, seed) {
   const H = window.H;
+  await H.preloadArt(); // the renderer holds frames until the SVG art has loaded
   const canvas = document.getElementById("c");
   const ctx = canvas.getContext("2d");
   const hash = () => {
