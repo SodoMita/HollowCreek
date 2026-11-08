@@ -142,7 +142,7 @@ HollowCreek/
         ├── history.ts · time-travel.ts · timepieces.ts ........... night checkpoints, time travel
         ├── wards.ts · recovered-wards.ts · ward-ui.ts · ward-hints.ts · ward-art.ts ... repair games
         ├── perf.ts ............................................. frame budget + HUD diff (client only)
-        ├── render/plan.ts · render/tiles.ts .................... camera + baked-tile compositor plan
+        ├── render/plan.ts · render/scene.ts .................... camera maths + display-list scene graph
         ├── buildings.ts · house-art.ts ............................. houses, doors
         ├── proximity.ts · voice-range.ts · voice.ts ............... range queries, voice
         ├── stats.ts · chronicle-access.ts ....................... stats bump, sealed-ledger rule
@@ -249,31 +249,27 @@ See `docs/time-travel.md` for the design.
 | `ward-art.ts` | 54 | `drawKit`, `drawSupplyCart`. The broken-ward damage overlays moved into `public/art/structures/*-broken.svg` (`drawBrokenWard` removed). | svg-assets |
 | `svg-assets.ts` | 94 | Same-origin SVG loader with a cache; `drawSvg`, `drawTraveler`, `roomItems`. Static exports set `hc-art-base`. | — |
 
-### 4.5b Renderer: layered compositor (rewritten)
+### 4.5b Renderer: retained display list (rewritten)
 
-`render/index.ts` is no longer a per-frame scene script. Each frame executes a
-plan split by *what can change*:
+`render/index.ts` no longer scripts the scene per frame. Each snapshot is
+described **once** as bounded nodes; the frame loop is a single generic pass.
 
-| Pass | Content | Rebuilt when |
+| Piece | Where | What it does |
 |---|---|---|
-| screen | sky, horizon (parallax), road surface | every frame (cheap fills) |
-| baked backdrop tiles | street props, creek bridge, house interiors, stations | `tileKey` changes: tile index, viewport height, night bucket, detail preset, bake scale, occupancy, station progress, door states |
-| live overlay | creek glints, meeting square, cart + kits, pages, bell, cages(back), keys, timepieces | every frame (small, data-driven) |
-| actors | bodies and souls inside | every frame |
-| baked facade tiles | house walls, doors, barrels/crates | swing/flicker bucket + occupancy + door state |
-| actors | bodies, caged and free souls outside, cages(front) | every frame |
-| effects | leaves, fireflies, fog, foreground, darkness, vignette, grade | every frame |
+| `render/scene.ts` | `BANDS`, `Scene`, `nodesOf` | Depth bands (sky → mask), per-node world `x` + `span`, culling against the viewport, stable band→x ordering. The compositor never branches on object type. |
+| `render/plan.ts` | camera + order helpers | `cameraTarget`, `smoothCamera`, `screenX`, `drawOrder` (viewer last), `byDepth`, LRU helpers. Pure. |
+| `render/index.ts` | `buildScene` + one loop | Adds sky, horizon, road, props, creek, square, interiors, wards, cart, bell, cages (back/front), pages, keys, souls, bodies, facades, weather, foreground and the lantern mask as nodes. `for (const node of this.scene.visible(...)) node.draw(frame)`. |
 
-- `render/plan.ts` — pure: camera target/ease, world→screen, tile range,
-  `sceneFacts`, `tileKey`, `tileBudget`, draw order. Unit-tested in
-  `scripts/test-render-architecture.mjs`.
-- `render/tiles.ts` — `TileStore`: LRU by entry count and pixel budget, scratch
-  fallback for a tile that can never fit, `updateLimits`, `invalidate`.
-- Bake scale is `devicePixelRatio × world zoom` (quantised to 0.25, capped at 2)
-  read from the live transform, so tiles are sharp on retina without re-baking
-  on every pinch step.
-- The store is cleared when the viewport shape, bake scale or detail preset
-  changes; actors, pages, the cart and the meeting square are never baked.
+- The list is rebuilt only when the snapshot identity changes; camera movement
+  just changes what `visible()` returns, so walking costs a cull + sort of a few
+  hundred nodes, not a scene rebuild.
+- Nodes are `screen` (never culled) or world-bounded (`x`/`span`), so adding a
+  prop is one `scene.add()` with no culling code.
+- The `visible()` buffer is reused between frames (no per-frame allocation).
+- There is deliberately **no baking, batching or object-specific cache**: the
+  frame path is generic, and high frame rates come from culling + a single pass.
+- `scripts/test-render-architecture.mjs` pins band order, culling, ordering,
+  snapshot rebuilds and the "single loop, no special cases" shape.
 
 ### 4.6 Repair workbench UI (shared by both clients)
 

@@ -1,20 +1,12 @@
-// Hollow Creek renderer — rewritten as a layered compositor.
+// Hollow Creek renderer — a retained display list.
 //
-// The old orchestrator re-issued the whole scene every frame: ~200 SVG blits,
-// six shadow passes and four full-screen fills for content that changes only
-// when the world does. This renderer splits the scene by *what can change*:
+// The scene is described once per snapshot as bounded nodes (`./scene.ts`) in
+// depth bands. Each frame the compositor culls by camera, orders by band, then
+// runs one generic draw loop. Nothing in the frame path knows what a house, a
+// tree or a soul is, so there is no per-object optimisation to maintain: a new
+// visual is one `scene.add(...)`, and culling/ordering come for free.
 //
-//   screen layers   sky → horizon     parallax/screen-space, drawn every frame
-//   world tiles     props + interiors + stations + bridge, baked per 1024-unit
-//                   world tile and blitted while their scene facts hold
-//   actor layers    bodies, souls, caged souls, cages      drawn every frame
-//   world tiles     house facades (door swing is part of the key)
-//   effects         leaves, fireflies, fog, foreground, lantern darkness,
-//                   past wash, vignette, flicker, grade   drawn every frame
-//
-// Camera maths, tile ranges and cache keys live in ./plan.ts (pure, tested);
-// the LRU tile store lives in ./tiles.ts. This file only executes the plan, so
-// it stays small enough to read in one sitting.
+// Camera maths and ordering helpers live in ./plan.ts and are unit-tested.
 import { BELL_X, CAGE_XS, WORLD_W, type PublicPlayer, type Snapshot, type TaskView } from "../types";
 import { BUILDINGS, WORLD_MAX, WORLD_MIN, type DoorState } from "../buildings";
 import type { GameSettings } from "../settings";
@@ -32,49 +24,34 @@ import { drawNote, drawPinnedNotes } from "./note";
 import { drawBellTower, drawCage, drawDoorKeys, drawKey, drawTimepieces } from "./landmarks";
 import { drawBody, drawPlayer, type Motion } from "./player";
 import { drawDarkness, drawFireflyLayer, drawFlicker, drawFog, drawLeaves, drawPastWash, drawVignette, makeLeaves, type Leaf } from "./effects";
-import {
-  TILE_W, cameraTarget, drawOrder, flickerBucket, sceneFacts, smoothCamera, swingBucket, tileBudget, tileKey, tileRange, tileStart,
-  type SceneFacts,
-} from "./plan";
-import { TileStore, type TileSurface, type TileStoreStats } from "./tiles";
+import { cameraTarget, drawOrder, smoothCamera } from "./plan";
+import { Scene, type SceneStats } from "./scene";
 
 export { ZOOM_MAX, ZOOM_READ };
 /** World x of each cage, for the wider game code that needs cage positions. */
 export const CAGE_POSITIONS = CAGE_XS;
 
-interface CachedTile extends TileSurface { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D }
-
-const makeTile = (width: number, height: number): CachedTile => {
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  return { canvas, ctx: canvas.getContext("2d")! };
-};
+/** Anything further than this outside the view never reaches the draw loop. */
+const CULL_SLACK = 120;
 
 export class Renderer {
   private readonly env = new DrawEnv();
   private readonly leaves: Leaf[] = makeLeaves();
-  private readonly tiles = new TileStore<CachedTile>({
-    maxTiles: 24,
-    maxPixels: 96 * 1024 * 1024,
-    create: makeTile,
-  });
+  private readonly scene = new Scene();
 
-  // Per-snapshot caches: snapshots are rebuilt every poll, so these turn
-  // per-frame finds, sorts and per-tile fact scans into one pass per snapshot.
-  private cacheFor: Snapshot | null = null;
+  // Per-snapshot state.
+  private sceneFor: Snapshot | null = null;
+  private notesLess: Snapshot | null = null;
   private meCache: PublicPlayer | undefined;
   private sortedCache: PublicPlayer[] = [];
   private doorsCache = new Map<string, DoorState>();
   private tasksCache = new Map<string, TaskView>();
-  private factsCache: SceneFacts = { occupied: "", stations: "", doors: "" };
 
   // Between-frame state.
   private grainTile: HTMLCanvasElement | null | undefined;
   private visionR = 420;
   private readonly doorOpenAmount = new Map<string, number>();
   private readonly motion = new Map<string, Motion>();
-  private viewportKey = "";
 
   /** Smoothed camera x in world units. */
   cameraX = 0;
@@ -95,49 +72,132 @@ export class Renderer {
   /** The spyglass / pinch zoom: clamped to [1, ZOOM_MAX]. */
   setViewZoom(z: number) { this.viewZoom = Math.max(1, Math.min(ZOOM_MAX, z)); }
 
-  /** Tile-cache telemetry for the opt-in perf readout. */
-  get tileStats(): TileStoreStats { return this.tiles.stats; }
-
-  /** Frees baked tiles (settings or viewport change). */
-  clearTileCache() { this.tiles.clear(); }
+  /** Scene composition of the last frame, for the opt-in perf readout. */
+  get sceneStats(): SceneStats { return this.scene.stats(this.cameraX, 1); }
 
   private cacheSnap(snap: Snapshot) {
-    if (this.cacheFor === snap) return;
-    this.cacheFor = snap;
+    if (this.sceneFor === snap) return;
+    this.sceneFor = snap;
+    this.notesLess = { ...snap, notes: [] };
     this.meCache = snap.players.find((p) => p.id === snap.self.id);
     this.sortedCache = drawOrder(snap.players, snap.self.id);
     this.doorsCache = new Map((snap.doors ?? []).map((d) => [d.id, d]));
     this.tasksCache = new Map(snap.tasks.map((t) => [t.id, t]));
-    this.factsCache = sceneFacts(snap, BUILDINGS);
+    this.buildScene(snap);
   }
 
-  /** Blits the baked tiles of one world layer into the current context. */
-  private paintLayer(
-    layer: "backdrop" | "facade",
-    f: Frame,
-    cam: number,
-    width: number,
-    night: number,
-    scale: number,
-    phase: number,
-    paint: (tileFrame: Frame) => void,
-  ) {
-    const ctx = f.ctx;
-    const quality = f.graphics.quality;
-    const range = tileRange(cam, width);
-    for (let index = range.first; index <= range.last; index++) {
-      const from = tileStart(index);
-      if (from >= WORLD_MAX || from + TILE_W <= WORLD_MIN) continue;
-      const key = tileKey({ layer, index, h: f.h, night, quality, scale, facts: this.factsCache, phase });
-      const tile = this.tiles.paint(key, TILE_W * scale, f.h * scale, (surface) => {
-        const target = surface.ctx;
-        target.setTransform(1, 0, 0, 1, 0, 0);
-        target.clearRect(0, 0, surface.canvas.width, surface.canvas.height);
-        // World units → tile pixels: no translation, the paint pass is given cam = tile start.
-        target.setTransform(scale, 0, 0, scale, 0, 0);
-        paint({ ...f, ctx: target, cam: from, w: TILE_W });
+  /**
+   * Describe the room once per snapshot. Every node carries a band, a world x
+   * and a cull span; the frame loop only executes them.
+   */
+  private buildScene(snap: Snapshot) {
+    const scene = this.scene;
+    const env = this.env;
+    const notesLess = this.notesLess ?? snap;
+    scene.clear();
+
+    // --- screen-wide layers -------------------------------------------------
+    scene.add({ band: "sky", x: 0, span: 0, screen: true, draw: (f) => drawSky(f, env) });
+    scene.add({ band: "horizon", x: 0, span: 0, screen: true, draw: (f) => drawHorizon(f, env) });
+    scene.add({ band: "ground", x: 0, span: 0, screen: true, draw: (f) => drawGroundSurface(f, env) });
+    scene.add({ band: "groundProps", x: 0, span: 0, screen: true, draw: (f) => drawGroundProps(f) });
+    scene.add({ band: "creek", x: -2660, span: 320, draw: (f) => drawCreekBridge(f) });
+    scene.add({ band: "creek", x: 0, span: 0, screen: true, draw: (f) => drawCreekGlintLayer(f) });
+    scene.add({ band: "square", x: 0, span: 0, screen: true, draw: (f) => drawMeetingSquare(f) });
+
+    // --- structures ---------------------------------------------------------
+    scene.add({
+      band: "interior", x: 0, span: 0, screen: true, label: "interiors",
+      // Pages stay live (focus zoom, flutter): the interior pass skips them.
+      draw: (f) => drawHouseInteriors({ ...f, snap: notesLess }, env),
+    });
+    scene.add({ band: "station", x: 0, span: 0, screen: true, label: "wards", draw: (f) => drawStations(f, env) });
+    scene.add({ band: "station", x: 0, span: 0, screen: true, label: "cart", draw: (f) => drawCartAndKits(f) });
+    scene.add({ band: "bell", x: BELL_X, span: 140, draw: (f) => drawBellTower(f.ctx, BELL_X - f.cam, f.ground, f.t, f.now - f.snap.bellAt < 4000) });
+
+    for (const cage of snap.cages) {
+      scene.add({ band: "cageBack", x: cage.x, span: 110, label: "cage", draw: (f) => drawCage(f.ctx, cage.x - f.cam, f.ground, false) });
+    }
+
+    // --- loose props and pages ---------------------------------------------
+    scene.add({ band: "overlay", x: 0, span: 0, screen: true, label: "pages", draw: (f) => drawPinnedNotes(f, env) });
+    for (const note of snap.notes ?? []) {
+      if (!note.house) continue;
+      scene.add({
+        band: "overlay", x: note.x, span: 180, label: "wall page",
+        draw: (f) => drawNote(f.ctx, note.x - f.cam, f.ground, "wall", f.focused && f.focusX === note.x, f.t, note, env),
       });
-      ctx.drawImage(tile.canvas, from - cam, 0, TILE_W, f.h);
+    }
+    if (snap.keyX !== null) {
+      const keyX = snap.keyX;
+      scene.add({ band: "overlay", x: keyX, span: 90, label: "iron key", draw: (f) => drawKey(f, env) });
+    }
+    scene.add({ band: "overlay", x: 0, span: 0, screen: true, label: "timepieces", draw: (f) => drawTimepieces(f, env) });
+    scene.add({ band: "overlay", x: 0, span: 0, screen: true, label: "house keys", draw: (f) => drawDoorKeys(f, env) });
+
+    // --- bodies and souls ---------------------------------------------------
+    for (const b of snap.bodies) {
+      scene.add({
+        band: b.inside ? "insideBody" : "outsideBody", x: b.x, span: 120, label: "body",
+        draw: (f) => drawBody(f, b),
+      });
+    }
+    for (const p of this.sortedCache) {
+      const band = p.caged ? "cagedActor" : p.inside ? "insideActor" : "outsideActor";
+      scene.add({
+        band, x: 0, span: 0, screen: true, label: "soul",
+        draw: (f) => drawPlayer(f, env, this.motion, f.snap.players.find((q) => q.id === p.id) ?? p),
+      });
+    }
+
+    // --- facades, then the front cages and the weather ----------------------
+    scene.add({
+      band: "facade", x: 0, span: 0, screen: true, label: "facades",
+      draw: (f) => {
+        this.advanceDoors(f);
+        drawHouseExteriors(f, this.doorOpenAmount);
+      },
+    });
+    for (const cage of snap.cages) {
+      scene.add({ band: "cageFront", x: cage.x, span: 110, label: "cage front", draw: (f) => drawCage(f.ctx, cage.x - f.cam, f.ground, true) });
+    }
+    scene.add({
+      band: "weather", x: 0, span: 0, screen: true, label: "weather",
+      draw: (f) => {
+        const g = f.graphics;
+        if (g.particles && !g.reducedMotion) drawLeaves(f, this.leaves, env.qualityCount(100, 55, 22));
+        if (g.particles) drawFireflyLayer(f, env);
+        if (g.fog) drawFog(f, env);
+      },
+    });
+    scene.add({
+      band: "foreground", x: 0, span: 0, screen: true,
+      draw: (f) => { if (f.graphics.quality !== "low") drawForeground(f.ctx, f.cam, f.w, f.h, f.t); },
+    });
+    scene.add({
+      band: "mask", x: 0, span: 0, screen: true, label: "mask + grade",
+      draw: (f) => {
+        const past = f.snap.time?.mode === "past";
+        this.visionR = drawDarkness(f, this.visionR);
+        if (past) drawPastWash(f);
+        if (f.graphics.vignette) drawVignette(f, env);
+        drawFlicker(f);
+        if (f.graphics.quality !== "low") {
+          if (this.grainTile === undefined) this.grainTile = makeGrainTile();
+          drawGrade(f.ctx, f.w, f.h, f.night, f.graphics.quality === "high" && !f.graphics.reducedMotion ? this.grainTile : null, f.t);
+        }
+      },
+    });
+  }
+
+  /** Door swing lives on the renderer (it is the only state the scene mutates). */
+  private advanceDoors(f: Frame) {
+    for (const b of BUILDINGS) {
+      const door = f.doors.get(b.id);
+      const target = door?.open ? 1 : 0;
+      const previous = this.doorOpenAmount.get(b.id) ?? target;
+      const amount = f.graphics.reducedMotion ? target : previous + (target - previous) * Math.min(1, f.dt * 10);
+      this.doorOpenAmount.set(b.id, amount);
     }
   }
 
@@ -155,21 +215,13 @@ export class Renderer {
       ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); ctx.restore();
       return;
     }
-    // The device scale was applied by the caller's resize(); read it before we
-    // multiply the world zoom on top, so baked tiles land on whole pixels.
-    const deviceScale = ctx.getTransform().a || 1;
     const env = this.env;
     const graphics = env.settings.graphics;
-
-    // Zoom the world, not the DOM HUD. Gameplay and server vision stay in world units.
-    // A focused page (read-note zoom) overrides both zoom and camera target.
     const focused = this.focusX !== null;
-    const glassUp = focused || this.viewZoom > 1.05; // HUD-like labels stay out of the zoomed view
+    const glassUp = focused || this.viewZoom > 1.05;
     const base = graphics.worldZoom * this.viewZoom;
     const zoom = Math.min(graphics.worldZoom * ZOOM_MAX, focused ? Math.max(base, ZOOM_READ) : base);
     ctx.save(); ctx.scale(zoom, zoom); w /= zoom; h /= zoom;
-    // Through the glass the page, not the road, should sit mid-screen: lift the
-    // whole view so the paper is centred (wall pages hang higher than tree pages).
     let lift = 0;
     if (focused) {
       const fn = (snap.notes ?? []).find((n) => n.x === this.focusX);
@@ -177,112 +229,25 @@ export class Renderer {
       ctx.translate(0, lift);
     }
     if (graphics.reducedMotion) t = 0;
+
     this.cacheSnap(snap);
     const me = this.meCache;
     const meX = me ? displayX.get(me.id) ?? me.x : WORLD_W / 2;
     const lookX = focused ? this.focusX! : meX;
-    const targetCam = cameraTarget(lookX, w);
-    this.cameraX = smoothCamera(this.cameraX, targetCam, dt, graphics.cameraSmoothing);
+    this.cameraX = smoothCamera(this.cameraX, cameraTarget(lookX, w), dt, graphics.cameraSmoothing);
     const cam = this.cameraX;
     const ground = h * 0.78;
-    const now = snap.now;
-
-    // Time travel to the past pins the sky to early dusk and warms the scene.
     const past = snap.time?.mode === "past";
     const night = past ? 0.05 : Math.min(1, Math.max(0, snap.nightT ?? 0.2));
-    const nb = Math.round(night * 10) / 10; // bucket: keeps the gradient cache small
 
-    const f: Frame = {
-      ctx, w, h, t, dt, cam, ground, now, night, nb, snap, displayX, meX,
+    const frame: Frame = {
+      ctx, w, h, t, dt, cam, ground, now: snap.now, night, nb: Math.round(night * 10) / 10, snap, displayX, meX,
       focused, focusX: this.focusX, glassUp, lift, graphics,
       tasks: this.tasksCache, doors: this.doorsCache, sorted: this.sortedCache,
     };
 
-    // Tiles are invalidated wholesale when the viewport shape or the bake scale
-    // changes; their keys cannot be reused at a different size.
-    const tileScale = Math.min(2, Math.max(0.5, deviceScale * zoom));
-    const viewportKey = `${Math.round(w)}:${Math.round(h)}:${tileScale.toFixed(2)}:${graphics.quality}`;
-    if (viewportKey !== this.viewportKey) {
-      this.viewportKey = viewportKey;
-      this.tiles.clear();
-      this.tiles.updateLimits(tileBudget(w, h, tileScale));
-    }
-
-    // ---- screen layers: parallax and full-screen gradients -----------------
-    drawSky(f, env);
-    drawHorizon(f, env);
-    drawGroundSurface(f, env);
-
-    // ---- baked world: props, bridge, interiors, stations -------------------
-    const bakeSnap: Snapshot = { ...snap, notes: [] }; // pages stay live for the spyglass
-    const bakeFrame = { ...f, snap: bakeSnap, focused: false, focusX: null, lift: 0 };
-    this.paintLayer("backdrop", bakeFrame, cam, w, night, tileScale, 0, (tileFrame) => {
-      drawGroundProps(tileFrame);
-      drawCreekBridge(tileFrame);
-      drawHouseInteriors(tileFrame, env);
-      drawStations(tileFrame, env);
-    });
-
-    // ---- live world overlay ------------------------------------------------
-    drawCreekGlintLayer(f);
-    drawMeetingSquare(f);
-    drawCartAndKits(f);
-    // Pages: street pages here, interior pages normally painted with their house.
-    drawPinnedNotes(f, env);
-    for (const note of snap.notes ?? []) {
-      if (!note.house) continue;
-      const sx = note.x - cam;
-      if (sx < -100 || sx > w + 100) continue;
-      drawNote(ctx, sx, ground, "wall", focused && this.focusX === note.x, t, note, env);
-    }
-    drawBellTower(ctx, BELL_X - cam, ground, t, now - snap.bellAt < 4000);
-    for (const c of snap.cages) drawCage(ctx, c.x - cam, ground, false);
-    drawKey(f, env);
-    drawTimepieces(f, env);
-    drawDoorKeys(f, env);
-
-    // ---- souls inside, then the facade tiles that cut the houses away ------
-    for (const b of snap.bodies) if (b.inside) drawBody(f, b);
-    for (const p of f.sorted) if (p.inside && !p.caged) drawPlayer(f, env, this.motion, p);
-
-    // Door swing is advanced here, once per frame, and is part of the tile key.
-    let swingPhase = 0;
-    for (const b of BUILDINGS) {
-      const door = f.doors.get(b.id);
-      const target = door?.open ? 1 : 0;
-      const previous = this.doorOpenAmount.get(b.id) ?? target;
-      const amount = graphics.reducedMotion ? target : previous + (target - previous) * Math.min(1, dt * 10);
-      this.doorOpenAmount.set(b.id, amount);
-      swingPhase += amount * (b.id.length % 5 + 1);
-    }
-    const facadePhase = swingBucket(swingPhase % 1) + flickerBucket(t) / 50;
-    this.paintLayer("facade", { ...bakeFrame, dt: 0 }, cam, w, night, tileScale, facadePhase, (tileFrame) => {
-      drawHouseExteriors(tileFrame, this.doorOpenAmount);
-    });
-
-    // ---- souls outside, cages, then the weather ----------------------------
-    for (const b of snap.bodies) if (!b.inside) drawBody(f, b);
-    for (const p of f.sorted) if (p.caged) drawPlayer(f, env, this.motion, p);
-    // Only prisoners stand behind the fronts; pedestrians remain on the road.
-    for (const c of snap.cages) drawCage(ctx, c.x - cam, ground, true);
-    for (const p of f.sorted) if (!p.caged && !p.inside) drawPlayer(f, env, this.motion, p);
-
-    if (graphics.particles && !graphics.reducedMotion) drawLeaves(f, this.leaves, env.qualityCount(100, 55, 22));
-    if (graphics.particles) drawFireflyLayer(f, env);
-    if (graphics.fog) drawFog(f, env);
-    if (graphics.quality !== "low") drawForeground(ctx, cam, w, h, t);
-
-    // lantern-light darkness mask (server-authoritative vision radius)
-    this.visionR = drawDarkness(f, this.visionR);
-    if (past) drawPastWash(f);
-    if (graphics.vignette) drawVignette(f, env);
-    drawFlicker(f);
-
-    // cool shadows / warm lantern grade, with fine grain on high detail
-    if (graphics.quality !== "low") {
-      if (this.grainTile === undefined) this.grainTile = makeGrainTile();
-      drawGrade(ctx, w, h, night, graphics.quality === "high" && !graphics.reducedMotion ? this.grainTile : null, t);
-    }
+    // One generic pass. No object-specific branching: cull → order → draw.
+    for (const node of this.scene.visible(cam - CULL_SLACK, w + CULL_SLACK * 2)) node.draw(frame);
     ctx.restore();
   }
 }
