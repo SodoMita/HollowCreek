@@ -8,32 +8,32 @@
 
 Consequence: HANDOFF §6.1–6.2 (client parity) no longer applies to the landing page. The standalone client is the only game UI.
 
-## Current state
+## Current state (final, after the room port and merge)
 
 | Route | Where it lives now | Notes |
 |---|---|---|
-| `/` | React (`src/app/page.tsx`), Tailwind, `lucide-react` | Keeps React. It links to the Hall of Records (`/play/records.html`) and to the room and tutorial routes. |
-| `/play/` | Standalone (`static-src/main.ts`, `index.html`) | Game menu and room play via `?room=CODE&server=`. Its "Hall of Records" link goes to `records.html`. |
-| `/play/records.html` | Standalone (`static-src/records.ts`) | Done (turn 50). Reads `GET /api/game/stats`. |
-| `/play/chronicle.html?code=` | Standalone (`static-src/chronicle.ts`) | Done (turn 50). Reads `GET /api/game/chronicle`, which is sealed (403) until the room ends. |
-| `/room/[code]` | React (`src/app/room/[code]/*`, about 75 KB) | Still React. The standalone plays the same game, but has no minimap. |
-| `/tutorial` | React (`src/app/tutorial/*`, about 60 KB) | Still React. Needs a port to `static-src/tutorial/`. |
+| `/` | React (`src/app/page.tsx`), Tailwind, `lucide-react` | Keeps React, Next.js and Tailwind. Create and join hand off to `/play/?room=CODE`. Links to the Hall of Records (`/play/records.html`). |
+| `/play/` | Standalone (`static-src/main.ts`, `index.html`) | Menu and room via `?room=CODE&server=`, with minimap (`static-src/minimap.ts`). End overlay links to `chronicle.html?code=…&server=…` and `records.html?server=…`. |
+| `/play/tutorial.html` | Standalone (`static-src/tutorial.ts`, `static-src/tutorial/`) | Offline. Makes no server calls (`smoke-tutorial-static`, 85 same-origin requests). |
+| `/play/records.html` | Standalone (`static-src/records.ts`) | Reads `GET /api/game/stats`. |
+| `/play/chronicle.html?code=` | Standalone (`static-src/chronicle.ts`) | Reads `GET /api/game/chronicle`, which is sealed (403) until the room ends. |
+| `/room/[code]` | Redirect (307) to `/play/?room=:code` | `next.config.ts`. The React room is deleted. |
+| `/tutorial` | 404 (no redirect) | The React tutorial is deleted. Use `/play/tutorial.html`. A redirect was not requested. |
 | `/art` | Removed | Turn 49. |
 | `/stats`, `/chronicle/[code]` | Removed | Turn 50. Replaced by the standalone pages above. |
 
 ## Remaining work
 
-1. **Room.** Add the minimap to the standalone client. Point the landing's create and join redirects at `/play/?room=CODE`. Then delete `src/app/room/`.
-2. **Tutorial.** Port the eight chapters, the ward surface, the overlay, and the snapshot and time helpers to `static-src/tutorial/`. Then delete `src/app/tutorial/`. Smoke: `smoke-tutorial` (rewrite its selectors for the standalone).
-3. **Landing.** Keep React, Next.js, and Tailwind. Only retarget links.
-4. **Verify.** Full smoke pass on the prod build (3100). Check that `public/play` still builds with `node scripts/build-static.mjs`. Measure code size against 581,079 B.
-5. **Docs.** Update HANDOFF §6.1–6.2, CODE_MAP §4.10, DEPLOY.md, and the READMEs.
+1. **Landing.** Keep React, Next.js and Tailwind. Tailwind stays out of scope for unification (human, turn 50).
+2. **Open verification.** Click through the end-overlay Chronicle and Records links in a real browser on a finished match. Code is checked; the browser run is not.
+3. **Gap, not ported.** About 21 tooltip, aria-label and placeholder strings from the deleted React room. Low value; the behavior is the same.
+4. **Release.** Push `main` and `mallow/code-map-hygiene` to `origin`. The merge with `origin/main` (`e4043cc`) is verified on the prod build.
 
 ## Smokes
 
 - `scripts/smoke-records.mjs` (new, turn 50): 7 checks, stubbed API, run against a static server over `public/play`. Passes.
 - `smoke-art` (art paths, room layout, standalone copies): updated in turn 49.
-- To rewrite, not just rerun: `smoke-time-room-ui` (6 React selectors), `smoke-browser` (3), `smoke-tutorial` (2), `smoke-time-browser` (2), `smoke-static` (2), `smoke-stats` (3, now for the standalone records page).
+- All smokes listed in the verification sections now run against the standalone client and the API. `smoke-tutorial` (React) was replaced by `smoke-tutorial-static`.
 
 ## Tutorial port: status (turn 51)
 
@@ -71,3 +71,11 @@ Run with Postgres 17 (role and DB `hollow`, `drizzle/0000_smart_mongu.sql` appli
 - **Bug found and fixed (snapshot.ts):** for the first five seconds of a match (until the history crossed a five-second step), `time.latest` was below `time.earliest`. `TimePanel.open()` then returned silently, so the timepiece did nothing. `latest` is now clamped to `earliest`. `smoke-time-room-ui` asserts this right after the start.
 - `smoke-qa-visual` (`scripts/qa-visual.mjs`) now reads `?room=` and the standalone settings and tutorial ids. It is not run in this batch.
 - Known gap: the soul marks on the minimap were checked with one visible soul in one run only; the test sets exact counts, so it fails if a mark is missing.
+
+## Merge with origin/main (final)
+
+- `origin/main` (`db56696`, Pippa Thistlehop 83: HANDOFF.md review and a `units.ts` change) was merged into `mallow/code-map-hygiene` as `e4043cc`. The merge was clean.
+- On the merged tree: `tsc` 0, eslint 0, `npm test` 13/13 DB-free, `next build` 0 (13 API routes, `/` and `/api/game/rooms`; no `/room` route), `scripts/build-static.mjs` 0.
+- Preview rebuilt and restarted on port 3000 after the merge. `smoke-room-static` passes; `smoke-time-room-ui` passes; `smoke-stats` 47/47.
+- Local `main` fast-forwarded to `e4043cc`.
+- Security: the polish channel key remains in git history (Pippa's review). Its owner must rotate it. The GitHub PAT used for the push must be revoked after use.

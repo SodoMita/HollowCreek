@@ -52,4 +52,4 @@ Keep each SVG's `viewBox` unless intentionally changing its game alignment. Hous
 
 Avoid external images, fonts, scripts, or remote references inside SVGs: keeping them self-contained lets the canvas render safely and keeps the standalone client portable. The sky, fog, and effects, plus the state-driven light listed above, are still canvas-drawn; the objects listed above and the `structures/` files are editable SVGs.
 
-The full site reads `public/art` directly. After editing art or the room layouts, run `node scripts/build-static.mjs` to copy the same assets into `public/play/art` for the standalone client. A browser refresh reloads the art. Gameplay positions and server-authoritative door/task rules are separate from the artwork.
+The source files are in `public/art`; `scripts/build-static.mjs` copies them to `public/play/art` for the standalone client. The old `/art` page was removed. After editing art or the room layouts, run `node scripts/build-static.mjs` to copy the same assets into `public/play/art` for the standalone client. A browser refresh reloads the art. Gameplay positions and server-authoritative door/task rules are separate from the artwork.

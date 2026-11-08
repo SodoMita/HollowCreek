@@ -31,7 +31,13 @@ async function setup(prefix) {
   assert.ok(young.time.latest >= young.time.earliest, "time range is valid right after the start");
   assert.ok((await send(id, { action: "interact" })).ok);
   assert.ok((await state(id)).self.hasTimepiece);
-  await sleep(1200); // leave more than one recorded moment for the slider
+  // The range is floored to five-second steps, so wait until it has real width (latest > earliest).
+  // A fixed sleep was flaky: a fast walk left the match under five seconds old and the slider had one moment.
+  for (let wait = 0; wait < 60; wait++) {
+    const t = (await state(id)).time;
+    if (t.latest > t.earliest) break;
+    await sleep(250);
+  }
   return { ids, id, name, code, state, send };
 }
 
