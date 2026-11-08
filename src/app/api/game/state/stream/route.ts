@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { loadRoom, onRoomEvent } from "@/game/engine";
 import { FRAME_MS, nextFrame, slowDueIn } from "@/game/viewers";
-import { allow, clientKey } from "@/server/rate-limit";
+import { admit } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -14,12 +14,13 @@ export const dynamic = "force-dynamic";
  * back to the long-poll on any error.
  */
 export async function GET(req: NextRequest) {
-  if (!allow(`stream:${clientKey(req)}`, 20, 60_000)) {
-    return new Response("Slow down.", { status: 429 });
-  }
   const codeParam = req.nextUrl.searchParams.get("code") ?? "";
   const code = codeParam.length <= 8 ? codeParam.toUpperCase() : "";
   const playerId = (req.nextUrl.searchParams.get("playerId") ?? "").slice(0, 64);
+  // Connections are few per soul (one open stream plus occasional reconnects).
+  if (!admit(req, "stream", `${code}:${playerId}`, 30, 300)) {
+    return new Response("Slow down.", { status: 429 });
+  }
   const room = code ? await loadRoom(code) : undefined;
   if (!room) return new Response("No such town.", { status: 404 });
 

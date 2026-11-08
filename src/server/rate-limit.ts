@@ -1,5 +1,10 @@
 // Tiny in-memory token bucket per key. Serverless restarts reset it, which is
 // fine — this exists to stop a script hammering create/join, not to be perfect.
+//
+// Game traffic is limited per SOUL (player) first, with a generous per-IP
+// backstop. Many real players share one address (a household, a school, a
+// carrier NAT, or a proxy that forwards no client IP), so a per-IP-only limit
+// would throttle innocent people for each other's polling.
 
 interface Bucket { tokens: number; resetAt: number }
 const buckets = new Map<string, Bucket>();
@@ -30,9 +35,22 @@ export function allow(key: string, capacity: number, refillMs: number): boolean 
   return false;
 }
 
-/** Per-IP key from the request (falls back to a shared bucket behind no proxy headers). */
+/** Per-IP key from the request. "unknown" means no proxy header was forwarded. */
 export function clientKey(req: Request): string {
   const fwd = req.headers.get("x-forwarded-for");
   const ip = fwd?.split(",")[0]?.trim() || "unknown";
   return ip;
+}
+
+/**
+ * Admit a game request: the soul's own bucket (`perSoul` per minute) and the
+ * address bucket (`perIp` per minute). Without a forwarded address every
+ * request shares "unknown", so that bucket gets ten times the room — enough
+ * for a whole town, while still bounding a flood.
+ */
+export function admit(req: Request, scope: string, soul: string, perSoul: number, perIp: number, refillMs = 60_000): boolean {
+  const ip = clientKey(req);
+  const ipCapacity = ip === "unknown" ? perIp * 10 : perIp;
+  if (soul && !allow(`${scope}:soul:${soul.slice(0, 96)}`, perSoul, refillMs)) return false;
+  return allow(`${scope}:ip:${ip}`, ipCapacity, refillMs);
 }

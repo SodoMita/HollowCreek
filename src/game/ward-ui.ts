@@ -66,6 +66,10 @@ function styles() {
     .hc-ward-plot button{min-height:38px;padding:2px;font-size:10px}
     .hc-ward-plot span{font-size:11px;color:#c9ae93}
     .hc-ward-note{margin-top:12px;color:#9b877d;font-size:12px;line-height:1.4}
+    .hc-ward-feedback{min-height:20px;margin:10px 0 0;font-size:14px;line-height:1.4;color:#c9ae93}
+    .hc-ward-feedback.good{color:#a9cf9c}
+    .hc-ward-feedback.bad{color:#e6937a}
+    .hc-ward-panel.solved{border-color:#6e9d70;box-shadow:0 0 42px #2b4a30}
     @media(max-height:470px){.hc-ward-root{align-items:flex-start}.hc-ward-panel{max-height:96dvh;padding:10px}.hc-ward-grid{margin:8px 0}.hc-ward-grid button{min-height:42px}.hc-ward-lead{margin:5px 0}}
     @media(max-width:380px){.hc-ward-panel{padding:12px}.hc-ward-plot{grid-template-columns:48px repeat(4,minmax(0,1fr))}.hc-ward-plot button{font-size:9px}.hc-ward-grid small{font-size:10px}}
   `;
@@ -206,6 +210,17 @@ export class WardPanel {
   private signature = "";
   private opening = false;
   private current: WardGameView | null = null;
+  private feedback = "";
+  private feedbackTone: "good" | "bad" | "" = "";
+
+  /** Plain-language reaction to what changed on this board since the last view. */
+  private reactTo(prev: WardGameView | null, view: WardGameView) {
+    if (!prev || prev.stationId !== view.stationId || prev.kind !== view.kind) { this.feedback = ""; this.feedbackTone = ""; return; }
+    if (view.progress >= 1 && prev.progress < 1) { this.feedback = "✓ Repaired. The ward holds its light again."; this.feedbackTone = "good"; }
+    else if (view.mistakes > prev.mistakes) { this.feedback = "✗ That did not fit. The work may have slipped back a step."; this.feedbackTone = "bad"; }
+    else if (view.step > prev.step) { this.feedback = "✓ Good. That part is seated."; this.feedbackTone = "good"; }
+    else { this.feedback = ""; this.feedbackTone = ""; }
+  }
   constructor(
     parent: HTMLElement,
     private callbacks: { move: (stationId: string, index: number) => void; close: () => void; opened: () => void },
@@ -238,12 +253,14 @@ export class WardPanel {
     }
     const wasOpen = this.isOpen;
     const wasPreview = this.current?.kind === "scarecrow" && this.current.revealMs > 0;
+    const prevView = this.current;
     this.current = view;
     this.root.hidden = false;
     const signature = JSON.stringify([view.stationId, view.kind, view.values, view.targets, view.extra, view.step, view.mistakes, view.moves, view.revealMs > 0]);
     if (signature !== this.signature) {
       const focused = wasOpen ? (document.activeElement as HTMLElement | null)?.dataset.wardMove : undefined;
       this.signature = signature;
+      this.reactTo(prevView, view);
       // While open, morph in place: buttons must survive a move so fast taps,
       // focus and automation never lose the node they are pressing.
       if (wasOpen) this.morph(view); else this.render(view);
@@ -281,13 +298,14 @@ export class WardPanel {
 
   private markup(view: WardGameView) {
     const job = WARD_JOBS[view.kind];
-    return `<div class="hc-ward-panel">
+    return `<div class="hc-ward-panel${view.progress >= 1 ? " solved" : ""}">
       <div class="hc-ward-top"><div><small style="color:#d99a3d">${escapeText(view.name).toUpperCase()}</small><h2>${job.title}</h2></div>
         <button type="button" class="hc-ward-close" data-ward-close aria-label="Leave repair puzzle">Leave · Esc</button></div>
       <p class="hc-ward-lead">${job.instruction}</p>
       <div class="hc-ward-progress" role="progressbar" aria-label="Ward repair progress" aria-valuenow="${Math.round(view.progress * 100)}" aria-valuemin="0" aria-valuemax="100"><div style="width:${Math.round(view.progress * 100)}%"></div></div>
       <div class="hc-ward-meta"><span>${Math.round(view.progress * 100)}% repaired</span><span>${view.moves} moves${view.mistakes ? ` · ${view.mistakes} slips` : ""}</span></div>
       ${renderWardJob(view)}
+      <p data-ward-feedback class="hc-ward-feedback ${this.feedbackTone}" aria-live="polite">${escapeText(this.feedback)}</p>
       <p data-ward-vigor class="hc-ward-note"></p>
       <p class="hc-ward-note">No deadline to finish. Tap a part, or use Tab then Enter / Space. Esc leaves; progress stays with this ward.</p>
     </div>`;
