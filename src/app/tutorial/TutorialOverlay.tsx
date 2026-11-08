@@ -10,9 +10,9 @@ import type { AudioDirector } from "@/game/audio";
 import type { SettingsStore } from "@/game/settings";
 import type { SettingsDialog } from "@/game/settings-ui";
 import type { TaskView } from "@/game/types";
-import { CHAPTERS, type Chapter } from "./chapters";
+import { CHAPTERS, type Chapter } from "../../../static-src/tutorial/chapters";
 import { WardJobSurface } from "./WardJobSurface";
-import type { TutorialVisit } from "./tutorial-types";
+import type { TutorialVisit } from "../../../static-src/tutorial/tutorial-types";
 
 export interface TutorialOverlayProps {
   actionHint: string | null;

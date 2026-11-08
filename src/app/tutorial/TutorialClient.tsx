@@ -44,11 +44,11 @@ import {
   type TaskView,
 } from "@/game/types";
 
-import { mergeReturnedDoors, mergeReturnedTasks } from "./tutorial-time";
-import { buildTutorialSnapshot } from "./tutorial-snapshot";
-import { CHAPTERS } from "./chapters";
+import { mergeReturnedDoors, mergeReturnedTasks } from "../../../static-src/tutorial/tutorial-time";
+import { buildTutorialSnapshot } from "../../../static-src/tutorial/tutorial-snapshot";
+import { CHAPTERS } from "../../../static-src/tutorial/chapters";
 import { TutorialOverlay, type TutorialOverlayProps } from "./TutorialOverlay";
-import type { TutorialFrame, TutorialFuture, TutorialVisit } from "./tutorial-types";
+import type { TutorialFrame, TutorialFuture, TutorialVisit } from "../../../static-src/tutorial/tutorial-types";
 
 
 export default function TutorialClient() {
