@@ -121,4 +121,14 @@ assert.notEqual(voteKey(base({ phase: "meeting", meeting: { inArea: true } })), 
 assert.equal(voteKey(base()), "", "no verdict outside a meeting");
 assert.notEqual(feedKey(base({ feed: [{ text: "a" }] })), feedKey(base({ feed: [{ text: "b" }] })), "a new line repaints the feed");
 assert.equal(feedKey(base({ feed: [{ text: "a" }] })), feedKey(base({ feed: [{ text: "a" }] })), "an unchanged feed does not");
-console.log("PERF PASSED: frame budget, dt compensation, memo, countdown tick, region keys");
+// The grain: a repeating pattern must replace the tile blit loop.
+const atmosphere = (await import("node:fs")).readFileSync("src/game/atmosphere.ts", "utf8");
+assert.match(atmosphere, /createPattern\(grain, "repeat"\)/, "grain is one repeating fill");
+assert.ok(!/for \(let gx = -ox/.test(atmosphere), "the per-tile drawImage loop is gone");
+assert.match(atmosphere, /gradeCache = new WeakMap/, "the grade gradient is cached per context");
+
+// Retina caps: high detail must not push native DPR on a 3x phone.
+const client = (await import("node:fs")).readFileSync("static-src/main.ts", "utf8");
+assert.match(client, /quality === "high" \? 1\.75/, "high detail caps the device pixel ratio at 1.75");
+assert.match(client, /perf\.toggle\(wantPerfHud\(\)\)/, "the perf readout is opt-in (?perf=1 / F3)");
+console.log("PERF PASSED: frame budget, dt compensation, memo, countdown tick, region keys, grain pattern, dpr caps");

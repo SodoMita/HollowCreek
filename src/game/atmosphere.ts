@@ -142,6 +142,7 @@ export function drawForeground(ctx: CanvasRenderingContext2D, cam: number, w: nu
 // The grade gradient depends only on the viewport height and a night bucket,
 // so it is built once per resize/dusk step instead of once per frame.
 const gradeCache = new WeakMap<CanvasRenderingContext2D, { key: string; grad: CanvasGradient }>();
+const grainCache = new WeakMap<CanvasRenderingContext2D, { tile: HTMLCanvasElement; pattern: CanvasPattern }>();
 function gradeGradient(ctx: CanvasRenderingContext2D, h: number, night: number) {
   const key = `${Math.round(h)}:${Math.round(night * 10)}`;
   const cached = gradeCache.get(ctx);
@@ -162,12 +163,22 @@ export function drawGrade(ctx: CanvasRenderingContext2D, w: number, h: number, n
   ctx.fillRect(0, 0, w, h);
   ctx.restore();
   if (grain) {
-    ctx.save();
-    ctx.globalAlpha = 0.05;
-    ctx.globalCompositeOperation = "overlay";
-    const ox = Math.floor(t * 61) % 128, oy = Math.floor(t * 47) % 128;
-    for (let gx = -ox; gx < w; gx += 128) for (let gy = -oy; gy < h; gy += 128) ctx.drawImage(grain, gx, gy);
-    ctx.restore();
+    // One repeating pattern fill instead of a 128 px tile blitted across the
+    // viewport (135 drawImage calls per frame on a 1080p screen).
+    let entry = grainCache.get(ctx);
+    if (!entry || entry.tile !== grain) {
+      const pattern = ctx.createPattern(grain, "repeat");
+      if (pattern) { entry = { tile: grain, pattern }; grainCache.set(ctx, entry); }
+    }
+    if (entry) {
+      ctx.save();
+      ctx.globalAlpha = 0.05;
+      ctx.globalCompositeOperation = "overlay";
+      ctx.fillStyle = entry.pattern;
+      ctx.translate(-(Math.floor(t * 61) % 128), -(Math.floor(t * 47) % 128));
+      ctx.fillRect(0, 0, w + 128, h + 128);
+      ctx.restore();
+    }
   }
 }
 

@@ -4,6 +4,7 @@
 import { Renderer, ZOOM_MAX, ZOOM_READ } from "../src/game/render";
 import { WardPanel } from "../src/game/ward-ui";
 import { FrameBudget, HudMemo, feedKey, hudTick, tasksKey, voteKey } from "../src/game/perf";
+import { PerfHud, wantPerfHud } from "./perf-hud";
 import { TimePanel } from "../src/game/time-ui";
 import { AudioDirector } from "../src/game/audio";
 import { VoiceChat, type VoiceStatus } from "../src/game/voice";
@@ -788,7 +789,10 @@ const vw = () => window.visualViewport?.width ?? window.innerWidth;
 const vh = () => window.visualViewport?.height ?? window.innerHeight;
 function resize() {
   const graphics = settingsStore.value.graphics;
-  const dprCap = graphics.quality === "high" ? 2 : graphics.quality === "medium" ? 1.5 : 1;
+  // Retina fill-rate is the biggest canvas cost on phones. 1.75 still reads as
+  // crisp at arm's length while cutting ~23% of the pixels high detail used to
+  // push, and medium/low drop further on old hardware.
+  const dprCap = graphics.quality === "high" ? 1.75 : graphics.quality === "medium" ? 1.25 : 1;
   const dpr = Math.min(window.devicePixelRatio || 1, dprCap) * graphics.resolution;
   canvas.width = Math.max(1, Math.round(vw() * dpr));
   canvas.height = Math.max(1, Math.round(vh() * dpr));
@@ -803,6 +807,18 @@ let last = performance.now();
 // One budget for the canvas: hidden tab, lobby overlay, reduced motion and the
 // low/medium detail presets all draw fewer frames instead of repainting blind.
 const budget = new FrameBudget();
+const perf = new PerfHud(() => ({
+  fps: 0, renderMs: 0, worstMs: 0,
+  hud: hudMemo.stats,
+  rttMs: net.rttMs,
+  pollMs: lastPollAt ? performance.now() - lastPollAt : 0,
+  quality: settingsStore.value.graphics.quality,
+  dpr: Math.min(window.devicePixelRatio || 1, 2) * settingsStore.value.graphics.resolution,
+}));
+perf.toggle(wantPerfHud());
+window.addEventListener("keydown", (event) => {
+  if (event.key === "F3" && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); perf.toggle(); }
+});
 let lastRenderedSnap: Snapshot | null = null;
 let overlayWasVisible = false;
 document.addEventListener("visibilitychange", () => budget.reset());
@@ -847,7 +863,9 @@ function loop(nowMs: number) {
     }
   }
   renderer.setFocus(noteFocusX);
+  const drawStart = performance.now();
   renderer.render(ctx, vw(), vh(), snap, displayX, nowMs / 1000, dt);
+  perf.sample(performance.now() - drawStart);
   lastRenderedSnap = snap;
 }
 requestAnimationFrame(loop);
