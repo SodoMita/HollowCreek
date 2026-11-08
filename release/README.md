@@ -49,7 +49,12 @@ cp icon-192.png play/icon.png
    (cd public/play && zip -r ../../hollow-creek-web.zip .)
    ```
 
-The archive starts with `index.html`, `game.js`, `favicon.ico`, and the icons.
+The archive holds the whole standalone client: `index.html` (menu and room, at
+`index.html?room=CODE`), `game.js`, `tutorial.html` and `tutorial.js` (the singleplayer
+tutorial, which works offline and makes no server calls), `records.html` (Hall of
+Records), `chronicle.html` (a town's ledger, sealed until its night ends), `art/`, the
+favicon and the icons. The room, records and chronicle pages read the town server; the
+tutorial does not.
 There is no nested iframe and no server-side code or database secret in it.
 Audio, graphics, HUD, accessibility, and key-binding preferences are stored only
 in the player's browser under `hc_settings_v1`; they require no backend changes.

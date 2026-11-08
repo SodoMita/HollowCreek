@@ -60,3 +60,14 @@ Consequence: HANDOFF §6.1–6.2 (client parity) no longer applies to the landin
 - Code size: `src/**/*.ts(x)` is 412,323 bytes (79 files) against the 581,079 baseline at `450020e`. HEAD before this turn was 499,689 bytes (92 files). The "577,151" in earlier notes was stale. `static-src/**/*.ts` adds about 99 KB, so the total is still under the baseline.
 - Copy gap (not ported, low value): about 20 tooltip, aria-label and placeholder strings from the React room (for example "Copy town code", "Lower the spyglass (Z, any key, or tap the scene)", the vigor tooltip, the verdict note). The behavior is the same; only the wording differs.
 - Still open: `scripts/smoke-time-room-ui.mjs` (React selectors, `/room/` URLs) and `scripts/qa-visual.mjs` (parses `/room/` from the URL) are not rewritten. Both fail against the new routes until ported to `/play/?room=`. The time-travel visit and the ward workbench inside a house are still unverified on the prod build.
+
+## Verification on the production build (turn 53, after the room port)
+
+Run with Postgres 17 (role and DB `hollow`, `drizzle/0000_smart_mongu.sql` applied) and `next build && next start` on port 3000.
+
+- Browser smokes against the standalone client: `smoke-room-static` (new, 9 checks incl. landing create/join), `smoke-time-room-ui` (rewritten: standalone only, 3 sections), `smoke-browser` (includes house puzzles in the practice workbench), `smoke-time-browser` (tutorial timepiece, slider, past repair, consumed item), `smoke-art`, `smoke-replay-observation`, `smoke-voice` (28), `smoke-tutorial-static` (offline, 85 requests all same-origin).
+- API smokes: `smoke-static` (CORS, Hall of Records cross-origin), `smoke-doors` (33), `smoke-time` (70), `smoke-wards` (49), `smoke-cages`, `smoke-stats` (rewritten for `/play/records.html` and `/api/game/chronicle`; 39/39), `smoke-random`, `smoke-rooms` (persistence across a server restart; it kills every Next server, so run it last).
+- The two previously unverified paths are now covered on the prod build: the timepiece visit (`smoke-time-browser`, `smoke-time-room-ui`) and the ward workbench inside a house (`smoke-browser`).
+- **Bug found and fixed (snapshot.ts):** for the first five seconds of a match (until the history crossed a five-second step), `time.latest` was below `time.earliest`. `TimePanel.open()` then returned silently, so the timepiece did nothing. `latest` is now clamped to `earliest`. `smoke-time-room-ui` asserts this right after the start.
+- `smoke-qa-visual` (`scripts/qa-visual.mjs`) now reads `?room=` and the standalone settings and tutorial ids. It is not run in this batch.
+- Known gap: the soul marks on the minimap were checked with one visible soul in one run only; the test sets exact counts, so it fails if a mark is missing.

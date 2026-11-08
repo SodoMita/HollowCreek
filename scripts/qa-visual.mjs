@@ -21,9 +21,9 @@ const nameInput = page.locator('input').first();
 await nameInput.fill("Clover");
 const found = page.getByRole("button", { name: /found|create|new town/i }).first();
 await found.click();
-await page.waitForURL(/\/room\//, { timeout: 15000 });
+await page.waitForURL((u) => u.searchParams.has("room"), { timeout: 15000 }); // the standalone room
 await page.waitForTimeout(2000);
-const code = page.url().split("/room/")[1].slice(0, 4).toUpperCase();
+const code = new URL(page.url()).searchParams.get("room").toUpperCase();
 // three townsfolk arrive by API; the last joiner holds the lantern
 const botId = await page.evaluate(async (c) => {
   let last = "";
@@ -71,7 +71,7 @@ await page.waitForTimeout(400);
 await page.screenshot({ path: `${out}/04-walking.png` });
 
 // settings dialog
-await page.getByRole("button", { name: "Settings" }).click();
+await page.locator("#settings").click();
 await page.waitForTimeout(600);
 await page.screenshot({ path: `${out}/05-settings.png` });
 await page.keyboard.press("Escape");
@@ -83,7 +83,7 @@ mob.on("pageerror", (e) => errors.push("mobile pageerror: " + e.message));
 await mob.goto(base, { waitUntil: "networkidle" });
 await mob.screenshot({ path: `${out}/06-mobile-home.png` });
 await mob.getByText("Walk Alone · Singleplayer Tutorial").click();
-await mob.getByTestId("tutorial-position").waitFor({ timeout: 15000, state: "attached" });
+await mob.locator("#position").waitFor({ timeout: 15000, state: "attached" });
 await mob.waitForTimeout(2500);
 await mob.screenshot({ path: `${out}/07-mobile-tutorial.png` });
 const overflow = await mob.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);

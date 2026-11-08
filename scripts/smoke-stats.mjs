@@ -92,13 +92,12 @@ const before = mid.self.stamina;
 await sleep(2500);
 check("idling recovers stamina", (await myState()).self.stamina > before);
 
-const sealed = await fetch(`${B}/chronicle/${code}`).then((r) => r.text());
-check("chronicle sealed during match", sealed.includes("The ledger is sealed"));
-check("JSON chronicle sealed during match", (await fetch(`${B}/api/game/log?code=${code}`)).status === 403);
+check("JSON chronicle sealed during match", (await fetch(`${B}/api/game/chronicle?code=${code}`)).status === 403);
+check("chronicle page is served by the standalone client", (await fetch(`${B}/play/chronicle.html?code=${code}`)).status === 200);
 const stats = await fetch(`${B}/api/game/stats`).then((r) => r.json());
 check("stats API shape", stats && typeof stats.global === "object" && Array.isArray(stats.rows));
-const page = await fetch(`${B}/stats`).then((r) => r.text());
-check("Hall of Records renders", page.includes("Hall of Records"));
+const page = await fetch(`${B}/play/records.html`).then((r) => r.text());
+check("Hall of Records page is served by the standalone client", page.includes("Hall of Records"));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

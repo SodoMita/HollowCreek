@@ -210,7 +210,8 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     notes: room.notes.filter((n) => (n.house ? me.inside === n.house : !me.inside && canSee(n.x))).map((n) => ({ id: n.id, x: n.x, kind: n.kind, house: n.house, author: n.authorName, text: n.text })),
     timepieces: loosePieces(room).filter((tp) => canSee(tp.x)).map((tp) => tp.x),
     timepieceX: (() => { const tp = loosePieces(room).find((t2) => canSee(t2.x)); return tp ? tp.x : null; })(),
-    time: room.temporalShadow ? undefined : { mode: "present", earliest: room.history[0]?.at ?? room.startedAt, latest: Math.floor((room.history.at(-1)?.at ?? room.startedAt) / 5000) * 5000 }, // five-second steps: the scrubber label tolerates it, and it keeps the idle stream to a bare clock tick
+    // latest is floored to five-second steps; clamp so a young match never has latest < earliest (the timepiece would silently not open).
+    time: room.temporalShadow ? undefined : { mode: "present", earliest: room.history[0]?.at ?? room.startedAt, latest: Math.max(room.history[0]?.at ?? room.startedAt, Math.floor((room.history.at(-1)?.at ?? room.startedAt) / 5000) * 5000) }, // five-second steps: the scrubber label tolerates it, and it keeps the idle stream to a bare clock tick
     supplyDrops: room.supplyDrops.filter((item) => canSee(item.x)).map((item) => item.x),
     cartX: ix(room.cartX),
     cartPushers: room.cartPushers,
