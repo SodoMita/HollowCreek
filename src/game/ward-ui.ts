@@ -1,6 +1,7 @@
 // Shared repair workbench used by React and the static client. Both render the
 // exact authoritative board; the browser sends only a numbered physical action.
 import { trapTab } from "./focus-trap";
+import { HINT_LABELS, wardHint } from "./ward-hints";
 import { WARD_JOBS, type WardGameView } from "./wards";
 
 const STYLE_ID = "hc-ward-panel-style";
@@ -68,9 +69,22 @@ function styles() {
     .hc-ward-note{margin-top:12px;color:#9b877d;font-size:12px;line-height:1.4}
     @media(max-height:470px){.hc-ward-root{align-items:flex-start}.hc-ward-panel{max-height:96dvh;padding:10px}.hc-ward-grid{margin:8px 0}.hc-ward-grid button{min-height:42px}.hc-ward-lead{margin:5px 0}}
     @media(max-width:380px){.hc-ward-panel{padding:12px}.hc-ward-plot{grid-template-columns:48px repeat(4,minmax(0,1fr))}.hc-ward-plot button{font-size:9px}.hc-ward-grid small{font-size:10px}}
+    .hc-ward-feedback{margin:10px 0 0;padding:8px 10px;border-left:3px solid #8b6236;border-radius:4px;background:#1d141d;color:#e5cda6;font-size:13px;line-height:1.4}
+    .hc-ward-feedback[data-tone="slip"]{border-color:#a8543c;color:#f0c2ae}
+    .hc-ward-feedback[data-tone="good"]{border-color:#6e9d70;color:#cfe4c0}
+    .hc-ward-feedback:empty{display:none}
+    .hc-ward-tools{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:10px}
+    .hc-ward-hint{border:1px solid #6d554a;border-radius:6px;background:#241a22;color:#e9dfcf;padding:8px 12px;min-height:40px;cursor:pointer;font:inherit;text-align:left}
+    .hc-ward-hint:hover,.hc-ward-hint:focus-visible{background:#33232f;border-color:#e2a667;outline:2px solid #e2a667;outline-offset:2px}
+    .hc-ward-hint small{display:block;color:#a99380;font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+    .hc-ward-hintline{margin:8px 0 0;padding-left:9px;border-left:2px solid #8b6236;color:#d9c3a4;font-size:13px;line-height:1.45}
+    .hc-ward-key{color:#a99380;font-size:11px;white-space:nowrap}
   `;
   document.head.appendChild(style);
 }
+
+/** Apply the workbench stylesheet without mounting the in-game overlay. */
+export function installWardStyles() { styles(); }
 
 const escapeText = (value: string) => value.replace(/[&<>"']/g, (char) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
@@ -206,6 +220,10 @@ export class WardPanel {
   private signature = "";
   private opening = false;
   private current: WardGameView | null = null;
+  /** Opt-in nudge level and the last move's feedback; both are local only. */
+  private hintLevel = 0;
+  private feedback = "";
+  private feedbackTone = "";
   constructor(
     parent: HTMLElement,
     private callbacks: { move: (stationId: string, index: number) => void; close: () => void; opened: () => void },
@@ -224,7 +242,25 @@ export class WardPanel {
   get isOpen() { return !this.root.hidden; }
   /** element that had focus before the puzzle opened — restored on close */
   private previouslyFocused: HTMLElement | null = null;
-  private onKey = (event: KeyboardEvent) => { if (this.isOpen) trapTab(this.root, event); };
+  private onKey = (event: KeyboardEvent) => {
+    if (!this.isOpen) return;
+    if (event.key === "Escape" || event.altKey || event.ctrlKey || event.metaKey) { trapTab(this.root, event); return; }
+    if (event.key.toLowerCase() === "h" || event.key.toLowerCase() === "n") {
+      event.preventDefault();
+      this.cycleHint();
+      return;
+    }
+    if (/^[1-9]$/.test(event.key)) {
+      const controls = [...this.root.querySelectorAll<HTMLButtonElement>("[data-ward-move]")];
+      const control = controls[Number(event.key) - 1];
+      if (control && !control.disabled) {
+        event.preventDefault();
+        control.click();
+        return;
+      }
+    }
+    trapTab(this.root, event);
+  };
 
   update(view: WardGameView | null, stamina: number, exhausted: boolean) {
     if (!view) {
@@ -232,12 +268,30 @@ export class WardPanel {
       this.current = null;
       this.signature = "";
       this.opening = false;
+      this.hintLevel = 0;
+      this.feedback = "";
+      this.feedbackTone = "";
       if (this.previouslyFocused?.isConnected) this.previouslyFocused.focus({ preventScroll: true });
       this.previouslyFocused = null;
       return;
     }
     const wasOpen = this.isOpen;
-    const wasPreview = this.current?.kind === "scarecrow" && this.current.revealMs > 0;
+    const previous = this.current;
+    if (!previous || previous.stationId !== view.stationId || previous.kind !== view.kind) {
+      this.hintLevel = 0;
+      this.feedback = "";
+      this.feedbackTone = "";
+    } else if (view.progress >= 1 && previous.progress < 1) {
+      this.feedback = "Mended — the ward is whole again.";
+      this.feedbackTone = "good";
+    } else if (view.mistakes > previous.mistakes) {
+      this.feedback = "That move slipped. Read the board and try another part.";
+      this.feedbackTone = "slip";
+    } else if (view.progress > previous.progress + 0.0005) {
+      this.feedback = "Good turn — the repair answers.";
+      this.feedbackTone = "good";
+    }
+    const wasPreview = previous?.kind === "scarecrow" && previous.revealMs > 0;
     this.current = view;
     this.root.hidden = false;
     const signature = JSON.stringify([view.stationId, view.kind, view.values, view.targets, view.extra, view.step, view.mistakes, view.moves, view.revealMs > 0]);
@@ -267,10 +321,17 @@ export class WardPanel {
   private onClick = (event: MouseEvent) => {
     const target = event.target as HTMLElement;
     if (target.closest("[data-ward-close]")) { this.callbacks.close(); return; }
+    if (target.closest("[data-ward-hint]")) { this.cycleHint(); return; }
     const control = target.closest<HTMLButtonElement>("[data-ward-move]");
     if (!control || !this.current || this.opening) return;
     this.callbacks.move(this.current.stationId, Number(control.dataset.wardMove));
   };
+  /** Local only: no server action, no vigor, no move count. */
+  private cycleHint() {
+    if (!this.current) return;
+    this.hintLevel = (this.hintLevel + 1) % (HINT_LABELS.length + 1);
+    this.morph(this.current);
+  }
   private morph(view: WardGameView) {
     morphHtml(this.root, this.markup(view));
   }
@@ -288,8 +349,14 @@ export class WardPanel {
       <div class="hc-ward-progress" role="progressbar" aria-label="Ward repair progress" aria-valuenow="${Math.round(view.progress * 100)}" aria-valuemin="0" aria-valuemax="100"><div style="width:${Math.round(view.progress * 100)}%"></div></div>
       <div class="hc-ward-meta"><span>${Math.round(view.progress * 100)}% repaired</span><span>${view.moves} moves${view.mistakes ? ` · ${view.mistakes} slips` : ""}</span></div>
       ${renderWardJob(view)}
+      <div class="hc-ward-tools">
+        <button type="button" class="hc-ward-hint" data-ward-hint aria-label="${this.hintLevel === 0 ? "Nudge: explain the rule" : this.hintLevel === 1 ? "Nudge: read this board" : this.hintLevel === 2 ? "Nudge: name the next move" : "Hide the nudge"}" aria-keyshortcuts="H">? Nudge<small>${this.hintLevel === 0 ? "explain the rule" : this.hintLevel === 1 ? "read this board" : this.hintLevel === 2 ? "name the next move" : "hide the clue"}</small></button>
+        <span class="hc-ward-key">1–9 play · H nudge · Esc leaves</span>
+      </div>
+      ${this.hintLevel > 0 ? `<p class="hc-ward-hintline" data-tone="hint" role="status">${escapeText(wardHint(view, this.hintLevel - 1))}</p>` : ""}
+      <p class="hc-ward-feedback" data-tone="${this.feedbackTone}" role="status" aria-live="polite">${escapeText(this.feedback)}</p>
       <p data-ward-vigor class="hc-ward-note"></p>
-      <p class="hc-ward-note">No deadline to finish. Tap a part, or use Tab then Enter / Space. Esc leaves; progress stays with this ward.</p>
+      <p class="hc-ward-note">No deadline to finish. Tap a part, or use Tab then Enter / Space. Esc leaves; progress stays with this ward. A nudge never costs vigor or a move.</p>
     </div>`;
   }
 }

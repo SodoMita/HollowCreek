@@ -14,8 +14,9 @@ await build({
   outfile: "public/play/game.js",
   logLevel: "info",
 });
-// Hall of Records and the Chronicle: plain pages that read the same API.
-for (const page of ["records", "chronicle", "tutorial"]) {
+// Hall of Records, the Chronicle, the tutorial and the offline Repair Bench:
+// plain pages that reuse the shared game modules.
+for (const page of ["records", "chronicle", "tutorial", "bench"]) {
   await build({
     entryPoints: [`static-src/${page}.ts`],
     bundle: true,

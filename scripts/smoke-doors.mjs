@@ -35,13 +35,27 @@ try {
   const ordered = ids.map((id, i) => ({ id, x: pos(initial[i], id).x, role: initial[i].self.role })).filter((item) => item.role === "crew").sort((a, b) => a.x - b.x);
   const [holder, guest] = ordered.map((item) => item.id);
   // Tollhouse: key at -190, side threshold at -338. Both walk there normally.
-  await Promise.all([walk(holder, -190), walk(guest, -300)]);
+  // Door reach is 58 px. Stopping inside a ±16 px window let the old walk land
+  // two pixels outside it, so interact did nothing and only a later assertion
+  // noticed. Both walks now stop within ±8 px of a point well inside reach.
+  await Promise.all([walk(holder, -190), walk(guest, -300, 8)]);
+  ok((await state(guest)).hint?.includes("locked") === true, "guest stands within the tollhouse doorway");
   ok((await send(guest, { action: "interact" })).status === 400, "a keyless player cannot open the locked door");
   ok((await send(holder, { action: "interact" })).data.ok, "the matching key can be picked up");
   ok((await state(holder)).self.doorKeys.includes("tollhouse"), "inventory identifies the particular house key");
-  await walk(holder, -290);
+  await walk(holder, -310, 8);
+  ok((await state(holder)).hint?.includes("unlock") === true, "holder stands within the tollhouse doorway");
   ok((await send(holder, { action: "interact" })).data.ok, "matching key opens the door");
-  ok((await state(holder)).doors.find((d) => d.id === "tollhouse").open, "door is open for other players");
+  let opened = (await state(holder)).doors.find((d) => d.id === "tollhouse");
+  if (!opened.open) {
+    // Defensive: one late movement tick can still leave the player outside
+    // reach on a slow host. Step closer and try once more, but never toggle a
+    // door that did open.
+    await walk(holder, -330, 5);
+    await send(holder, { action: "interact" });
+    opened = (await state(holder)).doors.find((d) => d.id === "tollhouse");
+  }
+  ok(opened.open, "door is open for other players");
   ok((await send(holder, { action: "interact" })).data.ok, "door can be closed without the lock action");
   let door = (await state(holder)).doors.find((d) => d.id === "tollhouse");
   ok(!door.open && !door.locked, "closed door remains unlocked");

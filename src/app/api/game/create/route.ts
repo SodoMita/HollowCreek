@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createRoom } from "@/game/engine";
-import { allow, clientKey } from "@/server/rate-limit";
+import { allowPlayer } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  if (!allow(`create:${clientKey(req)}`, 20, 60_000)) {
+  const { playerId, name } = await req.json().catch(() => ({}));
+  if (!allowPlayer(req, "create", typeof playerId === "string" ? playerId : undefined, 20, 60_000)) {
     return NextResponse.json({ error: "Too many towns from one address. Wait a minute." }, { status: 429 });
   }
-  const { playerId, name } = await req.json().catch(() => ({}));
   if (!playerId || typeof playerId !== "string" || playerId.length > 64) {
     return NextResponse.json({ error: "playerId required" }, { status: 400 });
   }

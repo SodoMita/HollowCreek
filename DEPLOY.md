@@ -12,7 +12,8 @@ for that process.
 | --- | --- | --- |
 | Authoritative server | this repo (`npm start`) | owns every position, role, cooldown and outcome |
 | Landing page | `/` | the only React page (Next.js + Tailwind); create and join hand off to `/play/?room=CODE` |
-| Standalone client | `/play/` (room, tutorial at `/play/tutorial.html`, records, chronicle) | plain TypeScript, built by `node scripts/build-static.mjs` from `static-src/`; no framework runtime |
+| Standalone client | `/play/` (room, tutorial at `/play/tutorial.html`, Repair Bench at `/play/bench.html`, records, chronicle) | plain TypeScript, built by `node scripts/build-static.mjs` from `static-src/`; no framework runtime |
+| Repair Bench | `/play/bench.html` | offline practice for all 13 ward repairs: seeded boards, free nudges, best runs in localStorage; no server or account |
 | Old room links | `/room/CODE` | redirect (307) to `/play/?room=CODE` |
 | Published static client | https://sodomita.github.io/HollowCreek/ | the `gh-pages` branch |
 | itch.io / Newgrounds build | GitHub Releases | a direct static ZIP; **no nested iframe** |
@@ -24,8 +25,9 @@ Use Node 22 and any PostgreSQL database:
 ```bash
 npm ci
 cp .env.example .env          # set DATABASE_URL
-npx drizzle-kit push --force  # creates the four game tables
+npx drizzle-kit push --force  # reads DATABASE_URL from .env (drizzle.config.ts)
 npm run build
+node scripts/build-static.mjs # regenerate public/play/ after static-src changes
 npm start                     # one process, port 3000
 ```
 
@@ -103,4 +105,5 @@ node scripts/smoke-rooms.mjs       # includes concurrent joins after restart
 node scripts/smoke-static.mjs
 node scripts/smoke-stats.mjs http://127.0.0.1:3100
 node scripts/smoke-random.mjs http://127.0.0.1:3100 200
+node scripts/perf-state.mjs http://127.0.0.1:3100 8 240   # latency/payload budgets
 ```

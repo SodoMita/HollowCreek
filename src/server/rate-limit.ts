@@ -36,3 +36,30 @@ export function clientKey(req: Request): string {
   const ip = fwd?.split(",")[0]?.trim() || "unknown";
   return ip;
 }
+
+/**
+ * Identity-scoped budget for the game API.
+ *
+ * A strict bucket is keyed by the explicit playerId the client already sends,
+ * so several people sharing one NAT/proxy address (a household, a school, a
+ * carrier-grade NAT, or one smoke host running every test player) no longer
+ * drain a single tiny budget. A much wider bucket still caps one address that
+ * mints unlimited player ids.
+ *
+ * Without `playerId` the address is used for both buckets, which keeps the old
+ * behaviour for anonymous traffic.
+ */
+export function allowPlayer(
+  req: Request,
+  scope: string,
+  playerId: string | undefined,
+  capacity: number,
+  windowMs: number,
+): boolean {
+  const id = (playerId ?? "").slice(0, 64) || clientKey(req);
+  const playerOk = allow(`${scope}:player:${id}`, capacity, windowMs);
+  // Evaluated even when the player bucket is empty so address bookkeeping
+  // stays honest (no short-circuit skew).
+  const addressOk = allow(`${scope}:address:${clientKey(req)}`, Math.max(capacity, 1200) * 4, windowMs);
+  return playerOk && addressOk;
+}

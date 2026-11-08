@@ -78,13 +78,16 @@ HollowCreek/
 │       ├── index.html · game.js (≈126 KB minified) · art/ · icons
 │
 ├── static-src/ .......... standalone client source (NOT in the Next bundle)
-│   ├── index.html ....... markup + CSS for the menu, lobby, HUD (22.7 KB)
-│   └── main.ts .......... state machine, SSE/long-poll, prediction, SERVERS list (44.3 KB)
+│   ├── index.html ....... markup + CSS for the menu, lobby, HUD
+│   ├── main.ts .......... state machine, SSE/long-poll, prediction, SERVERS list
+│   ├── tutorial.* · records.* · chronicle.* ... offline/own-page clients
+│   └── bench.{html,ts} .. the Repair Bench: all 13 ward puzzles offline
 │
 ├── scripts/ ............. build helpers, tests, smokes, the polish worker
 │   ├── build-static.mjs · run-unit.mjs · analyze-audio.mjs · qa-visual.mjs
 │   ├── polish-loop.mjs · polish-prompt.md · mayfly-client.mjs   (opt-in worker, §9)
 │   ├── test-*.mjs ....... unit + DB suites (run by run-unit.mjs / CI)
+│   ├── perf-state.mjs ... state/poll-storm/input latency + payload budgets
 │   └── smoke-*.mjs ...... end-to-end checks against a running server (take BASE/argv)
 │
 └── src/
@@ -94,7 +97,7 @@ HollowCreek/
     │   └── schema.ts .... gameEvents · roomRows · roomPlayers · playerStats (Drizzle tables)
     ├── server/
     │   ├── polish-supervisor.ts ... ensurePolishWorker(): spawns the worker only when opted in (§9)
-    │   └── rate-limit.ts .......... in-memory token bucket allow(key, max, windowMs), clientKey()
+    │   └── rate-limit.ts .......... token buckets + allowPlayer() identity-scoped budgets
     │
     ├── app/                             (Next.js App Router pages + API)
     │   ├── layout.tsx · globals.css ... root layout, viewport, design tokens (.hc-btn/.hc-panel/...)
@@ -137,7 +140,7 @@ HollowCreek/
         ├── actions.ts · tick.ts · rules.ts ...... lifecycle, intent handling, the 50 ms loop, win rules
         ├── snapshot.ts · fingerprint.ts · wire.ts · viewers.ts ... per-viewer views and deltas
         ├── history.ts · time-travel.ts · timepieces.ts ........... night checkpoints, time travel
-        ├── wards.ts · recovered-wards.ts · ward-ui.ts · ward-art.ts ... repair games
+        ├── wards.ts · recovered-wards.ts · ward-ui.ts · ward-hints.ts · ward-art.ts ... repair games
         ├── buildings.ts · house-art.ts ............................. houses, doors
         ├── proximity.ts · voice-range.ts · voice.ts ............... range queries, voice
         ├── stats.ts · chronicle-access.ts ....................... stats bump, sealed-ledger rule
@@ -248,7 +251,8 @@ See `docs/time-travel.md` for the design.
 
 | Module | Lines | What it is | Imports |
 |---|---:|---|---|
-| `ward-ui.ts` | 333 | `renderWardJob`, `WardPanel`, `morphHtml`. Renders the exact authoritative board; sends one numbered physical action. | focus-trap, wards |
+| `ward-ui.ts` | 380 | `renderWardJob`, `WardPanel`, `morphHtml`, `installWardStyles`. Renders the exact authoritative board; sends one numbered physical action. Adds local-only feedback, 1–9 shortcuts and a Nudge cycle. | focus-trap, ward-hints, wards |
+| `ward-hints.ts` | 240 | `wardHint(view, level)` and `HINT_LABELS`: pure rule → board → next-move nudges for all 13 repairs. Never changes state, moves or vigor. | wards (type) |
 
 ### 4.7 Client-only services
 
@@ -264,7 +268,7 @@ See `docs/time-travel.md` for the design.
 
 | Module | Lines | What it is |
 |---|---:|---|
-| `src/server/rate-limit.ts` | 38 | In-memory token bucket `allow(key, max, windowMs)` and `clientKey(req)`. Resets on restart by design. |
+| `src/server/rate-limit.ts` | 70 | Token buckets: `allow(key, max, windowMs)`, `clientKey(req)`, and `allowPlayer(req, scope, playerId, max, windowMs)` — a strict per-player budget plus a wide per-address flood ceiling, so one NAT no longer shares a tiny limit. Resets on restart by design. |
 | `src/server/polish-supervisor.ts` | 59 | `ensurePolishWorker()`: opt-in spawner for the maintenance worker (§9). |
 
 ### 4.9 React room screen (`src/app/room/[code]/`) — client wiring
@@ -293,7 +297,11 @@ GameClient.tsx
 - `SERVERS` (`main.ts` line 19) is an **ordered list of E2B sandboxes**, which
   expire. The Singleplayer link on the published build is therefore dead (trap T3).
 - `scripts/build-static.mjs` bundles `main.ts` to `public/play/game.js` (IIFE,
-  minified, es2020) and copies `index.html`, `art/` and icons. It is committed.
+  minified, es2020) and the own-page clients (`records`, `chronicle`, `tutorial`,
+  `bench`), then copies `index.html`, `art/` and icons. It is committed.
+- `/play/bench.html` is offline: no API calls at all. It reuses `renderWardJob`
+  and `wardHint`, keeps best runs in localStorage and puts the board in the URL
+  hash (`#<kind>/<seed>`) so a practice link is deterministic.
 
 ### 4.11 Database (`src/db/`)
 
@@ -491,16 +499,16 @@ human or a later branch.
 
 | # | Trap | Where | Status |
 |---|---|---|---|
-| T1 | `drizzle.config.json` hardcodes `postgres://postgres:postgres@…/app_db` and **ignores `DATABASE_URL`**. `npx drizzle-kit push` therefore targets the wrong database and reports "Did not find any relations". Apply `drizzle/0000_smart_mongu.sql` with `psql` if the URL differs. | `drizzle.config.json` | open |
+| T1 | `drizzle.config.json` hardcoded the URL and **ignored `DATABASE_URL`**. | `drizzle.config.json` | **fixed**: replaced by `drizzle.config.ts` (dotenv + required `DATABASE_URL`) |
 | T2 | Opt-out polish worker, channel key committed in a public repo. | `scripts/mayfly-channel.txt`, `polish-supervisor.ts`, `polish-loop.mjs` | **fixed** on branch (opt-in, env-only, untracked; key still in history) |
 | T3 | Standalone `/play` menu lists three expired E2B sandboxes as `SERVERS`, so Singleplayer can't be reached from the published build. | `static-src/main.ts` L19–23 | open (needs a permanent backend URL and a rebuild) |
 | T4 | `WORLD_W = 4200` in `types.ts` is the *old town span* (spawn bounds), while `units.ts` `WORLD_SPAN = 12200`. Names collide. | `types.ts`, `actions.ts`, `rules.ts` | open (HANDOFF P4) |
 | T5 | Was: `render.ts` (56 KB) and `TutorialClient.tsx` (53 KB) exceeded the AGENTS.md 50 KB rule. **Resolved:** `render.ts` is split into `render/` (`5e86fd6`); `TutorialClient.tsx` is split into `tutorial-*.ts`, `chapters.ts`, `TutorialOverlay.tsx`, `WardJobSurface.tsx` (`5ae46b7`). | `src/game/render/`, `src/app/tutorial/` | resolved (HANDOFF P3) |
 | T6 | 13-module engine import cycle; `hooks.ts` header claims "no import cycles". | §7 | open (document, not refactor) |
 | T7 | Dead backdrop village. `src/game/town.ts` is deleted (human-approved). `public/art/town/` and the `test-house-assets.mjs` asserts are left as they are. | `public/art/town/`, `scripts/test-house-assets.mjs` | partly resolved: town.ts deleted; art left in place |
-| T8 | `test-house-assets.mjs` fails on main (external `../../malye-korely/` dir, asserts ≥100 town houses). | `scripts/test-house-assets.mjs` | open |
+| T8 | `test-house-assets.mjs` failed on a clean checkout (external photo archive, dead ≥100 town houses). | `scripts/test-house-assets.mjs` | **fixed**: skips the absent external archive and the retired backdrop village, and now runs in `run-unit` |
 | T9 | Local smoke scripts hardcode ports and kill servers: `smoke-rooms` restarts on 3100 with `pkill -f next-serv[e]r` (kills any other Next server); `test-wire` defaults to 3000. | `scripts/smoke-rooms.mjs`, `scripts/test-wire.mjs` | open |
-| T10 | Create rate limit is 20 towns per minute per IP. Running the smoke suite back to back trips it ("Too many towns from one address") and looks like a game bug. | `api/game/create`, `server/rate-limit.ts` | open (note in DEPLOY) |
+| T10 | Create limit was 20 towns/min per IP, so back-to-back smokes and households behind one NAT tripped it. | `api/game/create`, `server/rate-limit.ts` | **fixed**: budgets are per playerId, with a wide per-address ceiling (`allowPlayer`) |
 | T11 | Duplicated header comment ("Presentational HUD overlays … split out of GameClient") copy-pasted into five HUD files; the description does not match `hud.tsx`, `chat.tsx` or `minimap.tsx`. | `bars.tsx`, `chat.tsx`, `hud.tsx`, `midhud.tsx`, `overlays.tsx` | open (cosmetic) |
 | T12 | `public/play/game.js` (≈126 KB minified) is committed build output. Two agents editing `static-src/main.ts` will conflict on it. | `public/play/` | open |
 | T13 | `Renderer.zoomOnly` / `setZoomOnly` had no callers (superseded by `viewZoom`). **Resolved:** removed in `5e86fd6`. | `src/game/render/` | resolved (HANDOFF P5.7) |

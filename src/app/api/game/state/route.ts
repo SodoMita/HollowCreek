@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadRoom, roomEtag, snapshot } from "@/game/engine";
 import { nextFrame, waitForFrame } from "@/game/viewers";
-import { allow, clientKey } from "@/server/rate-limit";
+import { allowPlayer } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -16,13 +16,13 @@ const WAIT_MS = 900; // a long-poll returns within this even when nothing change
  * second when idle, an immediate answer when something moves.
  */
 export async function GET(req: NextRequest) {
-  if (!allow(`state:${clientKey(req)}`, 1200, 60_000)) {
-    return NextResponse.json({ error: "Slow down." }, { status: 429 });
-  }
   const sp = req.nextUrl.searchParams;
   const codeParam = sp.get("code") ?? "";
   const code = codeParam.length <= 8 ? codeParam.toUpperCase() : "";
   const playerId = (sp.get("playerId") ?? "").slice(0, 64);
+  if (!allowPlayer(req, "state", playerId, 1200, 60_000)) {
+    return NextResponse.json({ error: "Slow down." }, { status: 429 });
+  }
   const rev = sp.get("rev");
   const wantDelta = sp.get("delta") === "1";
   const wait = sp.get("wait") === "1";

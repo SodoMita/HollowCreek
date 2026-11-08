@@ -223,6 +223,13 @@ export default function Home() {
               >
                 <Trophy className="h-3.5 w-3.5" /> Records
               </Link>
+              <Link
+                href="/play/bench.html"
+                className="flex items-center gap-1.5 rounded border border-[#3a2733] px-2.5 py-1.5 text-xs text-[#9c8b7a] transition-colors hover:border-[#c9762f]/40 hover:text-[#a8c98a]"
+                title="Practise every ward repair offline"
+              >
+                🧰 Repair Bench
+              </Link>
             </div>
           </div>
           <label htmlFor="hc-name" className="mt-5 block text-xs uppercase tracking-widest text-[#9c8b7a]">Your name</label>
