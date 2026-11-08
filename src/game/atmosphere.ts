@@ -139,25 +139,49 @@ export function drawForeground(ctx: CanvasRenderingContext2D, cam: number, w: nu
   ctx.restore();
 }
 
-/** Cool shadows, warm lantern light: a soft-light grade plus fine film grain. */
+// The grade is a cool-shadow / warm-lantern tint. It is baked once per size and
+// night bucket into a quarter-resolution canvas (it is a smooth gradient, so the
+// upscale is invisible) and blended with plain alpha. Soft-light and overlay
+// were full-screen blend passes every frame, the most expensive part of the frame.
+let tintCache: { key: string; canvas: HTMLCanvasElement } | null = null;
+
+function gradeTint(w: number, h: number, nb: number): HTMLCanvasElement | null {
+  if (typeof document === "undefined") return null;
+  const key = `${Math.round(w)}x${Math.round(h)}:${nb}`;
+  if (tintCache?.key === key) return tintCache.canvas;
+  const c = document.createElement("canvas");
+  c.width = Math.max(2, Math.round(w / 4));
+  c.height = Math.max(2, Math.round(h / 4));
+  const g = c.getContext("2d");
+  if (!g) return null;
+  const grad = g.createLinearGradient(0, 0, 0, c.height);
+  grad.addColorStop(0, `rgba(46,92,112,${0.1 + 0.06 * nb})`);
+  grad.addColorStop(0.55, "rgba(60,50,70,0.05)");
+  grad.addColorStop(1, "rgba(214,130,52,0.13)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, c.width, c.height);
+  tintCache = { key, canvas: c };
+  return c;
+}
+
+/** Cool shadows, warm lantern light, and fine film grain: two cheap passes, no blend modes. */
 export function drawGrade(ctx: CanvasRenderingContext2D, w: number, h: number, night: number, grain: HTMLCanvasElement | null, t: number) {
   ctx.save();
-  ctx.globalCompositeOperation = "soft-light";
-  const g = ctx.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0, `rgba(46,92,112,${0.4 + 0.15 * night})`);
-  g.addColorStop(0.55, "rgba(60,50,70,0.12)");
-  g.addColorStop(1, "rgba(214,130,52,0.34)");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, w, h);
-  ctx.restore();
+  ctx.globalCompositeOperation = "source-over";
+  const tint = gradeTint(w, h, Math.round(night * 10) / 10);
+  if (tint) ctx.drawImage(tint, 0, 0, w, h);
   if (grain) {
-    ctx.save();
-    ctx.globalAlpha = 0.05;
-    ctx.globalCompositeOperation = "overlay";
-    const ox = Math.floor(t * 61) % 128, oy = Math.floor(t * 47) % 128;
-    for (let gx = -ox; gx < w; gx += 128) for (let gy = -oy; gy < h; gy += 128) ctx.drawImage(grain, gx, gy);
-    ctx.restore();
+    // One repeating pattern fill instead of a blit per 128 px tile; the pattern drifts with time.
+    const pattern = ctx.createPattern(grain, "repeat");
+    if (pattern) {
+      const ox = Math.floor(t * 61) % 128, oy = Math.floor(t * 47) % 128;
+      pattern.setTransform(new DOMMatrix().translate(ox, oy));
+      ctx.globalAlpha = 0.05;
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, w, h);
+    }
   }
+  ctx.restore();
 }
 
 /** One small reusable noise tile; built lazily so SSR never touches document. */

@@ -1,57 +1,109 @@
 // Sky layer: dusk-to-night gradient, stars, moon with halo and rays, and cloud banks.
+// Everything that does not move with the camera (gradient, stars, moon glow) is
+// baked once per size, night bucket and device scale, then blitted each frame.
+// Baking removes the per-frame shadow blur and the 95 star paths, which were the
+// most expensive part of the sky.
 import { drawMoonRays } from "../atmosphere";
 import { drawSvg } from "../svg-assets";
 import type { DrawEnv } from "./env";
 import type { Frame } from "./frame";
 import { SKY_DUSK, SKY_NIGHT, lerpHex } from "./palette";
 
-export function drawSky(f: Frame, env: DrawEnv) {
-  const { ctx, w, h, t, cam, ground, night, nb, lift, graphics } = f;
+const MOON_BOX = 300; // user units; the halo fits inside this square
 
-  // --- day-night sky: dusk palette lerps into deep night as the round goes on ---
-  const sky = env.grad(`sky:${ground}:${nb}`, () => {
-    const g = ctx.createLinearGradient(0, 0, 0, ground);
-    g.addColorStop(0, lerpHex(SKY_DUSK[0], SKY_NIGHT[0], night));
-    g.addColorStop(0.38, lerpHex(SKY_DUSK[1], SKY_NIGHT[1], night));
-    g.addColorStop(0.72, lerpHex(SKY_DUSK[2], SKY_NIGHT[2], night));
-    g.addColorStop(0.9, lerpHex(SKY_DUSK[3], SKY_NIGHT[3], night));
-    g.addColorStop(1, lerpHex(SKY_DUSK[4], SKY_NIGHT[4], night));
-    return g;
-  });
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, -lift, w, ground + lift);
+interface Bake { key: string; canvas: HTMLCanvasElement }
+let skyBake: Bake | null = null;
+let moonBake: Bake | null = null;
 
-  // Deterministic stars: no shimmering random layout between frames.
-  const starCount = env.qualityCount(95, 48, 18);
-  ctx.save();
+function canvasFor(w: number, h: number): HTMLCanvasElement | null {
+  if (typeof document === "undefined") return null;
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.ceil(w));
+  c.height = Math.max(1, Math.ceil(h));
+  return c;
+}
+
+/** Device pixels per user unit (device pixel ratio times the glass zoom). */
+function scaleOf(ctx: CanvasRenderingContext2D): number {
+  const s = Math.abs(ctx.getTransform().a);
+  return s > 0 ? s : 1;
+}
+
+function bakeSky(w: number, ground: number, lift: number, night: number, s: number, glow: boolean, quality: string): HTMLCanvasElement | null {
+  const c = canvasFor(w * s, (ground + lift) * s);
+  const g = c?.getContext("2d");
+  if (!c || !g) return null;
+  g.setTransform(s, 0, 0, s, 0, s * lift); // canvas y=0 is user y=-lift
+  const grad = g.createLinearGradient(0, 0, 0, ground);
+  grad.addColorStop(0, lerpHex(SKY_DUSK[0], SKY_NIGHT[0], night));
+  grad.addColorStop(0.38, lerpHex(SKY_DUSK[1], SKY_NIGHT[1], night));
+  grad.addColorStop(0.72, lerpHex(SKY_DUSK[2], SKY_NIGHT[2], night));
+  grad.addColorStop(0.9, lerpHex(SKY_DUSK[3], SKY_NIGHT[3], night));
+  grad.addColorStop(1, lerpHex(SKY_DUSK[4], SKY_NIGHT[4], night));
+  g.fillStyle = grad;
+  g.fillRect(0, -lift, w, ground + lift);
+  // Deterministic stars, fixed to the screen (no shimmer between frames).
+  const starCount = quality === "high" ? 95 : quality === "medium" ? 48 : 18;
   for (let i = 0; i < starCount; i++) {
-    const sx = ((i * 197.3 + 41) % (w + 160)) - 80 - (cam * 0.008) % 40;
+    const sx = ((i * 197.3 + 41) % (w + 160)) - 80;
     const sy = 18 + ((i * 83.7) % Math.max(60, ground * 0.52));
     const radius = 0.45 + (i % 7 === 0 ? 0.85 : 0.25);
-    ctx.globalAlpha = (0.25 + (i % 5) * 0.1) * (0.3 + 0.7 * night);
-    ctx.fillStyle = i % 9 === 0 ? "#ffd9a0" : "#d9d8ed";
-    ctx.beginPath(); ctx.arc(sx, sy, radius, 0, Math.PI * 2); ctx.fill();
+    g.globalAlpha = (0.25 + (i % 5) * 0.1) * (0.3 + 0.7 * night);
+    g.fillStyle = i % 9 === 0 ? "#ffd9a0" : "#d9d8ed";
+    g.beginPath(); g.arc(sx, sy, radius, 0, Math.PI * 2); g.fill();
   }
-  ctx.restore();
+  g.globalAlpha = 1;
+  return c;
+}
 
-  // Moon with a broad atmospheric halo and crisp crater detail.
-  const mx = w * 0.78 - cam * 0.03;
-  const my = h * 0.18;
-  ctx.save();
-  if (graphics.glow) {
-    const halo = ctx.createRadialGradient(mx, my, 32, mx, my, 145);
+function bakeMoon(night: number, s: number, glow: boolean): HTMLCanvasElement | null {
+  const c = canvasFor(MOON_BOX * s, MOON_BOX * s);
+  const g = c?.getContext("2d");
+  if (!c || !g) return null;
+  g.setTransform(s, 0, 0, s, s * MOON_BOX / 2, s * MOON_BOX / 2); // centred origin
+  if (glow) {
+    const halo = g.createRadialGradient(0, 0, 32, 0, 0, 145);
     halo.addColorStop(0, `rgba(244,222,181,${0.18 + 0.12 * night})`);
     halo.addColorStop(0.45, "rgba(222,191,170,.08)");
     halo.addColorStop(1, "rgba(222,191,170,0)");
-    ctx.fillStyle = halo; ctx.fillRect(mx - 150, my - 150, 300, 300);
+    g.fillStyle = halo;
+    g.fillRect(-150, -150, 300, 300);
   }
-  ctx.shadowColor = "rgba(240,225,190,0.8)";
-  env.glow(ctx, 34);
-  drawSvg(ctx, "scenery/moon.svg", mx - 42, my - 42, 84, 84);
-  ctx.shadowBlur = 0;
-  ctx.restore();
+  g.shadowColor = "rgba(240,225,190,0.8)";
+  g.shadowBlur = glow ? 34 : 0;
+  drawSvg(g, "scenery/moon.svg", -42, -42, 84, 84);
+  g.shadowBlur = 0;
+  return c;
+}
 
-  if (graphics.glow && graphics.quality !== "low") drawMoonRays(ctx, mx, my, t, night);
+export function drawSky(f: Frame, env: DrawEnv) {
+  const { ctx, w, h, t, cam, ground, night, nb, lift, graphics } = f;
+  const s = scaleOf(ctx);
+  const glow = graphics.glow;
+
+  // --- day-night sky (baked; rebuilt only when size, night bucket or scale change) ---
+  const skyKey = `${Math.round(w)}|${ground}|${lift}|${nb}|${s.toFixed(2)}|${graphics.quality}`;
+  if (!skyBake || skyBake.key !== skyKey) {
+    const canvas = bakeSky(w, ground, lift, nb, s, glow, graphics.quality);
+    if (canvas) skyBake = { key: skyKey, canvas };
+  }
+  if (skyBake) ctx.drawImage(skyBake.canvas, 0, -lift, w, ground + lift);
+  else {
+    ctx.fillStyle = "#14101c";
+    ctx.fillRect(0, -lift, w, ground + lift);
+  }
+
+  // Moon: the halo and disc are baked; only its position moves with the camera.
+  const mx = w * 0.78 - cam * 0.03;
+  const my = h * 0.18;
+  const moonKey = `${nb}|${s.toFixed(2)}|${glow}`;
+  if (!moonBake || moonBake.key !== moonKey) {
+    const canvas = bakeMoon(nb, s, glow);
+    if (canvas) moonBake = { key: moonKey, canvas };
+  }
+  if (moonBake) ctx.drawImage(moonBake.canvas, mx - MOON_BOX / 2, my - MOON_BOX / 2, MOON_BOX, MOON_BOX);
+
+  if (glow && graphics.quality !== "low") drawMoonRays(ctx, mx, my, t, night);
 
   // Long, slow cloud banks crossing the moon and horizon.
   if (graphics.quality !== "low") {

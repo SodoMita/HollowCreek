@@ -32,7 +32,7 @@
   #menu h1 { font-size:clamp(56px,10vw,96px); line-height:.95; text-shadow:0 4px 24px rgba(200,90,40,.35); animation:flick 6s infinite; }
   #menu .kicker { letter-spacing:.4em; text-transform:uppercase; font-size:12px; color:#c9762f; }
   #menu .lore p { margin-top:16px; max-width:420px; color:#c9b8a4; font-size:17px; line-height:1.5; }
-  #menu .card { flex:0 1 360px; width:100%; background:linear-gradient(145deg,rgba(28,18,31,.95),rgba(13,8,16,.94)); border:1px solid #513444; border-radius:12px; padding:22px; box-shadow:0 20px 80px rgba(0,0,0,.65),0 0 45px rgba(201,118,47,.06); backdrop-filter:blur(10px); }
+  #menu .card { flex:0 1 360px; width:100%; background:linear-gradient(145deg,rgba(28,18,31,.95),rgba(13,8,16,.94)); border:1px solid #513444; border-radius:12px; padding:22px; box-shadow:0 20px 80px rgba(0,0,0,.65),0 0 45px rgba(201,118,47,.06);  }
   #menu .card h2 { font-size:28px; }
   label { display:block; font-size:11px; letter-spacing:.15em; text-transform:uppercase; color:var(--dim); margin:14px 0 4px; }
   button.big { width:100%; margin-top:14px; background:var(--ember); color:#f3e6d0; font-size:21px; padding:12px; border-radius:8px; letter-spacing:.03em; }
@@ -54,7 +54,7 @@
   .moon { position:absolute; right:10%; top:6%; width:100px; height:100px; border-radius:50%; background:radial-gradient(circle at 35% 30%,#fff4d8,#e8ddc0 68%,#bcae98); box-shadow:0 0 100px 38px rgba(240,215,190,.2); pointer-events:none; }
   .moon:after { content:""; position:absolute; width:17px; height:17px; left:21px; top:24px; border-radius:50%; background:rgba(128,119,112,.2); box-shadow:48px 32px 0 -4px rgba(128,119,112,.2),54px -9px 0 -6px rgba(128,119,112,.2); }
   .town-silhouette { position:absolute; z-index:1; left:0; bottom:0; width:100%; height:30vh; min-height:170px; pointer-events:none; }
-  .settings-btn { border:1px solid var(--line); background:rgba(20,13,24,.84); color:#c9b8a4; border-radius:8px; padding:8px 12px; backdrop-filter:blur(5px); }
+  .settings-btn { border:1px solid var(--line); background:rgba(20,13,24,.84); color:#c9b8a4; border-radius:8px; padding:8px 12px;  }
   .settings-btn:hover { border-color:#c9762f; color:#ffd98a; }
   #menusettings { position:absolute; z-index:4; top:max(12px,env(safe-area-inset-top)); right:12px; }
   @keyframes flick { 0%,92%,94%,98%,100%{opacity:1} 93%{opacity:.4} 97%{opacity:.7} }
@@ -66,11 +66,11 @@
   .hc-hide-touch-controls #controls, .hc-hide-touch-controls #ruinbtn { display:none !important; }
   .hc-hide-feed #feed, .hc-hide-tasks #tasks, .hc-hide-hints #hint { display:none !important; }
   .hc-reduced-motion *, .hc-reduced-motion *:before, .hc-reduced-motion *:after { animation:none !important; transition:none !important; }
-  .chip { background:rgba(20,13,24,.82); border:1px solid rgba(58,39,51,.7); border-radius:8px; padding:6px 10px; backdrop-filter:blur(4px); font-size:13px; }
+  .chip { background:rgba(20,13,24,.82); border:1px solid rgba(58,39,51,.7); border-radius:8px; padding:6px 10px;  font-size:13px; }
   #topbar { top:0; left:0; right:0; display:flex; justify-content:space-between; align-items:flex-start; gap:8px; padding:8px; padding-top:max(8px,env(safe-area-inset-top)); }
   #topbar .right { display:flex; gap:6px; align-items:center; }
   #supplydrop { display:none; background:#4a3323; color:#f2cf91; font-size:11px; padding:6px 8px; }
-  #pinpanel { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(11,7,16,.6); backdrop-filter:blur(2px); z-index:30; }
+  #pinpanel { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(11,7,16,.6);  z-index:30; }
   #noteoverlay { position:fixed; left:0; right:0; top:0; bottom:7.5rem; display:none; z-index:20; background:transparent; }
   #noteclose { position:fixed; left:50%; bottom:max(7.5rem, calc(env(safe-area-inset-bottom) + 7rem)); transform:translateX(-50%); z-index:31; color:#cbeae1; background:rgba(36,59,60,.92); border:1px solid #7ba9a6; padding:8px 14px; font-size:14px; }
   .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
@@ -116,7 +116,7 @@
   #vote .dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
   #vote .note { font-size:11px; color:#6b5a55; margin-top:8px; line-height:1.4; }
   #controls { bottom:0; left:0; right:0; display:flex; justify-content:space-between; align-items:flex-end; gap:8px; padding:10px; padding-bottom:max(10px,env(safe-area-inset-bottom)); }
-  .rbtn { width:54px; height:54px; border-radius:50%; border:2px solid var(--line); background:rgba(20,13,24,.82); color:#d8c9b4; font-size:20px; backdrop-filter:blur(4px); font-family:"Pirata One"; line-height:1.05; }
+  .rbtn { width:54px; height:54px; border-radius:50%; border:2px solid var(--line); background:rgba(20,13,24,.82); color:#d8c9b4; font-size:20px;  font-family:"Pirata One"; line-height:1.05; }
   .rbtn small { font-size:9px; display:block; }
   .rbtn.hot { border-color:var(--amber); background:rgba(58,36,16,.9); color:#ffd98a; }
   .rbtn.kill.hot { border-color:var(--blood); background:rgba(74,18,16,.9); color:#ff8a7a; box-shadow:0 0 20px rgba(255,60,40,.4); }
@@ -132,7 +132,7 @@
   #chatbox { bottom:88px; left:50%; transform:translateX(-50%); width:min(92vw,420px); display:none; }
   #chatbox input { border-radius:99px; border-color:rgba(217,154,61,.5); background:rgba(20,13,24,.95); padding:12px 20px; }
   #toast { bottom:150px; left:50%; transform:translateX(-50%); background:rgba(28,18,16,.95); color:var(--amber); border-radius:8px; padding:8px 16px; font-size:14px; display:none; }
-  #overlay { position:absolute; inset:0; z-index:20; display:none; align-items:center; justify-content:center; background:rgba(11,7,16,.72); backdrop-filter:blur(3px); }
+  #overlay { position:absolute; inset:0; z-index:20; display:none; align-items:center; justify-content:center; background:rgba(11,7,16,.72);  }
   #overlay .panel { width:min(92vw,440px); max-height:88dvh; overflow-y:auto; background:rgba(20,13,24,.96); border:1px solid var(--line); border-radius:12px; padding:24px; text-align:center; }
   #overlay h2 { font-size:36px; } #overlay .bigcode { font-family:monospace; font-size:44px; letter-spacing:.4em; color:var(--amber); margin-top:8px; }
   #overlay .roster { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:16px; text-align:left; font-size:14px; }

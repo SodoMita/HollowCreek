@@ -761,10 +761,17 @@ const renderer = new Renderer();
 renderer.setSettings(settingsStore.value);
 const vw = () => window.visualViewport?.width ?? window.innerWidth;
 const vh = () => window.visualViewport?.height ?? window.innerHeight;
+// Adaptive render resolution: when frames run long, the canvas backing store
+// steps down (fewer pixels to rasterise, same layout); with headroom it steps back up.
+// Declared before resize(), which runs at module load.
+const RENDER_SCALES = [1, 0.8, 0.65, 0.5] as const;
+let scaleStep = 0;
+let frameMsAvg = 16.7;
+let lastScaleChange = 0;
 function resize() {
   const graphics = settingsStore.value.graphics;
   const dprCap = graphics.quality === "high" ? 2 : graphics.quality === "medium" ? 1.5 : 1;
-  const dpr = Math.min(window.devicePixelRatio || 1, dprCap) * graphics.resolution;
+  const dpr = Math.min(window.devicePixelRatio || 1, dprCap) * graphics.resolution * RENDER_SCALES[scaleStep];
   canvas.width = Math.max(1, Math.round(vw() * dpr));
   canvas.height = Math.max(1, Math.round(vh() * dpr));
   canvas.style.width = `${vw()}px`; canvas.style.height = `${vh()}px`;
@@ -774,12 +781,24 @@ settingsStore.subscribe((settings) => { renderer.setSettings(settings); resize()
 resize();
 window.addEventListener("resize", resize);
 window.visualViewport?.addEventListener("resize", resize);
+/** Smoothed frame time drives the render scale; a change waits 1.5 s so one hitch cannot flap it. */
+function adaptResolution(nowMs: number, frameMs: number) {
+  frameMsAvg = frameMsAvg * 0.92 + frameMs * 0.08;
+  if (nowMs - lastScaleChange < 1500) return;
+  if (frameMsAvg > 28 && scaleStep < RENDER_SCALES.length - 1) scaleStep++;
+  else if (frameMsAvg < 15 && scaleStep > 0) scaleStep--;
+  else return;
+  lastScaleChange = nowMs;
+  frameMsAvg = 16.7; // measure the new resolution from scratch
+  resize();
+}
 let last = performance.now();
 function loop(nowMs: number) {
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, (nowMs - last) / 1000);
   last = nowMs;
   if (!snap || $("game").style.display === "none") return;
+  adaptResolution(nowMs, dt * 1000);
   const age = net.arrival ? Math.min(0.3, (nowMs - net.arrival) / 1000) : 0;
   for (const p of snap.players) {
     const cur = displayX.get(p.id);
