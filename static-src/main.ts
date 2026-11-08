@@ -280,7 +280,7 @@ function enterRoom(code: string) {
   // probe a different server and turn a valid room into an empty screen.
   history.replaceState(null, "", `${location.pathname}?room=${code}&server=${encodeURIComponent(server)}`);
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(poll, 100);
+  pollTimer = setInterval(poll, 50);
   void poll();
 }
 function leaveToMenu() {

@@ -14,15 +14,19 @@
 // them at most once per second — unless a fast change ships in the same frame.
 import type { Snapshot } from "./types";
 
+export interface WireItem extends Record<string, unknown> { i: number }
+
 export interface WireFrame {
   etag?: string;
   now: number;
   snap?: Snapshot;
   delta?: Partial<Record<keyof Snapshot, unknown>>;
   patch?: {
-    players?: Snapshot["players"];
-    tasks?: Snapshot["tasks"];
-    doors?: NonNullable<Snapshot["doors"]>;
+    // Items carry a roster slot (i) instead of an id: same information, ~34 bytes less
+    // per changed entity, and the order is stable while patches are sent.
+    players?: WireItem[];
+    tasks?: WireItem[];
+    doors?: WireItem[];
     self?: Partial<Snapshot["self"]>;
   };
   gone?: boolean;
@@ -30,7 +34,7 @@ export interface WireFrame {
 
 export const ID_ARRAYS = ["players", "tasks", "doors"] as const;
 type IdArrayKey = (typeof ID_ARRAYS)[number];
-const SLOW_TOP = new Set<string>(["nightT", "time", "danger"]);
+const SLOW_TOP = new Set<string>(["nightT", "time", "danger", "hint"]);
 const SLOW_SELF = new Set<string>(["stamina", "killCooldownMs", "blackoutCooldownMs", "sabotageCooldownMs"]);
 const SLOW_TASK = new Set<string>(["progress"]);
 
@@ -99,13 +103,14 @@ export function diffView(prev: EncodedView, next: EncodedView): ViewDiff {
       continue;
     }
     // Same members: send each changed item as {id, ...changedFields} only.
-    const partials: Record<string, unknown>[] = [];
-    for (const it of (snap[key] ?? []) as Record<string, unknown>[]) {
-      const id = it.id as string;
-      const prevJson = prev.items[key].get(id);
-      if (prevJson === next.items[key].get(id)) continue;
+    const partials: WireItem[] = [];
+    const list = (snap[key] ?? []) as Record<string, unknown>[];
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i];
+      const prevJson = prev.items[key].get(it.id as string);
+      if (prevJson === next.items[key].get(it.id as string)) continue;
       const before = JSON.parse(prevJson!) as Record<string, unknown>;
-      const part: Record<string, unknown> = { id };
+      const part: WireItem = { i };
       for (const f of new Set([...Object.keys(before), ...Object.keys(it)])) {
         if (f === "id" || j(it[f]) === j(before[f])) continue;
         part[f] = it[f] === undefined ? null : it[f];
@@ -131,13 +136,15 @@ export function applyFrame(held: Snapshot | null, frame: WireFrame): Snapshot | 
   if (frame.patch) {
     if (frame.patch.self) next.self = { ...held.self, ...frame.patch.self };
     for (const key of ID_ARRAYS) {
-      const items = frame.patch[key] as { id: string }[] | undefined;
+      const items = frame.patch[key] as WireItem[] | undefined;
       if (!items) continue;
-      const byId = new Map(items.map((it) => [it.id, it as Record<string, unknown>]));
-      (next as Record<string, unknown>)[key] = ((next[key] ?? []) as { id: string }[]).map((it) => {
-        const part = byId.get(it.id);
+      const bySlot = new Map(items.map((it) => [it.i, it as Record<string, unknown>]));
+      (next as Record<string, unknown>)[key] = ((next[key] ?? []) as unknown as Record<string, unknown>[]).map((it, slot) => {
+        const part = bySlot.get(slot);
         if (!part) return it;
-        return { ...it, ...part };
+        const merged = { ...it, ...part };
+        delete merged.i;
+        return merged;
       });
     }
   }

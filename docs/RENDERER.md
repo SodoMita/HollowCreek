@@ -58,3 +58,33 @@ BASE=http://127.0.0.1:3100 SECONDS=8 node scripts/bench-client.mjs
 Reports frame pacing, chromium script/layout/style time and network bytes for a
 town of bots. `scripts/test-renderer-rules.mjs` (part of `npm test`) enforces the
 rules above.
+
+## Network: one position per frame, never a sequence
+
+The state wire sends **one latest value per changed entity per frame**, not a history:
+
+- Full snapshot once (≈3.5 KB), then field-level patches: a walking neighbour is
+  `{"i":2,"x":2882}` inside `patch.players` — a roster slot plus the changed fields.
+- Patches address entities by **roster slot** (`i`), not by 36-character UUID.
+  Order is stable while patches are sent; a membership/order change resends the list.
+- The server ticks at 50 ms and coalesces **one frame per viewer per 50 ms**
+  (`FRAME_MS`), with slow values (vigor, cooldowns, night, hint, ward progress) on a
+  1 Hz beat.
+- The client long-polls at 50 ms with `delta=1&wait=1`; a room event that changes
+  nothing *for this viewer* keeps the request open instead of ending it (the old
+  behaviour churned one request per viewer per event).
+- The client interpolates between the last two positions (60 ms behind) and predicts
+  its own soul locally, so 20 position updates/s render as continuous 60 fps motion.
+
+Measured on a 4-soul town, viewer walking (`/api/game/state?delta=1&wait=1`):
+
+| Metric | Value |
+| --- | --- |
+| frames/s | 20.1 |
+| bytes/frame (walking) | 167 |
+| walking stream | ≈3.3 KB/s |
+| client idle (bench, real client) | ≈0.7 KB/s |
+
+Sending a *sequence* of 120 frames/s instead would cost ~600+ bytes/s per neighbour
+just for x values, grow with every player and the cart, and buy nothing: the client
+already renders at 60 fps by interpolating between the two newest positions.
