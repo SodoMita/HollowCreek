@@ -4,8 +4,8 @@
 // persistence and history checkpoints never see it.
 import type { Room } from "./engine";
 import { onRoomEvent } from "./chronicle";
-import { roomEtag, snapshot } from "./snapshot";
-import { applyFrame, diffView, encodeView, type EncodedView, type WireFrame } from "./wire";
+import { snapshot } from "./snapshot";
+import { applyFrame, diffView, encodeView, viewFingerprint, type EncodedView, type WireFrame } from "./wire";
 
 export const FRAME_MS = 16; // coalesce bursts within one display frame; do not wait a whole tick
 export const SLOW_MS = 1000; // slow-class values ride at most once a second
@@ -37,15 +37,17 @@ export function viewerEtag(room: Room, playerId: string): string | null {
 export function nextFrame(room: Room, playerId: string, holdsEtag: string | null, now: number, flush = false): { frame: WireFrame | null; snapNow: number } | null {
   const snap = snapshot(room, playerId); // also the presence heartbeat
   if (!snap) return null;
-  const etag = roomEtag(room, playerId, snap);
   const m = states(room);
   const prev = m.get(playerId);
+  // Encode once, then fingerprint the encoded fields: no second full JSON pass.
+  const next = encodeView(snap, "");
+  const etag = viewFingerprint(next);
+  next.etag = etag;
   if (!prev || holdsEtag !== prev.view.etag) {
-    m.set(playerId, { view: encodeView(snap, etag), slowAt: now });
+    m.set(playerId, { view: next, slowAt: now });
     return { frame: { etag, now: snap.now, snap }, snapNow: snap.now };
   }
   if (etag === prev.view.etag) return { frame: null, snapNow: snap.now };
-  const next = encodeView(snap, etag);
   const d = diffView(prev.view, next);
   if (!d.any) { prev.view = next; return { frame: null, snapNow: snap.now }; }
   if (!d.fast && !flush && now - prev.slowAt < SLOW_MS) return { frame: null, snapNow: snap.now };

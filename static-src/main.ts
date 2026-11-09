@@ -79,10 +79,16 @@ function getPid(): string {
 
 let snap: Snapshot | null = null;
 let roomCode = "";
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let roomsTimer: ReturnType<typeof setInterval> | null = null;
 let polling = false;
 let pollFailures = 0;
+// Backoff after repeated failures: a dead or overloaded server must not be hammered
+// at 60 requests/s by every client in the town.
+let pollBackoffMs = 0;
+// Render frames drawn so far (for the ?net=1 readout); incremented in the loop.
+let renderFrames = 0;
+const POLL_MAX_BACKOFF_MS = 4000;
 let roomError = "";
 let lastPhase = "lobby";
 let overlayKey = "";
@@ -159,13 +165,47 @@ function toast(msg: string) {
   const t = $("toast"); t.textContent = msg; t.style.display = "block";
   setTimeout(() => { t.style.display = "none"; }, 2200);
 }
+// Input transport: at most one request in flight, with the newest steering state
+// superseding any queued one. A burst of key changes costs one round trip, not one
+// per keypress, and the last value always wins. A 429/network failure is retried once
+// with the newest state rather than dropped (the old client lost the keypress).
+const inputFlight = { busy: false, queued: null as Record<string, unknown> | null, dropped: 0, retries: 0 };
 async function send(payload: Record<string, unknown>) {
+  const steering = "dir" in payload || "cartHeld" in payload || "interactHeld" in payload;
+  if (!steering) {
+    // Actions (interact, vote, ability, chat) are discrete: send them now, in order.
+    await sendNow(payload);
+    return;
+  }
+  inputFlight.queued = payload;
+  if (inputFlight.busy) return;
+  while (inputFlight.queued) {
+    const next = inputFlight.queued;
+    inputFlight.queued = null;
+    inputFlight.busy = true;
+    const ok = await sendNow(next, true);
+    inputFlight.busy = false;
+    if (!ok) { inputFlight.dropped++; }
+  }
+}
+async function sendNow(payload: Record<string, unknown>, retry = false): Promise<boolean> {
   const sentAt = performance.now();
   try {
     const d = await api("/api/game/input", { code: roomCode, playerId: getPid(), ...payload });
     net.rttMs = net.rttMs * 0.7 + Math.min(1500, Math.max(20, performance.now() - sentAt)) * 0.3;
-    if (d && d.ok === false && d.error) toast(d.error);
-  } catch { /* next poll resyncs */ }
+    if (d && d.ok === false && d.error) {
+      if (d.error === "Slow down." && retry && inputFlight.retries < 3) {
+        inputFlight.retries++;
+        await new Promise((r) => setTimeout(r, 120));
+        return sendNow(payload, false); // resend the newest steering after a short pause
+      }
+      toast(d.error);
+    }
+    inputFlight.retries = 0;
+    return true;
+  } catch {
+    return false; // the next poll resyncs; the steering loop keeps the newest state
+  }
 }
 
 // ---------------------------------------------------------------- menu ----
@@ -279,8 +319,8 @@ function enterRoom(code: string) {
   // Preserve the backend that actually accepted the join. A refresh must not
   // probe a different server and turn a valid room into an empty screen.
   history.replaceState(null, "", `${location.pathname}?room=${code}&server=${encodeURIComponent(server)}`);
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(poll, 16);
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  schedulePoll(0);
   void poll();
 }
 function leaveToMenu() {
@@ -296,7 +336,7 @@ function leaveToMenu() {
         catch { /* still return to the menu */ }
       }).finally(() => { if ($("menu").style.display !== "none") void refreshRooms(); });
   }
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   snap = null; roomCode = ""; overlayKey = ""; roomError = ""; pollFailures = 0; held = null; heldRev = ""; lowerGlass();
   wardPanel.update(null, 1, false);
   $("game").style.display = "none";
@@ -347,6 +387,7 @@ async function poll() {
       lastPollAt = now;
       if (snap) renderHud(snap);
       pollFailures = 0;
+      pollBackoffMs = 0;
       return;
     }
     lastPollAt = performance.now();
@@ -362,6 +403,7 @@ async function poll() {
       notePlayerFrame(net.arrival);
     }
     pollFailures = 0;
+    pollBackoffMs = 0;
     roomError = "";
     snap = s;
     if (timePanel.isOpen && (!s.self.hasTimepiece || s.phase !== "playing")) timePanel.close();
@@ -371,12 +413,23 @@ async function poll() {
     lastPhase = s.phase;
     renderHud(s);
   } catch {
-    if (code === roomCode && ++pollFailures >= 5) {
-      showRoomError("The town server is not answering. Retrying…");
+    if (code === roomCode) {
+      pollFailures++;
+      pollBackoffMs = Math.min(POLL_MAX_BACKOFF_MS, pollBackoffMs ? pollBackoffMs * 2 : 100);
+      if (pollFailures >= 5) showRoomError("The town server is not answering. Retrying…");
     }
   } finally {
     polling = false;
   }
+}
+/** One poll at a time, re-armed after each answer with the current backoff delay. */
+function schedulePoll(delayMs: number) {
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = setTimeout(async () => {
+    pollTimer = null;
+    await poll();
+    if (roomCode) schedulePoll(pollBackoffMs);
+  }, delayMs);
 }
 function reveal(hollow: boolean) {
   const r = $("reveal");
@@ -789,6 +842,36 @@ document.addEventListener("click", (e) => {
   if (t.closest("#tasktoggle")) { tasksOpen = !tasksOpen; if (snap) renderHud(snap); }
 });
 
+// ------------------------------------------------------------ net HUD ----
+// ?net=1 shows what the netcode is doing for THIS client. Updated 4 times a second
+// from a timer, never from the render loop (the loop must not touch the DOM).
+const netHud = (() => {
+  if (!params.has("net")) return null;
+  const el = document.createElement("div");
+  el.style.cssText = "position:fixed;right:8px;bottom:150px;z-index:60;font:11px/1.35 ui-monospace,monospace;color:#cbeae1;background:rgba(10,8,14,.82);border:1px solid #3d5a58;border-radius:6px;padding:6px 8px;pointer-events:none;white-space:pre";
+  document.body.appendChild(el);
+  let shownFrames = renderFrames;
+  let since = performance.now();
+  return () => {
+    const now = performance.now();
+    if (now - since < 250) return;
+    const fps = ((renderFrames - shownFrames) * 1000) / (now - since);
+    shownFrames = renderFrames;
+    since = now;
+    const gaps = playerFrameGaps.slice().sort((a, b) => a - b);
+    const gap = Math.round(gaps[Math.floor(gaps.length / 2)] ?? 0);
+    el.textContent = [
+      "rtt " + Math.round(net.rttMs) + " ms",
+      "frames " + fps.toFixed(0) + "/s",
+      "interp " + interpDelayMs + " ms",
+      "gap p50 " + gap + " ms",
+      "input drops " + inputFlight.dropped,
+      "players " + (snap ? snap.players.length : 0),
+    ].join("\n");
+  };
+})();
+if (netHud) setInterval(netHud, 250);
+
 // -------------------------------------------------------------- canvas ----
 const canvas = $("cv") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
@@ -851,6 +934,7 @@ let interpSnap: Snapshot | null = null;
 let last = performance.now();
 function loop(nowMs: number) {
   requestAnimationFrame(loop);
+  renderFrames++;
   const dt = Math.min(0.05, (nowMs - last) / 1000);
   last = nowMs;
   if (!snap || $("game").style.display === "none") return;

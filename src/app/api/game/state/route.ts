@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loadRoom, roomEtag, snapshot } from "@/game/engine";
+import { loadRoom, snapshot } from "@/game/engine";
 import { nextFrame, waitForFrame } from "@/game/viewers";
+import { snapshotFingerprint } from "@/game/wire";
 import { admit } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -45,7 +46,7 @@ export async function GET(req: NextRequest) {
 
   const snap = snapshot(room, playerId);
   if (!snap) return NextResponse.json({ error: "Unknown soul." }, { status: 404 });
-  const etag = roomEtag(room, playerId, snap);
+  const etag = snapshotFingerprint(snap);
   const headers = { etag, "cache-control": "no-store" };
   // Idle towns answer 304 — the client already has this exact state.
   if (rev === etag) {

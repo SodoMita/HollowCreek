@@ -105,3 +105,26 @@ already renders at 60 fps by interpolating between the two newest positions.
 The floor for other players is one server tick (~50 ms) plus network: the server only
 moves souls on ticks, so no client poll rate can invent fresher positions. The client
 sends input the moment a key changes and predicts its own soul immediately.
+
+## Netcode: transport and failure behaviour
+
+- **Input**: at most one request in flight per client. Steering changes (direction,
+  push, interact-held) are coalesced to the newest state, so a burst of keypresses
+  costs one round trip and the last value always wins. Discrete actions (interact,
+  vote, chat, ability) are sent immediately, in order.
+- **Budgets**: per soul 1800/min (30/s) with a per-address backstop of 6000/min, so
+  tap-mashing is never throttled while a spoofed flood still is. A throttled steering
+  input is retried once with the newest state and counted (`?net=1` shows drops).
+- **Polling**: one long-poll at a time, re-armed after each answer (16 ms floor). On
+  failure the client backs off 100 ms → 4 s (exponential) instead of hammering a dead
+  server 60×/s; the first success clears the backoff.
+- **Encoding**: the server encodes a viewer's snapshot once, then fingerprints the
+  *encoded field strings* (FNV-1a) for the etag, instead of hashing the whole snapshot
+  a second time. The plain and delta routes now share one etag scheme, so a client can
+  switch between them (or resync) without disagreement.
+- **Observability**: `/play/?room=CODE&net=1` shows rtt, render fps, the adaptive
+  interpolation delay, the median frame gap, dropped inputs and visible players.
+
+Measured with `scripts/bench-state.mjs` (8 souls, 8 concurrent viewers, delta path,
+3 s): ~590 requests/s at p95 24 ms, 0 failures. A sniffed walking client: 13 state
+requests/s, ~2 KB/s including the initial full snapshot.

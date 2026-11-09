@@ -39,6 +39,38 @@ const SLOW_SELF = new Set<string>(["stamina", "killCooldownMs", "blackoutCooldow
 const SLOW_TASK = new Set<string>(["progress"]);
 
 /** What a viewer holds, pre-serialised per field so each diff only stringifies the new side. */
+const FNV_OFFSET = 0x811c9dc5;
+const FNV_PRIME = 0x01000193;
+function fnv(h: number, text: string): number {
+  let hash = h;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, FNV_PRIME);
+  }
+  return hash >>> 0;
+}
+
+/**
+ * An opaque revision for what a viewer holds, computed from the field strings the
+ * encoder already produced.  is excluded (it changes every tick and is not state).
+ * Equal fingerprints mean "nothing this viewer can see has changed".
+ */
+export function viewFingerprint(view: EncodedView): string {
+  let h = FNV_OFFSET;
+  for (const key in view.top) h = fnv(h, key + "=" + view.top[key] + ";");
+  for (const key in view.self) h = fnv(h, key + "=" + view.self[key] + ";");
+  for (const key of ID_ARRAYS) {
+    h = fnv(h, view.order[key] + "|");
+    for (const [, json] of view.items[key]) h = fnv(h, json + ";");
+  }
+  return h.toString(36);
+}
+
+/** The fingerprint of a snapshot, for the plain (non-delta) route. */
+export function snapshotFingerprint(snap: unknown): string {
+  return viewFingerprint(encodeView(snap as never, ""));
+}
+
 export interface EncodedView {
   etag: string;
   snap: Snapshot;
