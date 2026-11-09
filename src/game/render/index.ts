@@ -136,12 +136,11 @@ export class Renderer {
     const meX = ix.me ? displayX.get(ix.me.id) ?? ix.me.x : WORLD_W / 2;
     const lookX = focused ? this.focusX! : meX;
     const targetCam = clamp(lookX - vw / 2, WORLD_MIN, WORLD_MAX - vw);
-    if (!this.hasCamera || !graphics.cameraSmoothing || snap.phase !== this.lastPhase || Math.abs(targetCam - this.cameraX) > vw * 0.4 || focused !== this.wasFocused) {
-      this.cameraX = targetCam;
-      if (!this.hasCamera) this.visionR = snap.visionRadius;
+    // Lock camera directly to the authoritative target (no client-side chase/interpolation).
+    this.cameraX = targetCam;
+    if (!this.hasCamera) {
+      this.visionR = snap.visionRadius;
       this.hasCamera = true;
-    } else {
-      this.cameraX += (targetCam - this.cameraX) * Math.min(1, dt * 18);
     }
     this.lastPhase = snap.phase;
     this.wasFocused = focused;

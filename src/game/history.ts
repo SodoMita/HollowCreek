@@ -12,7 +12,7 @@ export function captureHistory(room: Room, now: number, force = false) {
     nextFlicker: room.nextFlicker, blackoutReadyAt: room.blackoutReadyAt, timepieces: structuredClone(room.timepieces), timepiecePending: room.timepiecePending, endedAt: room.endedAt,
     players: structuredClone([...room.players.values()].filter((p) => p.id !== room.timeVisit?.playerId)),
     pool: structuredClone(room.pool), doors: structuredClone(room.doors), keyX: room.keyX,
-    supplyDrops: structuredClone(room.supplyDrops), notes: structuredClone(room.notes), cartX: room.cartX, cartPushers: room.cartPushers,
+    supplyDrops: structuredClone(room.supplyDrops), notes: structuredClone(room.notes), cartX: room.cartX, cartSubX: room.cartSubX ?? 0, cartPushers: room.cartPushers,
     cages: structuredClone(room.cages), bodies: structuredClone(room.bodies), feed: structuredClone(room.feed), events: structuredClone(room.historyEvents.slice(-32)),
     bellAt: room.bellAt, flickerAt: room.flickerAt, blackoutUntil: room.blackoutUntil,
   });
@@ -43,7 +43,7 @@ export function restoreFrame(room: Room, frame: HistoryFrame): Room {
     timepieces: structuredClone(frame.timepieces), timepiecePending: frame.timepiecePending,
     players: new Map(frame.players.map((player) => [player.id, structuredClone(player)])),
     pool: structuredClone(frame.pool), doors: structuredClone(frame.doors), keyX: frame.keyX,
-    supplyDrops: structuredClone(frame.supplyDrops), notes: structuredClone(frame.notes), cartX: frame.cartX, cartPushers: frame.cartPushers,
+    supplyDrops: structuredClone(frame.supplyDrops), notes: structuredClone(frame.notes), cartX: frame.cartX, cartSubX: frame.cartSubX ?? 0, cartPushers: frame.cartPushers,
     cages: structuredClone(frame.cages), bodies: structuredClone(frame.bodies), feed: structuredClone(frame.feed),
     bellAt: frame.bellAt, flickerAt: frame.flickerAt, blackoutUntil: frame.blackoutUntil,
   };

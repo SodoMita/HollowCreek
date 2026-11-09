@@ -7,7 +7,7 @@ import { onRoomEvent } from "./chronicle";
 import { roomEtag, snapshot } from "./snapshot";
 import { applyFrame, diffView, encodeView, type EncodedView, type WireFrame } from "./wire";
 
-export const FRAME_MS = 16; // coalesce rapid action bursts within one display frame
+export const FRAME_MS = 4; // coalesce sub-4ms action bursts; every 8ms server tick ships immediately
 export const SLOW_MS = 1000; // slow-class values ride at most once a second
 
 interface ViewerState {

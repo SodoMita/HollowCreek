@@ -97,6 +97,7 @@ const showNet = params.get("net") === "1";
 let netEl: HTMLElement | null = null;
 let lastAudioAt = 0;
 let audioEdgeKey = "";
+let hudDirty = false;
 let held: Snapshot | null = null; // what the server thinks we hold (deltas merge into it)
 let lastPollAt = 0;
 let heldRev = "";
@@ -423,9 +424,15 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
     lastAudioAt = now;
     audio.update(s);
   }
+  const phaseChanged = s.phase !== lastPhase;
   if (lastPhase === "lobby" && s.phase === "playing") reveal(s.self.role === "hollow");
   lastPhase = s.phase;
-  renderHud(s);
+  if (phaseChanged || !prevHeld) {
+    hudDirty = false;
+    renderHud(s);
+  } else {
+    hudDirty = true;
+  }
 }
 
 function startStream(code: string) {
@@ -791,6 +798,10 @@ function loop(nowMs: number) {
   const dt = Math.min(0.05, (nowMs - last) / 1000);
   last = nowMs;
   if (!snap || !gameVisible) return;
+  if (hudDirty) {
+    hudDirty = false;
+    renderHud(snap);
+  }
   netStats.renderFrames++;
   netSampleFrames++;
   if (netEl && nowMs - netSampleAt >= 250) {

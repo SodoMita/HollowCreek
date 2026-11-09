@@ -27,7 +27,7 @@ export interface HistoryFrame {
   at: number; seq: number; players: P[]; pool: TaskState[]; doors: DoorState[]; keyX: number | null; notes: Note[];
   phase: Phase; meeting: { endsAt: number; reason: string } | null; winner: Role | null; winReason: string | null;
   nextFlicker: number; blackoutReadyAt: number; timepieces: TimepieceState[]; timepiecePending: boolean; endedAt: number;
-  supplyDrops: SupplyDrop[]; cartX: number; cartPushers: number;
+  supplyDrops: SupplyDrop[]; cartX: number; cartSubX?: number; cartPushers: number;
   cages: { x: number; occupant: string | null }[];
   bodies: { x: number; color: string; name: string; id: string; at: number; inside: string | null }[];
   feed: FeedItem[]; events: HistoryEvent[]; bellAt: number; flickerAt: number; blackoutUntil: number;
@@ -48,6 +48,7 @@ export interface P {
   name: string;
   color: string;
   x: number;
+  subX?: number;
   dir: number; // last INPUT direction (-1 | 0 | 1). Clients never send positions.
   facing: number;
   moving: boolean;
@@ -94,6 +95,7 @@ export interface Room {
   supplyDrops: SupplyDrop[];
   notes: Note[];
   cartX: number;
+  cartSubX?: number;
   cartPushers: number;
   cages: { x: number; occupant: string | null }[];
   feed: FeedItem[];

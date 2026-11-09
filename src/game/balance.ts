@@ -9,7 +9,7 @@ export const CARRY_SPEED = 122; // carrying a repair kit
 export const CARRY_VIGOR_DRAIN = 0.045; // extra vigor drain per second while carrying
 
 // --- Tick & time ---
-export const TICK_MS = 25; // authoritative server tick (40/s)
+export const TICK_MS = 8; // authoritative server tick (125/s: faster than 60/120Hz displays for smooth raw updates)
 export const NIGHT_LENGTH_MS = 40 * 60_000; // one full night; drives the sky cycle (0=dusk, 1=deep night)
 export const TIME_VISIT_MS = 60_000; // how long a time-travel visit lasts
 export const HISTORY_SAMPLE_MS = 500; // snapshot sampling interval for the recorded night

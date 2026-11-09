@@ -45,24 +45,24 @@ export async function GET(req: NextRequest) {
       };
       const scheduleCoalesce = (ms: number) => {
         if (coalesceTimer || closed) return;
-        coalesceTimer = setTimeout(() => { coalesceTimer = null; push(); }, Math.max(1, ms));
+        coalesceTimer = setTimeout(() => { coalesceTimer = null; push(true); }, Math.max(1, ms));
       };
       const scheduleSlow = (ms: number) => {
         if (slowTimer || closed) return;
-        slowTimer = setTimeout(() => { slowTimer = null; push(); }, Math.max(1, ms));
+        slowTimer = setTimeout(() => { slowTimer = null; push(false); }, Math.max(1, ms));
       };
-      // Coalesce sub-10ms action bursts without ever delaying a server tick or
-      // blocking fast position frames behind the 1s slow-value timer.
-      const COALESCE_MS = Math.min(10, FRAME_MS);
-      const push = () => {
+      // Coalesce sub-3ms bursts without delaying any 8ms server tick or blocking
+      // fast position frames behind the 1s slow-value timer.
+      const COALESCE_MS = Math.min(3, FRAME_MS);
+      const push = (isEvent = true) => {
         if (closed) return;
         const t = Date.now();
-        if (t - computedAt < COALESCE_MS) { scheduleCoalesce(COALESCE_MS - (t - computedAt)); return; }
-        computedAt = t;
+        if (isEvent && t - computedAt < COALESCE_MS) { scheduleCoalesce(COALESCE_MS - (t - computedAt)); return; }
         const r = nextFrame(room, playerId, holds, t);
         if (!r) { send({ gone: true, now: t }); cleanup(); return; }
         if (r.frame) {
           holds = r.frame.etag ?? holds;
+          computedAt = t;
           clockAt = t;
           send(r.frame);
         } else if (t - clockAt >= CLOCK_MS) {
@@ -72,9 +72,9 @@ export async function GET(req: NextRequest) {
         const due = slowDueIn(room, playerId, t);
         if (due > 0) scheduleSlow(due); // held slow values go out on the beat even if the room sleeps
       };
-      const unsub = onRoomEvent(code, push);
+      const unsub = onRoomEvent(code, () => push(true));
       const hb = setInterval(heartbeat, 15_000);
-      const tick = setInterval(push, 250); // presence heartbeat + clock between room events
+      const tick = setInterval(() => push(false), 250); // presence heartbeat + clock between room events
       function cleanup() {
         if (closed) return;
         closed = true;

@@ -14,10 +14,10 @@ export function journal(room: Room, kind: JournalEntry["kind"], at: number, play
   at = Math.max(at, room.journal.at(-1)?.at ?? at);
   const entry: JournalEntry = { seq: ++room.journalSeq, at, kind, seed: randomInt(1, 0x7fffffff), playerId, body: body ? canonicalInput(body) : undefined };
   room.journal.push(entry); room.activeSeed = entry.seed; room.activeEventId = String(entry.seq);
-  // Keep enough ticks/heartbeats to cover a full 40-minute night at 40 Hz;
-  // only trim oldest ticks/heartbeats if a match runs past 120k entries.
-  if (room.journal.length > 120_000) {
-    let drop = room.journal.length - 100_000;
+  // Keep enough ticks/heartbeats to cover a full 40-minute night at 125 Hz;
+  // only trim oldest ticks/heartbeats if a match runs past 320k entries.
+  if (room.journal.length > 320_000) {
+    let drop = room.journal.length - 280_000;
     room.journal = room.journal.filter((e) => {
       if (drop > 0 && (e.kind === "tick" || e.kind === "presence")) { drop--; return false; }
       return true;

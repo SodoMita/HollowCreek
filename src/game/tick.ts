@@ -12,7 +12,7 @@ import { CARRY_SPEED, CARRY_VIGOR_DRAIN, CART_HELPER_BONUS, CART_MAX_SPEED, CART
 import type { Room } from "./engine";
 
 const dist = (a: number, b: number) => Math.abs(a - b);
-const g = globalThis as typeof globalThis & { __hollowLoop?: ReturnType<typeof setInterval> };
+const g = globalThis as typeof globalThis & { __hollowLoop?: ReturnType<typeof setInterval> | ReturnType<typeof setTimeout> };
 
 // ---------------------------------------------------------------------------
 // Authoritative tick loop
@@ -68,7 +68,12 @@ export function tickRoom(room: Room, now: number) {
     room.cartPushers = team.length;
     const prevCartX = room.cartX;
     if (team.length) {
-      room.cartX = clampWorld(room.cartX + team[0].dir * ix(cartSpeed * dt), 90);
+      const rawCart = (room.cartSubX ?? 0) + team[0].dir * cartSpeed * dt;
+      const stepCart = Math.round(rawCart);
+      room.cartSubX = rawCart - stepCart;
+      if (stepCart !== 0) room.cartX = clampWorld(room.cartX + stepCart, 90);
+    } else {
+      room.cartSubX = 0;
     }
     const cartDelta = room.cartX - prevCartX;
 
@@ -81,32 +86,43 @@ export function tickRoom(room: Room, now: number) {
           const visit = room.timeVisit, shadow = pastRoom(room, visit, now);
           const traveler = shadow?.players.get(visit.visitorId);
           if (traveler) {
-            p.x = traveler.x; p.inside = traveler.inside; p.facing = traveler.facing; p.dir = traveler.dir; p.moving = traveler.moving;
+            p.x = traveler.x; p.subX = traveler.subX ?? 0; p.inside = traveler.inside; p.facing = traveler.facing; p.dir = traveler.dir; p.moving = traveler.moving;
             p.stamina = traveler.stamina; p.exhausted = traveler.exhausted; p.hasKey = traveler.hasKey; p.hasSupply = traveler.hasSupply; p.supplyId = traveler.supplyId; p.activeWard = traveler.activeWard;
             continue;
           }
           endTimeVisit(room, p, "history unavailable");
         }
       }
-      if (now - p.lastSeen > 15000) { p.dir = 0; p.cartHeld = false; dropTimepiece(room, p); dropKey(room, p); dropSupply(room, p); dropBuildingKeys(room.doors, p.id, p.x, p.inside); } // stale connection releases movement and unique items
+      if (now - p.lastSeen > 15000) { p.dir = 0; p.subX = 0; p.cartHeld = false; dropTimepiece(room, p); dropKey(room, p); dropSupply(room, p); dropBuildingKeys(room.doors, p.id, p.x, p.inside); } // stale connection releases movement and unique items
       const speed = !p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : pushingIds.has(p.id) ? cartSpeed : SPEED;
       p.moving = p.dir !== 0;
       if (p.dir !== 0) p.facing = p.dir;
       const wasX = p.x;
       // Same-direction pushers move by the exact cartDelta so pushers and cart never drift apart.
-      const nextX = pushingIds.has(p.id) && team.length && p.dir === team[0].dir
-        ? p.x + cartDelta
-        : p.x + p.dir * speed * dt;
+      let nextX: number;
+      if (pushingIds.has(p.id) && team.length && p.dir === team[0].dir) {
+        p.subX = 0;
+        nextX = p.x + cartDelta;
+      } else if (p.dir === 0) {
+        p.subX = 0;
+        nextX = p.x;
+      } else {
+        const raw = (p.subX ?? 0) + p.dir * speed * dt;
+        const stepInt = Math.round(raw);
+        p.subX = raw - stepInt;
+        nextX = p.x + stepInt;
+      }
       if (p.caged && p.cageIndex >= 0) {
         const cx = room.cages[p.cageIndex].x;
-        p.x = Math.max(cx - CELL_HALF + 8, Math.min(cx + CELL_HALF - 8, nextX));
+        p.x = ix(Math.max(cx - CELL_HALF + 8, Math.min(cx + CELL_HALF - 8, nextX)));
       } else if (!p.alive) {
-        p.x = clampWorld(nextX);
+        p.x = ix(clampWorld(nextX));
       } else {
         const step = walkThroughBuildings(p.x, nextX, p.inside, room.doors);
         p.x = step.x;
         p.inside = step.inside;
       }
+      if (p.x === wasX && nextX !== wasX) p.subX = 0;
       // Keep walking intent so pressing against a wall or closed door still animates gait.
       p.moving = p.dir !== 0;
       if (p.alive && !p.caged && p.dir !== 0 && (p.hasSupply || pushingIds.has(p.id))) {
@@ -160,17 +176,24 @@ export function tickRooms() {
   }
 }
 
-let tickAcc = 0;
-let lastTickWall = Date.now();
+let nextTickWall = typeof performance !== "undefined" ? performance.now() + TICK_MS : Date.now() + TICK_MS;
 export function tick() {
-  const wall = Date.now();
-  tickAcc += wall - lastTickWall;
-  lastTickWall = wall;
-  if (tickAcc > TICK_MS * 10) tickAcc = TICK_MS * 10; // a sleeping tab must not burst 10 ticks at once
-  while (tickAcc >= TICK_MS) {
-    tickAcc -= TICK_MS;
+  const nowWall = typeof performance !== "undefined" ? performance.now() : Date.now();
+  if (nowWall - nextTickWall > TICK_MS * 10) nextTickWall = nowWall - TICK_MS * 10;
+  let ran = 0;
+  // 1.5 ms early-wakeup tolerance prevents OS timer jitter from skipping a tick and double-bursting later.
+  while (nowWall >= nextTickWall - 1.5 && ran < 10) {
+    nextTickWall += TICK_MS;
     tickRooms();
+    ran++;
   }
+}
+
+function scheduleLoop() {
+  tick();
+  const nowWall = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const wait = Math.max(1, Math.round(nextTickWall - nowWall));
+  g.__hollowLoop = setTimeout(scheduleLoop, wait);
 }
 
 /** Deterministic test harness: advances one room by a recorded server tick. */
@@ -180,6 +203,6 @@ export function advanceRoomForTest(room: Room, now: number) {
 }
 
 if (!g.__hollowLoop) {
-  g.__hollowLoop = setInterval(tick, TICK_MS);
+  g.__hollowLoop = setTimeout(scheduleLoop, TICK_MS);
 }
 

@@ -265,7 +265,7 @@ export function reconcileFuture(room: Room, visit: TimeVisit, now: number, past?
     }
     room.pool = structuredClone(future.pool);
     room.doors = structuredClone(future.doors).map((door) => ({ ...door, holder: door.holder === visit.visitorId ? visit.playerId : door.holder }));
-    room.keyX = future.keyX; room.supplyDrops = structuredClone(future.supplyDrops); room.cartX = future.cartX; room.cartPushers = future.cartPushers;
+    room.keyX = future.keyX; room.supplyDrops = structuredClone(future.supplyDrops); room.cartX = future.cartX; room.cartSubX = future.cartSubX ?? 0; room.cartPushers = future.cartPushers;
     room.notes = structuredClone(future.notes).map((note) => note.authorId === visit.visitorId && room.players.get(visit.playerId)
       ? { ...note, authorId: visit.playerId, authorName: room.players.get(visit.playerId)!.name } : note);
     room.cages = structuredClone(future.cages); room.bodies = structuredClone(future.bodies).map((body) => ({ ...body, id: body.id === visit.visitorId ? visit.playerId : body.id }));

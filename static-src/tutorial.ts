@@ -791,12 +791,7 @@ function frame(nowMs: number, last: { t: number }): void {
     if (s.history.length > 7200) s.history = s.history.filter((_, i) => i % 2 === 0);
   }
   for (const p of snap.players) {
-    if (p.id === snap.self.id && !snap.self.caged) {
-      displayX.set(p.id, s.playerX);
-    } else {
-      const cur = displayX.get(p.id);
-      displayX.set(p.id, cur === undefined || Math.abs(cur - p.x) > 300 ? p.x : cur + (p.x - cur) * Math.min(1, dt * 16));
-    }
+    displayX.set(p.id, p.id === snap.self.id && !snap.self.caged ? s.playerX : p.x);
   }
   renderer.render(ctx, viewW, viewH, snap, displayX, nowMs / 1000, dt);
   if (nowMs - lastAudioAt >= 120) {

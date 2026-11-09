@@ -222,12 +222,11 @@ function getDarkRing(): HTMLCanvasElement {
   return c;
 }
 
-export function drawDarkness(v: View, visionR: number): number {
-  const { ctx, snap, dt, t, cam, ground, meX } = v;
+export function drawDarkness(v: View, _visionR: number): number {
+  const { ctx, snap, t, cam, ground, meX } = v;
   const targetR = snap.visionRadius;
   if (targetR >= 1500) return 420;
-  const vr = visionR + (targetR - visionR) * Math.min(1, dt * 3.5);
-  const r = Math.max(80, vr + Math.sin(t * 7.3) * 6);
+  const r = Math.max(80, targetR + Math.sin(t * 7.3) * 6);
   const m = ctx.getTransform();
   const cw = ctx.canvas.width;
   const ch = ctx.canvas.height;
@@ -252,7 +251,7 @@ export function drawDarkness(v: View, visionR: number): number {
   if (x1 < cw && y1 > y0) ctx.fillRect(x1, y0, cw - x1, y1 - y0);
   ctx.drawImage(getDarkRing(), rx0, ry0, rx1 - rx0, ry1 - ry0);
   ctx.restore();
-  return vr;
+  return targetR;
 }
 
 export function drawPastWash(v: View) {

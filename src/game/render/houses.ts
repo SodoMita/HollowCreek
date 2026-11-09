@@ -97,14 +97,12 @@ function drawInterior(v: View, b: Building, x: number, ground: number, task: Tas
 }
 
 export function drawHouseExteriors(v: View, doorOpen: Map<string, number>) {
-  const { ctx, w, dt, cam, ground } = v;
+  const { ctx, w, cam, ground } = v;
   for (const b of BUILDINGS) {
     const sx = b.x - cam;
     if (!(sx > -b.width && sx < w + b.width)) continue;
     const door = v.doors.get(b.id);
-    const target = door?.open ? 1 : 0;
-    const previous = doorOpen.get(b.id) ?? target;
-    const amount = v.reduced ? target : previous + (target - previous) * Math.min(1, dt * 10);
+    const amount = door?.open ? 1 : 0;
     doorOpen.set(b.id, amount);
     drawSvg(ctx, "furniture/barrel.svg", sx - b.width / 2 - 30, ground - 34, 26, 34);
     drawSvg(ctx, "furniture/crate.svg", sx + b.width / 2 + 8, ground - 26, 30, 26);

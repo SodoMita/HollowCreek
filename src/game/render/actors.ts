@@ -177,18 +177,10 @@ function drawPlayer(v: View, motion: Map<string, Motion>, p: View["sorted"][numb
     seen = { x: shownX, facing: p.facing, movingUntil: 0, stride: 0 };
     motion.set(p.id, seen);
   }
-  const dx = shownX - seen.x;
-  const moved = Math.abs(dx);
-  // Large jumps (teleports or re-entering server vision) snap without faking a stride or turn.
-  const teleported = moved > 120;
-  const walking = p.moving || (moved > 0.02 && !teleported);
-  if (teleported) {
-    seen.facing = p.facing || seen.facing;
-  } else if (walking) {
-    seen.facing = moved > 0.02 ? (dx > 0 ? 1 : -1) : (p.facing || seen.facing);
-    seen.stride += Math.max(moved * 0.085, dt * 11);
-  }
+  seen.facing = p.facing || seen.facing;
+  if (p.moving) seen.stride += dt * 11;
   seen.x = shownX;
+  const walking = p.moving;
 
   const prev = ctx.globalAlpha;
   if (ghost) ctx.globalAlpha = prev * 0.45;

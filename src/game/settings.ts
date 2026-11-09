@@ -61,7 +61,7 @@ const DEFAULTS: GameSettings = {
     glow: true,
     vignette: true,
     flicker: true,
-    cameraSmoothing: true,
+    cameraSmoothing: false,
     reducedMotion: false,
   },
   interface: {
