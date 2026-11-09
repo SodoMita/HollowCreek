@@ -126,6 +126,21 @@ await page.evaluate(() => {
   };
   requestAnimationFrame(sample);
 });
+// --- input latency: presses from a standstill, measured to the drawn move -----
+const pressLat = [];
+for (let k = 0; k < 10; k++) {
+  const x0 = await page.evaluate(() => { const s = window.__hc?.snap?.(); return s ? s.players.find((p) => p.id === s.self.id)?.x ?? 0 : 0; });
+  await page.waitForTimeout(600); // settle: the detector must not see residual motion
+  const t = Date.now();
+  await page.keyboard.down("d");
+  await page.waitForFunction(([x0v]) => {
+    const s = window.__hc?.snap?.(); if (!s) return false;
+    const x = s.players.find((p) => p.id === s.self.id)?.x ?? 0;
+    return Math.abs(x - x0v) > 2;
+  }, [x0], { timeout: 4000, polling: 4 }).catch(() => {});
+  pressLat.push(Date.now() - t);
+  await page.keyboard.up("d");
+}
 await page.waitForTimeout(SECONDS * 1000);
 await page.keyboard.up("d");
 const samples = await page.evaluate(() => window.__samples ?? []);
@@ -147,6 +162,9 @@ if (samples.length > 2) {
   const lastSelf = samples.at(-1).self, firstSelf = samples[0].self;
   const travelled = Math.abs(lastSelf - firstSelf);
   console.log(`self: travelled ${travelled.toFixed(0)} px over ${SECONDS}s (${(travelled / SECONDS).toFixed(0)} px/s, server SPEED is 190)`);
+const pl = pressLat.slice().sort((a, b) => a - b);
+const pq = (f) => (pl.length ? pl[Math.min(pl.length - 1, Math.floor(f * pl.length))] : 0);
+console.log(`INPUT keypress → soul visibly moves: p50 ${pq(0.5)} ms (${(pq(0.5) / 16.7).toFixed(1)} frames) · p90 ${pq(0.9)} ms (${(pq(0.9) / 16.7).toFixed(1)}) · max ${pq(1)} ms`);
 }
 // Others: count rendered frames with no new position for a soul the server says is moving.
 const byId = new Map();

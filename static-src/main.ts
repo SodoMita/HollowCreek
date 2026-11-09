@@ -171,6 +171,22 @@ async function send(payload: Record<string, unknown>): Promise<boolean> {
     net.rttMs = net.rttMs ? net.rttMs * 0.7 + rtt * 0.3 : rtt;
     if (d && d.ok === false && d.error === "Slow down.") return false;
     if (d && d.ok === false && d.error) toast(d.error);
+    // The server answers with where it actually put us. Applying it here shows
+    // the consequence of the keypress on the response itself — one round trip,
+    // no wait for the next stream frame, and no guessed position. Only accepted
+    // answers apply, and only while we are still in the room we sent from.
+    const heldSnap = snap;
+    if (d && d.ok && typeof d.x === "number" && heldSnap && heldSnap.self.id === getPid()) {
+      const me = heldSnap.players.find((p) => p.id === heldSnap.self.id);
+      if (me) {
+        me.x = d.x;
+        if (typeof d.facing === "number") me.facing = d.facing;
+        if (d.inside !== undefined) me.inside = d.inside;
+        displayX.set(me.id, d.x);
+        net.selfX = d.x;
+        net.inputToMoveMs = performance.now() - sentAt;
+      }
+    }
     return true;
   } catch { return false; }
 }
@@ -179,19 +195,21 @@ async function send(payload: Record<string, unknown>): Promise<boolean> {
 // while it is out is merged and sent as soon as it returns, so a burst of
 // keypresses costs one round trip and the last value always wins. A throttled
 // or failed steer is retried with the freshest state instead of being dropped.
-let steerInFlight = false;
 let steerPending: Record<string, unknown> | null = null;
+let steerSeq = 0;
+let steerLast: Record<string, unknown> | null = null;
 function sendSteer(payload: Record<string, unknown>) {
-  if (steerInFlight) { steerPending = { ...(steerPending ?? {}), ...payload }; return; }
-  steerInFlight = true;
-  void send(payload).then((ok) => {
-    steerInFlight = false;
-    if (!ok) { net.retried++; steerPending = { ...payload, ...(steerPending ?? {}) }; }
-    if (steerPending) {
-      const next = steerPending; steerPending = null;
-      if (ok) sendSteer(next);
-      else setTimeout(() => sendSteer(next), 120);
-    }
+  // Steering is sent at once, never queued behind an earlier request: holding it
+  // meant a keypress waited for the previous one to return, which is up to a
+  // full round trip of extra input lag. Two requests can then be in flight at
+  // once, so each carries a monotonic sequence number and the server ignores the
+  // older one. Only an unanswered failure is retried with the freshest state.
+  const seq = ++steerSeq;
+  steerLast = { ...steerLast, ...payload };
+  void send({ seq, ...payload }).then((ok) => {
+    if (ok) return;
+    net.retried++;
+    if (steerLast) setTimeout(() => sendSteer(steerLast!), 100);
   });
 }
 
@@ -419,7 +437,11 @@ function startStream(code: string) {
   };
   es.onerror = () => {
     if (myEpoch !== streamEpoch || code !== roomCode) { es.close(); return; }
-    // If SSE fails before opening or disconnects twice, switch cleanly to zero-gap long-poll.
+    // Two failures before the first frame, or repeated drops afterwards, fall
+    // back to the long-poll — but the fallback is temporary. A proxy that
+    // buffers SSE for a few seconds must not condemn the client to a third of
+    // the position rate for the rest of the match, so we keep re-arming the
+    // long-poll and probing for the stream again.
     if (!gotFrame || ++pollFailures >= 2) {
       es.close();
       if (eventSource === es) eventSource = null;
@@ -430,7 +452,13 @@ function startStream(code: string) {
 
 /** Zero-gap continuous long-poll fallback when SSE is unavailable. */
 async function pollLoop(code: string, myEpoch: number) {
+  let probeAt = performance.now() + 8000; // try SSE again after 8s of polling
   while (myEpoch === streamEpoch && code === roomCode) {
+    if (typeof EventSource !== "undefined" && performance.now() >= probeAt) {
+      probeAt = performance.now() + 15_000;
+      startStream(code); // re-arms the push path; this loop stops via streamEpoch
+      return;
+    }
     const rev = held && heldRev ? `&rev=${encodeURIComponent(heldRev)}` : "";
     const ctl = new AbortController();
     pollAbort = ctl;

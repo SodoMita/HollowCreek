@@ -7,6 +7,8 @@ export const INPUT_ACTIONS = ["interact", "ability", "blackout", "vote", "start"
 
 export function canonicalInput(body: InputBody): InputBody {
   const result: InputBody = { playerId: body.playerId };
+  // `seq` is transport-only and must never enter the recorded chronicle, so a
+  // replay reproduces the same movement whatever order packets arrived in.
   if (typeof body.dir === "number" && Number.isFinite(body.dir)) result.dir = body.dir;
   if (typeof body.interactHeld === "boolean") result.interactHeld = body.interactHeld;
   if (typeof body.cartHeld === "boolean") result.cartHeld = body.cartHeld;

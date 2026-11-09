@@ -380,7 +380,22 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
 // Input — clients send ONLY intent, never positions
 // ---------------------------------------------------------------------------
 
-export function handleInput(room: Room, body: InputBody): { ok: boolean; error?: string } {
+export interface InputResult {
+  ok: boolean;
+  error?: string;
+  /** The acting soul's authoritative position and facing, right after this input.
+   *  Returning it lets the client draw the consequence on the response itself —
+   *  one round trip instead of a round trip plus a wait for the next stream
+   *  frame. This is server-authoritative state, not client-side prediction. */
+  x?: number;
+  facing?: number;
+  inside?: string | null;
+  /** The server clock this result was produced at, so a client can tell fresh
+   *  answers from frames that were already in flight when it acted. */
+  at?: number;
+}
+
+export function handleInput(room: Room, body: InputBody): InputResult {
   const p = room.players.get(body.playerId);
   if (!p) return { ok: false, error: "Unknown soul." };
   p.lastSeen = roomNow(room);

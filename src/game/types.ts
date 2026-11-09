@@ -270,6 +270,10 @@ export interface RoomListing {
 
 export interface InputBody {
   playerId: string;
+  /** Client-side send order for steering. Transport-only: the input route uses
+   *  it to drop a stale packet that arrives after a newer one, and it is
+   *  stripped before anything reaches the recorded chronicle. */
+  seq?: number;
   dir?: number;
   interactHeld?: boolean;
   cartHeld?: boolean; // hold Push + a direction while beside the cart
