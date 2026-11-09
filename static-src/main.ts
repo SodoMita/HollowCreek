@@ -553,7 +553,12 @@ function bound(action: BindableAction, e: KeyboardEvent) {
   return matchesControl(settingsStore.value.controls, action, e.code);
 }
 window.addEventListener("keydown", (e) => {
-  audio.start();
+  // AudioContext creation and its first buffer render must never sit in the
+  // keydown handler: the first press generated the whole wind/impulse buffer
+  // synchronously here, which froze the main thread for tens of milliseconds
+  // *before* the input request could even be sent. Deferring it costs nothing
+  // audible and takes the keypress straight to the network.
+  setTimeout(() => audio.start(), 0);
   if (settingsDialog.isOpen || timePanel.isOpen || !roomCode) return;
   if (wardPanel.isOpen) {
     if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
@@ -587,7 +592,7 @@ window.addEventListener("keyup", (e) => {
 window.addEventListener("blur", releaseInputs);
 $("chatinput").addEventListener("keydown", (e) => { if (e.key === "Enter") submitChat(); e.stopPropagation(); });
 $("chatinput").addEventListener("blur", () => setTimeout(submitChat, 50));
-window.addEventListener("pointerdown", () => audio.start());
+window.addEventListener("pointerdown", () => setTimeout(() => audio.start(), 0));
 
 // Pointer-captured touch rocker for ◀ ▶ so mobile thumbs never drop movement
 // from small drift, and sliding across the gap switches direction cleanly.

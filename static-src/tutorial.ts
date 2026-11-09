@@ -133,8 +133,12 @@ let viewW = 0;
 let viewH = 0;
 
 function ensureAudio(): void {
+  // Deferred out of the caller's input path for the same reason as the room
+  // client: creating the context and rendering its first buffer is tens of
+  // milliseconds of main-thread work that must not delay a keypress.
   if (!audio) audio = new AudioDirector(store);
-  audio.start();
+  const a = audio;
+  setTimeout(() => a.start(), 0);
 }
 
 function showToast(msg: string): void {
