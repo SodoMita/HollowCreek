@@ -484,8 +484,11 @@ export class AudioDirector {
     const buf = ctx.createBuffer(1, ctx.sampleRate * seconds, ctx.sampleRate);
     const data = buf.getChannelData(0);
     let last = 0;
+    let seed = 0x9e3779b9 | 0;
+    const inv = 1 / 2147483648;
     for (let i = 0; i < data.length; i++) {
-      const white = Math.random() * 2 - 1;
+      seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
+      const white = seed * inv;
       last = (last + 0.02 * white) / 1.02;
       data[i] = last * 3.2;
     }
@@ -493,13 +496,27 @@ export class AudioDirector {
   }
 
   private impulse(ctx: AudioContext, seconds: number, decay: number) {
+    // Same plate-reverb envelope as Math.pow(1 - i / len, decay), evaluated in
+    // 64-sample linear spans with xorshift32 instead of 250k Math.pow +
+    // Math.random calls synchronously on the first keypress.
     const rate = ctx.sampleRate;
     const len = Math.floor(rate * seconds);
     const buf = ctx.createBuffer(2, len, rate);
+    const inv = 1 / 2147483648;
     for (let c = 0; c < 2; c++) {
       const data = buf.getChannelData(c);
-      for (let i = 0; i < len; i++) {
-        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+      let seed = (0x6d2b79f5 ^ (c * 0x85ebca6b)) | 0;
+      for (let i = 0; i < len; i += 64) {
+        const end = Math.min(len, i + 64);
+        const e0 = Math.pow(1 - i / len, decay);
+        const e1 = Math.pow(1 - end / len, decay);
+        const step = (e1 - e0) / (end - i);
+        let env = e0;
+        for (let k = i; k < end; k++) {
+          seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
+          data[k] = (seed * inv) * env;
+          env += step;
+        }
       }
     }
     return buf;

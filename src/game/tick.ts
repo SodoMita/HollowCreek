@@ -205,10 +205,14 @@ export function tick() {
   tickRooms();
 }
 function scheduleTick() {
-  const now = Date.now();
+  // Use sub-millisecond performance.now() for the grid and round to >= 1 ms.
+  // Date.now() truncated to whole ms and setTimeout(0) caused back-to-back
+  // double-ticks (min 1.2 ms, max 10.3 ms) — directly showing up as uneven
+  // position pacing on the client.
+  const now = performance.now();
   if (g.__hollowGrid === undefined || g.__hollowGrid < now - TICK_MS * 10) g.__hollowGrid = now;
   g.__hollowGrid += TICK_MS;
-  const delay = Math.max(0, g.__hollowGrid - now);
+  const delay = Math.max(1, Math.round(g.__hollowGrid - now));
   g.__hollowTimer = setTimeout(() => { tick(); scheduleTick(); }, delay);
 }
 

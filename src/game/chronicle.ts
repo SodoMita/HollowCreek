@@ -77,7 +77,11 @@ gPersist.__hollowDirtyRooms = dirtyRooms;
 
 // Change listeners for server-push (SSE) state streaming: fired on every
 // mutation and every tick, so subscribers can re-fingerprint and push.
-const roomListeners: Map<string, Set<() => void>> = new Map();
+// Stored on globalThis alongside rooms/dirtyRooms so separate Next route bundles
+// always share one listener table.
+const gListen = globalThis as typeof globalThis & { __hollowListeners?: Map<string, Set<() => void>> };
+const roomListeners: Map<string, Set<() => void>> = gListen.__hollowListeners ?? new Map();
+gListen.__hollowListeners = roomListeners;
 export function onRoomEvent(code: string, cb: () => void): () => void {
   let set = roomListeners.get(code);
   if (!set) { set = new Set(); roomListeners.set(code, set); }

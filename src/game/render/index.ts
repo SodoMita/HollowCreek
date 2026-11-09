@@ -32,6 +32,10 @@ export const CAGE_POSITIONS = CAGE_XS;
 
 interface Index {
   snap: Snapshot;
+  playersRef: Snapshot["players"] | null;
+  tasksRef: Snapshot["tasks"] | null;
+  doorsRef: Snapshot["doors"] | undefined;
+  notesRef: Snapshot["notes"] | undefined;
   me: PublicPlayer | undefined;
   sorted: PublicPlayer[];
   tasks: Map<string, TaskView>;
@@ -41,23 +45,59 @@ interface Index {
   notesByHouse: Map<string, PinnedNote[]>;
 }
 
-function buildIndex(snap: Snapshot): Index {
-  const me = snap.players.find((p) => p.id === snap.self.id);
-  const sorted = [...snap.players].sort((a, b) => (a.id === snap.self.id ? 1 : 0) - (b.id === snap.self.id ? 1 : 0));
-  const tasks = new Map(snap.tasks.map((t) => [t.id, t]));
-  const houseTask = new Map<string, TaskView>();
-  for (const t of snap.tasks) if (t.inside && !houseTask.has(t.inside)) houseTask.set(t.inside, t);
-  const occupied = new Set<string>();
-  for (const p of snap.players) if (p.inside && p.alive) occupied.add(p.inside);
-  const notesByHouse = new Map<string, PinnedNote[]>();
-  for (const n of snap.notes ?? []) {
-    if (!n.house) continue;
-    const list = notesByHouse.get(n.house);
-    if (list) list.push(n);
-    else notesByHouse.set(n.house, [n]);
+function syncIndex(idx: Index | null, snap: Snapshot): Index {
+  const ix: Index = idx ?? {
+    snap,
+    playersRef: null,
+    tasksRef: null,
+    doorsRef: undefined,
+    notesRef: undefined,
+    me: undefined,
+    sorted: [],
+    tasks: new Map(),
+    houseTask: new Map(),
+    doors: new Map(),
+    occupied: new Set(),
+    notesByHouse: new Map(),
+  };
+  ix.snap = snap;
+  if (ix.playersRef !== snap.players) {
+    ix.playersRef = snap.players;
+    ix.me = undefined;
+    ix.sorted.length = 0;
+    ix.occupied.clear();
+    for (const p of snap.players) {
+      if (p.id === snap.self.id) ix.me = p;
+      else ix.sorted.push(p);
+      if (p.inside && p.alive) ix.occupied.add(p.inside);
+    }
+    if (ix.me) ix.sorted.push(ix.me);
   }
-  const doors = new Map((snap.doors ?? []).map((d) => [d.id, d]));
-  return { snap, me, sorted, tasks, houseTask, doors, occupied, notesByHouse };
+  if (ix.tasksRef !== snap.tasks) {
+    ix.tasksRef = snap.tasks;
+    ix.tasks.clear();
+    ix.houseTask.clear();
+    for (const t of snap.tasks) {
+      ix.tasks.set(t.id, t);
+      if (t.inside && !ix.houseTask.has(t.inside)) ix.houseTask.set(t.inside, t);
+    }
+  }
+  if (ix.doorsRef !== snap.doors) {
+    ix.doorsRef = snap.doors;
+    ix.doors.clear();
+    for (const d of snap.doors ?? []) ix.doors.set(d.id, d);
+  }
+  if (ix.notesRef !== snap.notes) {
+    ix.notesRef = snap.notes;
+    ix.notesByHouse.clear();
+    for (const n of snap.notes ?? []) {
+      if (!n.house) continue;
+      let list = ix.notesByHouse.get(n.house);
+      if (!list) { list = []; ix.notesByHouse.set(n.house, list); }
+      list.push(n);
+    }
+  }
+  return ix;
 }
 
 export class Renderer {
@@ -114,7 +154,7 @@ export class Renderer {
       return;
     }
     const graphics = this.settings.graphics;
-    if (!this.index || this.index.snap !== snap) this.index = buildIndex(snap);
+    if (!this.index || this.index.snap !== snap) this.index = syncIndex(this.index, snap);
     const ix = this.index;
 
     const focused = this.focusX !== null;

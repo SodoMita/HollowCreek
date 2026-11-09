@@ -41,6 +41,7 @@ export interface EncodedView {
   top: Record<string, string>;
   self: Record<string, string>;
   items: Record<IdArrayKey, Map<string, string>>;
+  objs: Record<IdArrayKey, Map<string, Record<string, unknown>>>;
   order: Record<IdArrayKey, string>;
 }
 
@@ -55,13 +56,15 @@ export function encodeView(snap: Snapshot, etag: string): EncodedView {
   const self: Record<string, string> = {};
   for (const [k, v] of Object.entries(snap.self)) self[k] = j(v);
   const items = {} as Record<IdArrayKey, Map<string, string>>;
+  const objs = {} as Record<IdArrayKey, Map<string, Record<string, unknown>>>;
   const order = {} as Record<IdArrayKey, string>;
   for (const key of ID_ARRAYS) {
     const list = (snap[key] ?? []) as { id: string }[];
     items[key] = new Map(list.map((it) => [it.id, j(it)]));
+    objs[key] = new Map(list.map((it) => [it.id, it as unknown as Record<string, unknown>]));
     order[key] = list.map((it) => it.id).join("\u0001");
   }
-  return { etag, snap, top, self, items, order };
+  return { etag, snap, top, self, items, objs, order };
 }
 
 export interface ViewDiff {
@@ -110,12 +113,19 @@ export function diffView(prev: EncodedView, next: EncodedView): ViewDiff {
       const id = it.id as string;
       const prevJson = prev.items[key].get(id);
       if (prevJson === next.items[key].get(id)) continue;
-      const before = JSON.parse(prevJson!) as Record<string, unknown>;
+      const before = prev.objs[key].get(id) ?? (JSON.parse(prevJson!) as Record<string, unknown>);
       const part: Record<string, unknown> = { i: index };
-      for (const f of new Set([...Object.keys(before), ...Object.keys(it)])) {
-        if (f === "id" || j(it[f]) === j(before[f])) continue;
-        part[f] = it[f] === undefined ? null : it[f];
+      for (const f of Object.keys(it)) {
+        if (f === "id") continue;
+        const nv = it[f], ov = before[f];
+        if (nv === ov || (nv == null && ov == null) || (typeof nv === "object" && typeof ov === "object" && nv !== null && ov !== null && j(nv) === j(ov))) continue;
+        part[f] = nv === undefined ? null : nv;
         if (key !== "tasks" || !SLOW_TASK.has(f)) fast = true; // a ward's bare progress figure can wait for the slow beat
+      }
+      for (const f of Object.keys(before)) {
+        if (f === "id" || f in it) continue;
+        part[f] = null;
+        if (key !== "tasks" || !SLOW_TASK.has(f)) fast = true;
       }
       partials.push(part);
     }
@@ -138,20 +148,23 @@ export function applyFrame(held: Snapshot | null, frame: WireFrame): Snapshot | 
     if (frame.patch.self) next.self = { ...held.self, ...frame.patch.self };
     for (const key of ID_ARRAYS) {
       const items = frame.patch[key] as { id?: string; i?: number }[] | undefined;
-      if (!items) continue;
+      if (!items || !items.length) continue;
       // Patches address items by array index (`i`); older servers may still send
-      // `id`. Both resolve against the array the client already holds.
-      const byIndex = new Map<number, Record<string, unknown>>();
-      const byId = new Map<string, Record<string, unknown>>();
-      for (const it of items) {
-        if (typeof it.i === "number") byIndex.set(it.i, it);
-        else if (it.id) byId.set(it.id, it);
+      // `id`. Mutate only a shallow-copied array at the patched indices so 120 Hz
+      // frames allocate almost nothing.
+      const curList = ((next[key] ?? []) as { id: string }[]).slice();
+      for (const part of items) {
+        let idx = typeof part.i === "number" ? part.i : -1;
+        if (idx < 0 && part.id) idx = curList.findIndex((it) => it.id === part.id);
+        if (idx >= 0 && idx < curList.length) {
+          const merged = { ...curList[idx] } as Record<string, unknown>;
+          for (const [fk, fv] of Object.entries(part)) {
+            if (fk !== "i") merged[fk] = fv;
+          }
+          curList[idx] = merged as { id: string };
+        }
       }
-      (next as Record<string, unknown>)[key] = ((next[key] ?? []) as { id: string }[]).map((it, index) => {
-        const part = byIndex.get(index) ?? (it.id ? byId.get(it.id) : undefined);
-        if (!part) return it;
-        return { ...it, ...part };
-      });
+      (next as Record<string, unknown>)[key] = curList;
     }
   }
   return next as Snapshot;

@@ -101,6 +101,8 @@ const net = {
 const showNet = params.get("net") === "1";
 let held: Snapshot | null = null; // what the server thinks we hold (deltas merge into it)
 let lastPollAt = 0;
+let lastHudAt = 0;
+let lastAudioAt = 0;
 let heldRev = "";
 const settingsStore = new SettingsStore();
 const audio = new AudioDirector(settingsStore);
@@ -176,40 +178,40 @@ async function send(payload: Record<string, unknown>): Promise<boolean> {
     // no wait for the next stream frame, and no guessed position. Only accepted
     // answers apply, and only while we are still in the room we sent from.
     const heldSnap = snap;
-    if (d && d.ok && typeof d.x === "number" && heldSnap && heldSnap.self.id === getPid()) {
-      const me = heldSnap.players.find((p) => p.id === heldSnap.self.id);
-      if (me) {
-        me.x = d.x;
-        if (typeof d.facing === "number") me.facing = d.facing;
-        if (d.inside !== undefined) me.inside = d.inside;
-        displayX.set(me.id, d.x);
-        net.selfX = d.x;
-        net.inputToMoveMs = performance.now() - sentAt;
+    if (d && d.ok && !d.stale && typeof d.x === "number" && heldSnap && heldSnap.self.id === getPid()) {
+      // Only apply the HTTP response's authoritative position when it is at least
+      // as fresh as the latest snapshot from the stream; otherwise a slower HTTP
+      // reply could step the soul backward behind an already-applied SSE tick.
+      if (typeof d.at !== "number" || d.at >= heldSnap.now) {
+        if (typeof d.at === "number") heldSnap.now = d.at;
+        const me = heldSnap.players.find((p) => p.id === heldSnap.self.id);
+        if (me) {
+          me.x = d.x;
+          if (typeof d.facing === "number") me.facing = d.facing;
+          if (d.inside !== undefined) me.inside = d.inside;
+          displayX.set(me.id, d.x);
+          net.selfX = d.x;
+          net.inputToMoveMs = performance.now() - sentAt;
+        }
       }
     }
     return true;
   } catch { return false; }
 }
 // Steering (dir / cartHeld / interactHeld) is a *state*, not an event: only the
-// newest value matters. Keep one request in flight; anything that changes
-// while it is out is merged and sent as soon as it returns, so a burst of
-// keypresses costs one round trip and the last value always wins. A throttled
-// or failed steer is retried with the freshest state instead of being dropped.
-let steerPending: Record<string, unknown> | null = null;
-let steerSeq = 0;
+// newest value matters. Fire immediately with a epoch-seeded monotonic sequence
+// number (survives tab refreshes) so the server ignores stale out-of-order
+// arrivals; only the newest failed steer is retried.
+let steerSeq = Date.now() * 100;
 let steerLast: Record<string, unknown> | null = null;
 function sendSteer(payload: Record<string, unknown>) {
-  // Steering is sent at once, never queued behind an earlier request: holding it
-  // meant a keypress waited for the previous one to return, which is up to a
-  // full round trip of extra input lag. Two requests can then be in flight at
-  // once, so each carries a monotonic sequence number and the server ignores the
-  // older one. Only an unanswered failure is retried with the freshest state.
   const seq = ++steerSeq;
   steerLast = { ...steerLast, ...payload };
+  const targetRoom = roomCode;
   void send({ seq, ...payload }).then((ok) => {
-    if (ok) return;
+    if (ok || roomCode !== targetRoom || seq !== steerSeq) return;
     net.retried++;
-    if (steerLast) setTimeout(() => sendSteer(steerLast!), 100);
+    if (steerLast) setTimeout(() => { if (roomCode === targetRoom && seq === steerSeq && steerLast) sendSteer(steerLast); }, 100);
   });
 }
 
@@ -320,6 +322,7 @@ function enterRoom(code: string) {
   held = null; heldRev = "";
   displayX.clear();
   net.frames = 0; net.posFrames = 0; net.bytes = 0; net.lastPosAt = 0; net.gaps.length = 0; net.dropped = 0; net.retried = 0;
+  lastHudAt = 0; lastAudioAt = 0;
   snap = null;
   wardPanel.update(null, 1, false);
   roomError = "";
@@ -351,6 +354,7 @@ function leaveToMenu() {
       }).finally(() => { if ($("menu").style.display !== "none") void refreshRooms(); });
   }
   snap = null; roomCode = ""; hud.invalidateOverlay(); roomError = ""; pollFailures = 0; held = null; heldRev = ""; lowerGlass();
+  lastHudAt = 0; lastAudioAt = 0;
   displayX.clear();
   wardPanel.update(null, 1, false);
   $("game").style.display = "none";
@@ -393,7 +397,6 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
     }
     return;
   }
-  const prevHeld = held;
   const s = applyFrame(held, frame);
   if (!s || !s.self) { held = null; heldRev = ""; return; }
   const now = performance.now();
@@ -404,7 +407,7 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
   // Measure the wire: every frame, and the gaps between frames that carried a position.
   net.frames++;
   if (frameTouchesPlayers(frame)) {
-    if (net.lastPosAt) { net.gaps.push(now - net.lastPosAt); if (net.gaps.length > 240) net.gaps.splice(0, net.gaps.length - 240); }
+    if (net.lastPosAt) { net.gaps.push(now - net.lastPosAt); if (net.gaps.length > 240) net.gaps.shift(); }
     net.lastPosAt = now;
     net.posFrames++;
     const meNow = s.players.find((p) => p.id === s.self.id)?.x ?? NaN;
@@ -416,11 +419,25 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
   roomError = "";
   snap = s;
   if (timePanel.isOpen && (!s.self.hasTimepiece || s.phase !== "playing")) timePanel.close();
-  wardPanel.update(s.minigame, s.self.stamina, s.self.exhausted);
-  audio.update(s);
+  if (s.minigame || wardPanel.isOpen) wardPanel.update(s.minigame, s.self.stamina, s.self.exhausted);
   if (lastPhase === "lobby" && s.phase === "playing") reveal(s.self.role === "hollow");
+  const posOnlyPlayerPatch = !frame.snap && !frame.delta && !frame.patch?.self && !frame.patch?.tasks && !frame.patch?.doors &&
+    s.phase === lastPhase && !!frame.patch?.players?.every((p) => {
+      for (const k of Object.keys(p)) if (k !== "i" && k !== "id" && k !== "x" && k !== "facing" && k !== "moving") return false;
+      return true;
+    });
   lastPhase = s.phase;
-  renderHud(s);
+  // During continuous 120 Hz walking, throttle WebAudio scheduling (~10 Hz) and
+  // non-canvas HUD updates (~15 Hz) so SSE ingestion stays sub-millisecond and
+  // never steals main-thread frame time; edge/state changes flush immediately.
+  if (!posOnlyPlayerPatch || now - lastAudioAt >= 100) {
+    lastAudioAt = now;
+    audio.update(s);
+  }
+  if (!posOnlyPlayerPatch || now - lastHudAt >= 65) {
+    lastHudAt = now;
+    renderHud(s);
+  }
 }
 
 function startStream(code: string) {

@@ -62,12 +62,12 @@ export async function GET(req: NextRequest) {
         if (due > 0 && !trailing) trailing = setTimeout(() => { trailing = null; push(); }, due);
       };
       // A tick emits once per room, but an input between ticks also emits
-      // (markDirty). Several emits in one event-loop turn become one frame;
-      // nothing waits for a timer, so a frame leaves within the same turn.
+      // (markDirty). Batch multiple emits in one call stack into a single
+      // microtask flush so chunks leave immediately without yielding to timers.
       const onEvent = () => {
         if (scheduled || closed) return;
         scheduled = true;
-        setImmediate(() => { scheduled = false; push(); });
+        queueMicrotask(() => { scheduled = false; push(); });
       };
       const unsub = onRoomEvent(code, onEvent);
       const hb = setInterval(heartbeat, 15_000);
@@ -90,7 +90,8 @@ export async function GET(req: NextRequest) {
   return new Response(stream, {
     headers: {
       "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-store",
+      "cache-control": "no-store, no-transform",
+      "content-encoding": "identity",
       connection: "keep-alive",
       "x-accel-buffering": "no",
     },
