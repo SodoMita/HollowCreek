@@ -7,7 +7,7 @@ import { onRoomEvent } from "./chronicle";
 import { roomEtag, snapshot } from "./snapshot";
 import { applyFrame, diffView, encodeView, type EncodedView, type WireFrame } from "./wire";
 
-export const FRAME_MS = 50; // long-poll fallback only: at most 20 answers per second per viewer (SSE pushes every tick)
+export const FRAME_MS = 8; // long-poll fallback: coalesce to the tick grid, one answer per tick (SSE pushes the same frames)
 export const SLOW_MS = 1000; // slow-class values ride at most once a second
 
 interface ViewerState {
@@ -73,13 +73,13 @@ export function slowDueIn(room: Room, playerId: string, now: number): number {
 export function waitForFrame(room: Room, playerId: string, holdsEtag: string | null, maxMs: number, signal?: AbortSignal): Promise<WireFrame | null> {
   return new Promise((resolve) => {
     let done = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let timer: ReturnType<typeof setImmediate> | null = null;
     const started = Date.now();
     const finish = (frame: WireFrame | null) => {
       if (done) return;
       done = true;
       unsub();
-      if (timer) clearTimeout(timer);
+      if (timer) clearImmediate(timer);
       clearTimeout(deadline);
       signal?.removeEventListener("abort", onAbort);
       resolve(frame);
@@ -94,10 +94,11 @@ export function waitForFrame(room: Room, playerId: string, holdsEtag: string | n
     };
     const onEvent = () => {
       if (timer || done) return;
-      const sentAt = states(room).get(playerId)?.sentAt ?? 0;
-      const delay = Math.max(0, FRAME_MS - (Date.now() - sentAt));
-      if (delay === 0) check();
-      else timer = setTimeout(check, delay);
+      // Several emits can land in one event-loop turn (a tick plus the inputs it
+      // processed). Folding them into the next turn sends one frame carrying the
+      // newest position instead of a burst of stale ones — without adding any
+      // delay beyond the turn itself.
+      timer = setImmediate(() => { timer = null; check(); });
     };
     const unsub = onRoomEvent(room.code, onEvent);
     const deadline = setTimeout(() => { if (!done) { const now = Date.now(); const r = nextFrame(room, playerId, holdsEtag, now, true); finish(r?.frame ?? null); } }, maxMs);
