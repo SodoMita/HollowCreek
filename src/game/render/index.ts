@@ -128,14 +128,13 @@ export class Renderer {
     const reduced = graphics.reducedMotion;
     const meX = ix.me ? displayX.get(ix.me.id) ?? ix.me.x : WORLD_W / 2;
     const lookX = focused ? this.focusX! : meX;
-    const targetCam = clamp(lookX - vw / 2, WORLD_MIN, WORLD_MAX - vw);
-    if (!this.hasCamera || !graphics.cameraSmoothing || snap.phase !== this.lastPhase || Math.abs(targetCam - this.cameraX) > vw * 0.4 || focused !== this.wasFocused) {
-      this.cameraX = targetCam;
-      if (!this.hasCamera) this.visionR = snap.visionRadius;
-      this.hasCamera = true;
-    } else {
-      this.cameraX += (targetCam - this.cameraX) * Math.min(1, dt * 12);
-    }
+    // The camera is a pure function of where the server says you are. No easing,
+    // no chase, no residual motion: with positions arriving every tick, an eased
+    // camera is a second laggy copy of your own soul that never quite catches up
+    // (and visibly swims when the frame rate changes).
+    this.cameraX = clamp(lookX - vw / 2, WORLD_MIN, WORLD_MAX - vw);
+    this.visionR = snap.visionRadius;
+    this.hasCamera = true;
     this.lastPhase = snap.phase;
     this.wasFocused = focused;
     if (WORLD_MAX - WORLD_MIN < vw) this.cameraX = (WORLD_MIN + WORLD_MAX - vw) / 2;
@@ -147,7 +146,7 @@ export class Renderer {
     // skip repainting the identical frame.
     this.clock += dt;
     const anyMoving = snap.players.some((p) => p.moving);
-    if (reduced && !anyMoving && this.lastRenderedSnap === snap && Math.abs(this.cameraX - targetCam) < 0.05 && Math.abs(this.visionR - snap.visionRadius) < 0.5) {
+    if (reduced && !anyMoving && this.lastRenderedSnap === snap) {
       const staticKey = `${artVersion()}|${ctx.canvas.width}x${ctx.canvas.height}|${this.cameraX.toFixed(1)}|${zoom.toFixed(3)}|${this.focusX}|${nb}|${snap.players.map((p) => (displayX.get(p.id) ?? p.x).toFixed(1)).join(",")}|${snap.cartX}`;
       if (staticKey === this.lastStaticKey) return;
       this.lastStaticKey = staticKey;

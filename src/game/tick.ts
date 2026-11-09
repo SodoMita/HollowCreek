@@ -16,6 +16,8 @@ const dist = (a: number, b: number) => Math.abs(a - b);
 // into a *new* room object, so its carry starts at zero and replays stay
 // deterministic without the field being part of history or persistence.
 const cartCarry = new WeakMap<object, number>();
+// The same carry for walkers, keyed by the player record.
+const stepRemainder = new WeakMap<object, number>();
 const g = globalThis as typeof globalThis & { __hollowLoop?: boolean; __hollowTimer?: ReturnType<typeof setTimeout>; __hollowGrid?: number };
 
 // ---------------------------------------------------------------------------
@@ -115,8 +117,17 @@ export function tickRoom(room: Room, now: number) {
       } else if (!p.alive) {
         p.x = clampWorld(nextX);
       } else {
-        const step = walkThroughBuildings(p.x, nextX, p.inside, room.doors);
-        p.x = step.x;
+        // round=false: rounding the *step* to whole pixels made every soul jump a
+        // flat 2 px per tick (Math.round(190 * 1/120 s) = 2), so walking was
+        // really 240 px/s — and at any other tick rate it would be a different
+        // speed again. The sub-pixel remainder is kept in the player record and
+        // carried into the next tick, so the pace is exact while `x` itself stays
+        // an integer (the replay/compare invariant in types.ts).
+        const step = walkThroughBuildings(p.x, nextX, p.inside, room.doors, false);
+        const want = step.x + (stepRemainder.get(p) ?? 0);
+        const whole = Math.trunc(want);
+        stepRemainder.set(p, want - whole);
+        p.x = whole;
         p.inside = step.inside;
       }
       p.moving = Math.abs(p.x - wasX) > 0.01;

@@ -67,7 +67,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
   }
   const now = roomNow(room);
   me.lastSeen = now; // the 100ms state poll IS the presence heartbeat
-  if (!room.replaying && !room.temporalShadow && room.phase !== "lobby" && room.phase !== "ended" && now - (me.lastPresenceAt ?? 0) > 30_000) {
+  if (!room.replaying && !room.temporalShadow && room.phase !== "lobby" && room.phase !== "ended" && now - (me.lastPresenceAt ?? 0) > 30_000) { // presence is journaled at most twice a minute per soul; the poll itself stays the heartbeat
     me.lastPresenceAt = now;
     journal(room, "presence", now, me.id);
   }

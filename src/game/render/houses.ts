@@ -104,7 +104,10 @@ export function drawHouseExteriors(v: View, doorOpen: Map<string, number>) {
     const door = v.doors.get(b.id);
     const target = door?.open ? 1 : 0;
     const previous = doorOpen.get(b.id) ?? target;
-    const amount = v.reduced ? target : previous + (target - previous) * Math.min(1, dt * 10);
+    // Door swings are server state: they are open or shut by the time the frame
+    // is drawn. The old per-frame ease kept a door moving for ~100 ms after the
+    // snapshot had already said "shut", which read as a door lagging its own key.
+    const amount = target;
     doorOpen.set(b.id, amount);
     drawSvg(ctx, "furniture/barrel.svg", sx - b.width / 2 - 30, ground - 34, 26, 34);
     drawSvg(ctx, "furniture/crate.svg", sx + b.width / 2 + 8, ground - 26, 30, 26);

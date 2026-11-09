@@ -9,8 +9,12 @@ export const CARRY_SPEED = 122; // carrying a repair kit
 export const CARRY_VIGOR_DRAIN = 0.045; // extra vigor drain per second while carrying
 
 // --- Tick & time ---
-export const TICK_RATE = 60; // authoritative server ticks per second
-export const TICK_MS = 1000 / TICK_RATE; // one tick ≈ 16.7 ms; a state frame leaves right after each tick
+// The tick rate is also the position update rate, and the client draws raw
+// server positions with no interpolation or prediction, so a soul can only move
+// as smoothly as this. 120/s gives every 60 Hz display a fresh position in every
+// rendered frame (and still costs well under one core for a full town).
+export const TICK_RATE = 120;
+export const TICK_MS = 1000 / TICK_RATE; // one tick ≈ 8.3 ms; a state frame leaves right after each tick
 export const JOURNAL_CAP = 90 * TICK_RATE; // tick/presence entries kept for replay: ~90 s of ticks whatever the rate
 export const NIGHT_LENGTH_MS = 40 * 60_000; // one full night; drives the sky cycle (0=dusk, 1=deep night)
 export const TIME_VISIT_MS = 60_000; // how long a time-travel visit lasts

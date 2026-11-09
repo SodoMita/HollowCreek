@@ -29,8 +29,8 @@ const walker = crew[2];
 // ---- SSE listener for the viewer -------------------------------------------
 const frames = []; // {t, kind, walkerX?, bytes}
 let phaseAt = { meeting: 0 };
-let held = null;
-const { applyFrame } = await import("../src/game/wire.ts").catch(() => ({ applyFrame: null }));
+let heldPlayers = [];
+
 const ctl = new AbortController();
 (async () => {
   const res = await fetch(`${B}/api/game/state/stream?code=${code}&playerId=${viewer}`, { signal: ctl.signal, headers });
@@ -48,10 +48,18 @@ const ctl = new AbortController();
       const json = chunk.slice(5).trim();
       const f = JSON.parse(json);
       const t = performance.now();
-      let walkerX;
-      if (f.snap) walkerX = f.snap.players.find((p) => p.id === walker)?.x;
-      else if (f.patch?.players) walkerX = f.patch.players.find((p) => p.id === walker)?.x;
-      else if (f.delta?.players) walkerX = f.delta.players.find((p) => p.id === walker)?.x;
+      // Merge the frame into a local mirror of the players array, then read the
+      // walker's position from the slot it occupies. Patches are addressed by
+      // roster index (`i`); a full or list frame replaces the array.
+      if (f.snap) heldPlayers = f.snap.players.slice();
+      else if (f.delta?.players) heldPlayers = f.delta.players.slice();
+      else if (f.patch?.players) {
+        for (const part of f.patch.players) {
+          const at = typeof part.i === "number" ? part.i : heldPlayers.findIndex((p) => p.id === part.id);
+          if (at >= 0 && at < heldPlayers.length) heldPlayers[at] = { ...heldPlayers[at], ...part };
+        }
+      }
+      const walkerX = heldPlayers.find((p) => p.id === walker)?.x;
       const phase = f.snap?.phase ?? f.delta?.phase;
       if (phase === "meeting" && !phaseAt.meeting) phaseAt.meeting = t;
       frames.push({ t, kind: f.snap ? "snap" : (f.delta || f.patch) ? "delta" : "tick", walkerX, bytes: json.length, keys: Object.keys(f.delta ?? {}).concat(Object.keys(f.patch ?? {}).map((k) => "patch." + k)) });

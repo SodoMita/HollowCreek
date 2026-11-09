@@ -221,11 +221,13 @@ function getDarkRing(): HTMLCanvasElement {
   return c;
 }
 
-export function drawDarkness(v: View, visionR: number): number {
-  const { ctx, snap, dt, t, cam, ground, meX } = v;
+export function drawDarkness(v: View, _visionR: number): number {
+  const { ctx, snap, t, cam, ground, meX } = v;
   const targetR = snap.visionRadius;
   if (targetR >= 1500) return 420;
-  const vr = visionR + (targetR - visionR) * Math.min(1, dt * 3.5);
+  // The lantern radius follows the server value exactly; easing it made the
+  // light drift for hundreds of milliseconds after a blackout started or ended.
+  const vr = targetR;
   const r = Math.max(80, vr + Math.sin(t * 7.3) * 6);
   const m = ctx.getTransform();
   const cw = ctx.canvas.width;

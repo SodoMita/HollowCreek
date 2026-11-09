@@ -98,14 +98,20 @@ export function diffView(prev: EncodedView, next: EncodedView): ViewDiff {
       fast = true;
       continue;
     }
-    // Same members: send each changed item as {id, ...changedFields} only.
+    // Same members: send each changed item as {i, ...changedFields} only, where
+    // `i` is the item's index in this array. Order is verified two lines above,
+    // so an index identifies the same item on both sides and costs one byte
+    // instead of a 36-character UUID on every changed entity in every frame.
+    // Membership or order changes take the `delta` branch and resend the list.
     const partials: Record<string, unknown>[] = [];
-    for (const it of (snap[key] ?? []) as Record<string, unknown>[]) {
+    const list = (snap[key] ?? []) as Record<string, unknown>[];
+    for (let index = 0; index < list.length; index++) {
+      const it = list[index];
       const id = it.id as string;
       const prevJson = prev.items[key].get(id);
       if (prevJson === next.items[key].get(id)) continue;
       const before = JSON.parse(prevJson!) as Record<string, unknown>;
-      const part: Record<string, unknown> = { id };
+      const part: Record<string, unknown> = { i: index };
       for (const f of new Set([...Object.keys(before), ...Object.keys(it)])) {
         if (f === "id" || j(it[f]) === j(before[f])) continue;
         part[f] = it[f] === undefined ? null : it[f];
@@ -131,11 +137,18 @@ export function applyFrame(held: Snapshot | null, frame: WireFrame): Snapshot | 
   if (frame.patch) {
     if (frame.patch.self) next.self = { ...held.self, ...frame.patch.self };
     for (const key of ID_ARRAYS) {
-      const items = frame.patch[key] as { id: string }[] | undefined;
+      const items = frame.patch[key] as { id?: string; i?: number }[] | undefined;
       if (!items) continue;
-      const byId = new Map(items.map((it) => [it.id, it as Record<string, unknown>]));
-      (next as Record<string, unknown>)[key] = ((next[key] ?? []) as { id: string }[]).map((it) => {
-        const part = byId.get(it.id);
+      // Patches address items by array index (`i`); older servers may still send
+      // `id`. Both resolve against the array the client already holds.
+      const byIndex = new Map<number, Record<string, unknown>>();
+      const byId = new Map<string, Record<string, unknown>>();
+      for (const it of items) {
+        if (typeof it.i === "number") byIndex.set(it.i, it);
+        else if (it.id) byId.set(it.id, it);
+      }
+      (next as Record<string, unknown>)[key] = ((next[key] ?? []) as { id: string }[]).map((it, index) => {
+        const part = byIndex.get(index) ?? (it.id ? byId.get(it.id) : undefined);
         if (!part) return it;
         return { ...it, ...part };
       });

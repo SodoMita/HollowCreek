@@ -7,6 +7,10 @@ const out = await build({ entryPoints: ["src/game/engine.ts"], bundle: true, wri
 const filename = `${process.cwd()}/scripts/.command-replay-test.cjs`;
 const compiled = new Module(filename); compiled.filename = filename; compiled.paths = Module._nodeModulePaths(process.cwd()); compiled._compile(out.outputFiles[0].text, filename);
 const game = compiled.exports, realNow = Date.now;
+// Targets below are absolute world x. `walk()` is closed-loop, so the number of
+// ticks — and therefore the tick rate — cannot change where they end up.
+const TIMEPIECE_X = 1260; // src/game/balance.ts
+const TOLLHOUSE_DOOR = -338; // doorX(Tollhouse) = -470 + (300/2 - 18), src/game/buildings.ts
 const TICK = game.TICK; // one server tick — never a hardcoded millisecond figure
 // Each `advance(room, n)` below means "n × 50 ms of night", matching the tick
 // grid the suites were written against; it now runs several real ticks per step
@@ -55,9 +59,9 @@ function recordedHouseRun(prefix) {
   advance(room, 200); const pickupAt = clock;
   assert.ok(input(room, actor, { action: "interact" }).ok);
   assert.equal(room.doors.find((door) => door.id === "tollhouse").holder, actor.id);
-  input(room, actor, { dir: -1 }); advance(room, 12); input(room, actor, { dir: 0 });
+  walk(room, actor, TOLLHOUSE_DOOR + 38); // beside the door: in reach, still on the road side of the threshold
   assert.ok(input(room, actor, { action: "interact" }).ok);
-  input(room, actor, { dir: -1 }); advance(room, 20); input(room, actor, { dir: 0 });
+  walk(room, actor, -500); // through the doorway, inside the tollhouse
   assert.equal(actor.inside, "tollhouse"); solveHearth(room, actor);
   assert.equal(room.pool.find((task) => task.id === "tollhouse-hearth").done, true);
   advance(room, 11);
@@ -174,7 +178,7 @@ try {
   advance(room, 210);
   assert.ok(input(room, hollow, { action: "ability" }).ok);
   assert.equal(victim.alive, false, "original recorded strike killed the nearer soul");
-  input(room, traveler, { dir: 1 }); advance(room, 101); input(room, traveler, { dir: 0 });
+  walk(room, traveler, TIMEPIECE_X);
   assert.ok(input(room, traveler, { action: "interact" }).ok); advance(room, 11);
   assert.ok(input(room, traveler, { action: "time_travel", targetAt: origin }).ok);
   for (let i = 0; i < 250 && room.timeVisit; i++) advance(room, 1);

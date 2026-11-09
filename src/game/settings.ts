@@ -61,7 +61,7 @@ const DEFAULTS: GameSettings = {
     glow: true,
     vignette: true,
     flicker: true,
-    cameraSmoothing: true,
+    cameraSmoothing: false, // smoothing is a second, laggy copy of your own soul; off by default (§ wire)
     reducedMotion: false,
   },
   interface: {

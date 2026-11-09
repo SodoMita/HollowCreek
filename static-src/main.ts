@@ -785,4 +785,15 @@ function updateNetReadout(nowMs: number) {
 }
 requestAnimationFrame(loop);
 
+// Read-only hooks for the frame/wire probes in scripts/ (never used by the game).
+// They expose the live snapshot identity and the last server position per soul,
+// so a test can measure exactly what was drawn without touching game logic.
+if (typeof window !== "undefined") {
+  (window as unknown as Record<string, unknown>).__hc = {
+    snap: () => snap,
+    positions: () => (snap ? [...displayX.entries()] : []),
+    renderer: () => renderer,
+  };
+}
+
 initMenu();
