@@ -80,7 +80,8 @@ export function drawNote(v: View, x: number, kind: "wall" | "tree", note: Pinned
   const { w, h } = NOTE_FAR;
   const key = `note:${note?.id ?? ""}:${note?.text ?? ""}:${note?.author ?? ""}`;
   const sprite = cachedSprite(key, 64, () => bakeNoteBitmap(note));
-  const y = kind === "wall" ? ground - 118 - h : ground - 74 - h;
+  // Pin at player hand/chest height on walls and tree trunks rather than up near the ceiling.
+  const y = kind === "wall" ? ground - 26 - h : ground - 22 - h;
   const sway = Math.sin(t * 1.7 + x * 0.05) * 1.1;
   ctx.save();
   ctx.translate(x, y + h);
