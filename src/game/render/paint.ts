@@ -98,16 +98,19 @@ export function getPillBadge(
   g.fillStyle = fg;
   g.fillText(text, w / 2, h / 2 + 0.5);
   const entry = { canvas, w, h };
-  if (pillCache.size > 512) pillCache.clear();
+  if (pillCache.size >= 512) pillCache.delete(pillCache.keys().next().value as string);
   pillCache.set(key, entry);
   return entry;
 }
 
-/** Cache any small bitmap by string key. */
+const BADGE_CAP = 512;
+
+/** Cache any small bitmap by string key (evicts one oldest entry, never wipes the whole cache). */
 export function cachedSprite(key: string, cap: number, make: () => HTMLCanvasElement): HTMLCanvasElement {
   let c = badgeCache.get(key);
   if (!c) {
-    if (badgeCache.size >= cap) badgeCache.clear();
+    const limit = Math.max(cap, BADGE_CAP);
+    if (badgeCache.size >= limit) badgeCache.delete(badgeCache.keys().next().value as string);
     c = make();
     badgeCache.set(key, c);
   }

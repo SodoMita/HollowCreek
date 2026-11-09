@@ -8,8 +8,6 @@ import { AudioDirector } from "../src/game/audio";
 import { VoiceChat, type VoiceStatus } from "../src/game/voice";
 import { SettingsStore, applyDocumentPreferences, keyLabel, matchesControl, type BindableAction } from "../src/game/settings";
 import { SettingsDialog } from "../src/game/settings-ui";
-import { BUILDINGS, WORLD_MAX, WORLD_MIN, clampWorld, doorX } from "../src/game/buildings";
-import { CARRY_SPEED, CART_HELPER_BONUS, CART_MAX_SPEED, CART_PUSH_RANGE, CART_SOLO_SPEED, GHOST_SPEED, SPEED } from "../src/game/types";
 import type { RoomListing, Snapshot } from "../src/game/types";
 import { applyFrame, type WireFrame } from "../src/game/wire";
 import { RoomHud, esc } from "./hud";
@@ -77,7 +75,6 @@ function getPid(): string {
   return pid;
 }
 
-interface PlayerTrack { ackX: number; ackAt: number; vx: number }
 let snap: Snapshot | null = null;
 let roomCode = "";
 let gameVisible = false;
@@ -86,16 +83,20 @@ let streamEpoch = 0;
 let eventSource: EventSource | null = null;
 let pollAbort: AbortController | null = null;
 let pollFailures = 0;
+let pollBackoffMs = 0;
 let roomError = "";
 let lastPhase = "lobby";
 const keys = new Set<string>();
 let lastDir = 0;
 const displayX = new Map<string, number>();
-const tracks = new Map<string, PlayerTrack>();
-// Prediction bookkeeping: measured round trip, arrival of our own acknowledged
-// position, and our steering log, replayed over the unacknowledged interval.
-let cartHeldLocal = false;
-const net = { rttMs: 80, selfAckX: 0, selfAckAt: 0, hasSelfAck: false, inputs: [] as { t: number; dir: number }[] };
+const steerState = { dir: 0, cartHeld: false, interactHeld: false };
+let steerInFlight = false;
+let steerQueued = false;
+const netStats = { rttMs: 40, droppedInputs: 0, lastPosAt: 0, gaps: [] as number[], renderFrames: 0 };
+const showNet = params.get("net") === "1";
+let netEl: HTMLElement | null = null;
+let lastAudioAt = 0;
+let audioEdgeKey = "";
 let held: Snapshot | null = null; // what the server thinks we hold (deltas merge into it)
 let lastPollAt = 0;
 let heldRev = "";
@@ -160,13 +161,50 @@ function toast(msg: string) {
   const t = $("toast"); t.textContent = msg; t.style.display = "block";
   setTimeout(() => { t.style.display = "none"; }, 2200);
 }
-async function send(payload: Record<string, unknown>) {
+async function postInput(payload: Record<string, unknown>, retry429 = true): Promise<{ ok: boolean; status: number }> {
+  if (!roomCode) return { ok: false, status: 0 };
   const sentAt = performance.now();
   try {
-    const d = await api("/api/game/input", { code: roomCode, playerId: getPid(), ...payload });
-    net.rttMs = net.rttMs * 0.7 + Math.min(1500, Math.max(20, performance.now() - sentAt)) * 0.3;
+    const res = await fetch(server + "/api/game/input", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code: roomCode, playerId: getPid(), ...payload }),
+    });
+    if (res.status === 429 && retry429) {
+      await new Promise((r) => setTimeout(r, 80));
+      return postInput(payload, false);
+    }
+    const d = await res.json().catch(() => ({}));
+    netStats.rttMs = netStats.rttMs * 0.7 + Math.min(1500, Math.max(5, performance.now() - sentAt)) * 0.3;
     if (d && d.ok === false && d.error) toast(d.error);
-  } catch { /* next poll resyncs */ }
+    if (!res.ok && res.status !== 400) netStats.droppedInputs++;
+    return { ok: res.ok, status: res.status };
+  } catch {
+    netStats.droppedInputs++;
+    return { ok: false, status: 0 };
+  }
+}
+
+async function flushSteer() {
+  if (steerInFlight) { steerQueued = true; return; }
+  steerInFlight = true;
+  try {
+    do {
+      steerQueued = false;
+      const snapSteer = { dir: steerState.dir, cartHeld: steerState.cartHeld, interactHeld: steerState.interactHeld };
+      const r = await postInput(snapSteer, false);
+      if (r.status === 429) {
+        await new Promise((r2) => setTimeout(r2, 80));
+        steerQueued = true; // resend freshest steering state
+      }
+    } while (steerQueued && roomCode);
+  } finally {
+    steerInFlight = false;
+  }
+}
+
+async function send(payload: Record<string, unknown>) {
+  await postInput(payload, true);
 }
 
 // ---------------------------------------------------------------- menu ----
@@ -273,12 +311,14 @@ function enterRoom(code: string) {
   cancelProbe();
   stopStream();
   roomCode = code;
-  held = null; heldRev = ""; net.inputs.length = 0; net.hasSelfAck = false;
-  tracks.clear(); displayX.clear();
+  held = null; heldRev = ""; steerQueued = false;
+  steerState.dir = 0; steerState.cartHeld = false; steerState.interactHeld = false;
+  netStats.gaps.length = 0; netStats.lastPosAt = 0; netStats.droppedInputs = 0;
+  displayX.clear();
   snap = null;
   wardPanel.update(null, 1, false);
   roomError = "";
-  pollFailures = 0;
+  pollFailures = 0; pollBackoffMs = 0;
   hud.invalidateOverlay();
   $("overlay").style.display = "none";
   $("menu").style.display = "none";
@@ -305,8 +345,9 @@ function leaveToMenu() {
         catch { /* still return to the menu */ }
       }).finally(() => { if ($("menu").style.display !== "none") void refreshRooms(); });
   }
-  snap = null; roomCode = ""; hud.invalidateOverlay(); roomError = ""; pollFailures = 0; held = null; heldRev = ""; lowerGlass();
-  tracks.clear(); displayX.clear();
+  snap = null; roomCode = ""; hud.invalidateOverlay(); roomError = ""; pollFailures = 0; pollBackoffMs = 0; held = null; heldRev = ""; lowerGlass();
+  steerQueued = false; steerState.dir = 0; steerState.cartHeld = false; steerState.interactHeld = false;
+  displayX.clear();
   wardPanel.update(null, 1, false);
   $("game").style.display = "none";
   gameVisible = false;
@@ -356,43 +397,32 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
   held = s;
   heldRev = frame.etag ?? heldRev;
 
-  // Stamp per-player velocity tracking only for players whose position or state updated.
-  const touched = (frame.snap ? s.players : (frame.patch?.players ?? frame.delta?.players)) as Snapshot["players"] | undefined;
-  if (touched) {
-    const byId = new Map<string, Snapshot["players"][number]>();
-    for (const p of touched) byId.set(p.id, p);
-    for (const p of s.players) {
-      const part = byId.get(p.id);
-      const prevTrack = tracks.get(p.id);
-      if (part || !prevTrack) {
-        const prevX = prevTrack?.ackX ?? p.x;
-        const elapsedSec = prevTrack ? Math.max(0.03, (now - prevTrack.ackAt) / 1000) : 0;
-        const nearCart = s.cartPushers > 0 && p.alive && !p.inside && !p.hasSupply && Math.abs(p.x - s.cartX) <= CART_PUSH_RANGE;
-        const cartSpd = Math.min(CART_MAX_SPEED, CART_SOLO_SPEED + Math.max(0, s.cartPushers - 1) * CART_HELPER_BONUS);
-        const obsSpeed = elapsedSec > 0 && p.x !== prevX ? Math.abs(p.x - prevX) / elapsedSec : 0;
-        const spd = !p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : (nearCart && (obsSpeed === 0 || obsSpeed <= cartSpd * 1.35)) ? cartSpd : SPEED;
-        const vx = p.moving ? p.facing * spd : 0;
-        // Keep ackAt fresh when the player moves, or when this is their first sight.
-        if (!prevTrack || p.x !== prevX || part?.moving !== undefined || part?.facing !== undefined) {
-          tracks.set(p.id, { ackX: p.x, ackAt: now, vx });
-        } else {
-          prevTrack.vx = vx;
-        }
-        if (p.id === s.self.id && (!prevHeld || p.x !== net.selfAckX || part?.moving !== undefined)) {
-          net.selfAckX = p.x;
-          net.selfAckAt = now;
-          net.hasSelfAck = true;
-        }
-      }
+  // Record real position-frame cadence and sync authoritative server positions directly
+  // without client-side prediction or artificial interpolation delay.
+  if (frame.snap || frame.patch?.players || frame.delta?.players !== undefined) {
+    if (netStats.lastPosAt > 0) {
+      netStats.gaps.push(now - netStats.lastPosAt);
+      if (netStats.gaps.length > 40) netStats.gaps.shift();
     }
+    netStats.lastPosAt = now;
+  }
+  for (const p of s.players) displayX.set(p.id, p.x);
+  if (displayX.size > s.players.length) {
+    for (const id of displayX.keys()) if (!s.players.some((p) => p.id === id)) displayX.delete(id);
   }
 
   pollFailures = 0;
+  pollBackoffMs = 0;
   roomError = "";
   snap = s;
   if (timePanel.isOpen && (!s.self.hasTimepiece || s.phase !== "playing")) timePanel.close();
   wardPanel.update(s.minigame, s.self.stamina, s.self.exhausted);
-  audio.update(s);
+  const edgeKey = `${s.phase}|${s.taskBar?.done ?? 0}|${s.self.alive ? 1 : 0}|${s.bellAt}|${s.blackoutUntil}`;
+  if (edgeKey !== audioEdgeKey || now - lastAudioAt >= 120) {
+    audioEdgeKey = edgeKey;
+    lastAudioAt = now;
+    audio.update(s);
+  }
   if (lastPhase === "lobby" && s.phase === "playing") reveal(s.self.role === "hollow");
   lastPhase = s.phase;
   renderHud(s);
@@ -437,11 +467,13 @@ async function pollLoop(code: string, myEpoch: number) {
         lastPollAt = now;
         if (snap) hud.renderCountdowns(snap);
         pollFailures = 0;
+        pollBackoffMs = 0;
         continue;
       }
       if (!res.ok) {
         if (++pollFailures >= 5) showRoomError("The town server is not answering. Retrying…");
-        await new Promise((r) => setTimeout(r, 300));
+        pollBackoffMs = pollBackoffMs ? Math.min(4000, pollBackoffMs * 2) : 100;
+        await new Promise((r) => setTimeout(r, pollBackoffMs));
         continue;
       }
       const frame = (await res.json()) as WireFrame & { error?: string };
@@ -451,7 +483,8 @@ async function pollLoop(code: string, myEpoch: number) {
       clearTimeout(timer);
       if (myEpoch !== streamEpoch || code !== roomCode) return;
       if (++pollFailures >= 5) showRoomError("The town server is not answering. Retrying…");
-      await new Promise((r) => setTimeout(r, 250));
+      pollBackoffMs = pollBackoffMs ? Math.min(4000, pollBackoffMs * 2) : 100;
+      await new Promise((r) => setTimeout(r, pollBackoffMs));
     }
   }
 }
@@ -470,9 +503,11 @@ function renderHud(s: Snapshot) { hud.render(s, settingsStore.value, voice.curre
 function releaseInputs() {
   keys.clear();
   lastDir = 0;
-  cartHeldLocal = false;
   interactToggled = false;
-  if (roomCode) void send({ dir: 0, interactHeld: false, cartHeld: false });
+  steerState.dir = 0;
+  steerState.cartHeld = false;
+  steerState.interactHeld = false;
+  if (roomCode) void flushSteer();
 }
 function activateTimepiece() {
   if (snap?.time?.mode === "past") { void send({ action: "time_return" }); return; }
@@ -480,13 +515,18 @@ function activateTimepiece() {
 }
 function stopInteract() {
   interactToggled = false;
-  if (roomCode) void send({ interactHeld: false });
+  steerState.interactHeld = false;
+  if (roomCode) void flushSteer();
 }
 function interactDown() {
   if (settingsStore.value.controls.interactMode === "toggle") {
     interactToggled = !interactToggled;
+    steerState.interactHeld = interactToggled;
     void send({ action: "interact", interactHeld: interactToggled });
-  } else void send({ action: "interact", interactHeld: true });
+  } else {
+    steerState.interactHeld = true;
+    void send({ action: "interact", interactHeld: true });
+  }
 }
 function interactUp() {
   if (settingsStore.value.controls.interactMode === "hold") stopInteract();
@@ -495,9 +535,8 @@ function computeDir() {
   const d = (keys.has("right") ? 1 : 0) - (keys.has("left") ? 1 : 0);
   if (d !== lastDir) {
     lastDir = d;
-    net.inputs.push({ t: performance.now(), dir: d });
-    if (net.inputs.length > 64) net.inputs.splice(0, net.inputs.length - 64);
-    void send({ dir: d });
+    steerState.dir = d;
+    void flushSteer();
   }
 }
 function chatOpen() { return $("chatbox").style.display === "block"; }
@@ -535,7 +574,7 @@ window.addEventListener("keydown", (e) => {
   else if (bound("interact", e) && !e.repeat) { interactDown(); e.preventDefault(); }
   else if (bound("ability", e) && !e.repeat) { void send({ action: "ability" }); e.preventDefault(); }
   else if (bound("blackout", e) && !e.repeat) { void send({ action: "blackout" }); e.preventDefault(); }
-  else if (bound("push", e) && !e.repeat) { cartHeldLocal = true; void send({ cartHeld: true }); e.preventDefault(); }
+  else if (bound("push", e) && !e.repeat) { steerState.cartHeld = true; void flushSteer(); e.preventDefault(); }
   else if (bound("drop", e) && !e.repeat) { void send({ action: "drop_supply" }); e.preventDefault(); }
   else if (bound("ruin", e) && !e.repeat) { void send({ action: "sabotage" }); e.preventDefault(); }
   else if (bound("chat", e) && !e.repeat) { openChat(); e.preventDefault(); }
@@ -546,7 +585,7 @@ window.addEventListener("keyup", (e) => {
   if (bound("left", e)) { keys.delete("left"); computeDir(); }
   else if (bound("right", e)) { keys.delete("right"); computeDir(); }
   else if (bound("interact", e)) interactUp();
-  else if (bound("push", e)) { cartHeldLocal = false; void send({ cartHeld: false }); }
+  else if (bound("push", e)) { steerState.cartHeld = false; void flushSteer(); }
 });
 window.addEventListener("blur", releaseInputs);
 $("chatinput").addEventListener("keydown", (e) => { if (e.key === "Enter") submitChat(); e.stopPropagation(); });
@@ -609,14 +648,14 @@ for (const what of ["e", "push"] as const) {
     try { b.setPointerCapture(e.pointerId); } catch { /* noop */ }
     b.classList.add("active");
     if (what === "e") interactDown();
-    else { cartHeldLocal = true; void send({ cartHeld: true }); }
+    else { steerState.cartHeld = true; void flushSteer(); }
   });
   const off = (e: PointerEvent) => {
     if (activeId !== e.pointerId) return;
     activeId = null;
     b.classList.remove("active");
     if (what === "e") interactUp();
-    else { cartHeldLocal = false; void send({ cartHeld: false }); }
+    else { steerState.cartHeld = false; void flushSteer(); }
   };
   b.addEventListener("pointerup", off);
   b.addEventListener("pointercancel", off);
@@ -739,66 +778,28 @@ settingsStore.subscribe((settings) => { renderer.setSettings(settings); resize()
 resize();
 window.addEventListener("resize", resize);
 window.visualViewport?.addEventListener("resize", resize);
-function clampPredicted(x: number, inside: string | null, doors: Snapshot["doors"]): number {
-  let out = clampWorld(x);
-  if (!inside) return out;
-  const b = BUILDINGS.find((item) => item.id === inside);
-  const d = doors?.find((item) => item.id === inside);
-  if (!b || !d) return out;
-  const farWall = b.x - b.side * (b.width / 2 - 25);
-  out = b.side === 1 ? Math.max(farWall, out) : Math.min(farWall, out);
-  if (!d.open) {
-    const threshold = doorX(b);
-    if ((out - threshold) * b.side >= 0) out = threshold - b.side * 0.01;
-  }
-  return out;
-}
-
 let last = performance.now();
+let netSampleAt = last;
+let netSampleFrames = 0;
+if (showNet) {
+  netEl = document.createElement("div");
+  netEl.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:90;background:rgba(13,8,16,.85);border:1px solid #3a2733;border-radius:6px;padding:4px 8px;font:11px/1.35 monospace;color:#d8c9b4;pointer-events:none";
+  document.body.appendChild(netEl);
+}
 function loop(nowMs: number) {
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, (nowMs - last) / 1000);
   last = nowMs;
   if (!snap || !gameVisible) return;
-  for (const p of snap.players) {
-    const cur = displayX.get(p.id);
-    if (cur === undefined) { displayX.set(p.id, p.x); continue; }
-    const isSelf = p.id === snap.self.id;
-    const selfPushing = isSelf && p.alive && !snap.self.caged && !p.inside && !p.hasSupply && cartHeldLocal && Math.abs(cur - snap.cartX) <= CART_PUSH_RANGE;
-    const pushSpd = Math.min(CART_MAX_SPEED, CART_SOLO_SPEED + Math.max(0, Math.max(1, snap.cartPushers) - 1) * CART_HELPER_BONUS);
-    const spd = !p.alive ? GHOST_SPEED : p.hasSupply ? CARRY_SPEED : selfPushing ? pushSpd : SPEED;
-    if (isSelf && snap.phase === "playing" && !snap.self.caged) {
-      let next = clampPredicted(cur + lastDir * spd * dt, p.inside ?? null, snap.doors);
-      if (net.hasSelfAck) {
-        const since = net.selfAckAt - net.rttMs * 0.5 - 25;
-        let dir = 0;
-        for (const e of net.inputs) if (e.t <= since) dir = e.dir; else break;
-        let target = net.selfAckX, t0 = since;
-        for (const e of net.inputs) {
-          if (e.t <= since) continue;
-          target += dir * spd * (e.t - t0) / 1000;
-          t0 = e.t;
-          dir = e.dir;
-        }
-        target = clampPredicted(target + dir * spd * (nowMs - t0) / 1000, p.inside ?? null, snap.doors);
-        const err = target - next;
-        if (Math.abs(err) > 220) next = target;
-        else if (lastDir === 0) next += err * Math.min(1, dt * 14);
-        else if (Math.abs(err) > 14) next += Math.sign(err) * (Math.abs(err) - 14) * Math.min(1, dt * 6);
-      }
-      displayX.set(p.id, Math.max(WORLD_MIN + 30, Math.min(WORLD_MAX - 30, next)));
-    } else {
-      const tr = tracks.get(p.id);
-      if (!tr || Math.abs(p.x - cur) > 260) {
-        displayX.set(p.id, p.x);
-      } else {
-        // Advance continuously at the player's last pace, then gently track the dead-reckoned target.
-        const age = Math.min(0.22, Math.max(0, (nowMs - tr.ackAt) / 1000));
-        const target = tr.ackX + tr.vx * age;
-        const advanced = cur + tr.vx * dt;
-        displayX.set(p.id, advanced + (target - advanced) * Math.min(1, dt * 10));
-      }
-    }
+  netStats.renderFrames++;
+  netSampleFrames++;
+  if (netEl && nowMs - netSampleAt >= 250) {
+    const fps = Math.round((netSampleFrames * 1000) / Math.max(1, nowMs - netSampleAt));
+    netSampleAt = nowMs;
+    netSampleFrames = 0;
+    const sorted = netStats.gaps.slice().sort((a, b) => a - b);
+    const p50 = sorted.length ? Math.round(sorted[Math.floor(sorted.length * 0.5)]) : 0;
+    netEl.textContent = `${fps} fps · rtt ${Math.round(netStats.rttMs)} ms · gap p50 ${p50} ms · drop ${netStats.droppedInputs} · souls ${snap.players.length}`;
   }
   renderer.setFocus(noteFocusX);
   renderer.render(ctx, viewW, viewH, snap, displayX, nowMs / 1000, dt);

@@ -82,7 +82,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
       else if (me.hasSupply) hint = "Hauling kit (slower) — G to drop";
       else if (nearCart) hint = "Hold Shift + A/D to push the cart";
       else if (room.pool.some((t) => !t.done && !t.delivered)) {
-        hint = `Supply cart ${room.cartX < me.x ? "←" : "→"} ${Math.round(dist(room.cartX, me.x))} steps`;
+        hint = `Supply cart ${room.cartX < me.x ? "←" : "→"} ${Math.round(dist(room.cartX, me.x) / 25) * 25} steps`;
       }
     }
   }

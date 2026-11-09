@@ -114,7 +114,14 @@ export class Renderer {
       return;
     }
     const graphics = this.settings.graphics;
-    if (!this.index || this.index.snap !== snap) this.index = buildIndex(snap);
+    if (!this.index || this.index.snap !== snap) {
+      this.index = buildIndex(snap);
+      if (this.motion.size > snap.players.length) {
+        for (const id of this.motion.keys()) {
+          if (!snap.players.some((p) => p.id === id)) this.motion.delete(id);
+        }
+      }
+    }
     const ix = this.index;
 
     const focused = this.focusX !== null;
@@ -134,7 +141,7 @@ export class Renderer {
       if (!this.hasCamera) this.visionR = snap.visionRadius;
       this.hasCamera = true;
     } else {
-      this.cameraX += (targetCam - this.cameraX) * Math.min(1, dt * 12);
+      this.cameraX += (targetCam - this.cameraX) * Math.min(1, dt * 18);
     }
     this.lastPhase = snap.phase;
     this.wasFocused = focused;
@@ -218,9 +225,9 @@ export class Renderer {
     if (graphics.particles) drawFireflies(frame, pick(frame.quality, 18, 12, 6));
     if (graphics.fog) drawFog(frame, pick(frame.quality, 4, 3, 1));
     if (frame.quality !== "low") drawReeds(frame);
+    drawScreenGrade(frame, graphics.vignette);
     this.visionR = drawDarkness(frame, this.visionR);
     if (snap.time?.mode === "past") drawPastWash(frame);
-    drawScreenGrade(frame, graphics.vignette);
     drawFlicker(frame);
     ctx.restore();
   }

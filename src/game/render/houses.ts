@@ -32,7 +32,7 @@ function cutawayFacade(b: Building, facade: HTMLCanvasElement, boxW: number, ove
   g.lineTo((dxr - b.side * 9) * kx, 151 * ky);
   g.closePath();
   g.fill();
-  if (cutaways.size > 24) cutaways.clear();
+  if (cutaways.size >= 36) cutaways.delete(cutaways.keys().next().value as string);
   cutaways.set(key, canvas);
   return canvas;
 }

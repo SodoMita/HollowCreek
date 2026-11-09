@@ -27,7 +27,8 @@ export async function GET(req: NextRequest) {
   let holds: string | null = null; // etag of what this client holds
   let computedAt = 0;
   let clockAt = 0;
-  let trailing: ReturnType<typeof setTimeout> | null = null;
+  let coalesceTimer: ReturnType<typeof setTimeout> | null = null;
+  let slowTimer: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
   const encoder = new TextEncoder();
   const CLOCK_MS = 1000;
@@ -42,19 +43,21 @@ export async function GET(req: NextRequest) {
         if (closed) return;
         try { controller.enqueue(encoder.encode(":hb\n\n")); } catch { /* closed */ }
       };
-      const later = (ms: number) => {
-        if (trailing || closed) return;
-        trailing = setTimeout(() => { trailing = null; push(); }, Math.max(1, ms));
+      const scheduleCoalesce = (ms: number) => {
+        if (coalesceTimer || closed) return;
+        coalesceTimer = setTimeout(() => { coalesceTimer = null; push(); }, Math.max(1, ms));
       };
-      // Room events fire every 50 ms tick; snapshots are computed at most
-      // once per FRAME_MS per viewer, and only the diff goes down the wire.
-      // Allow every 50 ms server tick through without timer jitter (49 ms -> +50 ms stall)
-      // while coalescing rapid bursts of actions within 35 ms.
-      const COALESCE_MS = Math.max(20, FRAME_MS - 15);
+      const scheduleSlow = (ms: number) => {
+        if (slowTimer || closed) return;
+        slowTimer = setTimeout(() => { slowTimer = null; push(); }, Math.max(1, ms));
+      };
+      // Coalesce sub-10ms action bursts without ever delaying a server tick or
+      // blocking fast position frames behind the 1s slow-value timer.
+      const COALESCE_MS = Math.min(10, FRAME_MS);
       const push = () => {
         if (closed) return;
         const t = Date.now();
-        if (t - computedAt < COALESCE_MS) { later(COALESCE_MS - (t - computedAt)); return; }
+        if (t - computedAt < COALESCE_MS) { scheduleCoalesce(COALESCE_MS - (t - computedAt)); return; }
         computedAt = t;
         const r = nextFrame(room, playerId, holds, t);
         if (!r) { send({ gone: true, now: t }); cleanup(); return; }
@@ -67,7 +70,7 @@ export async function GET(req: NextRequest) {
           send({ now: r.snapNow });
         }
         const due = slowDueIn(room, playerId, t);
-        if (due > 0) later(due); // held slow values go out on the beat even if the room sleeps
+        if (due > 0) scheduleSlow(due); // held slow values go out on the beat even if the room sleeps
       };
       const unsub = onRoomEvent(code, push);
       const hb = setInterval(heartbeat, 15_000);
@@ -77,7 +80,8 @@ export async function GET(req: NextRequest) {
         closed = true;
         clearInterval(hb);
         clearInterval(tick);
-        if (trailing) clearTimeout(trailing);
+        if (coalesceTimer) clearTimeout(coalesceTimer);
+        if (slowTimer) clearTimeout(slowTimer);
         unsub();
         try { controller.close(); } catch { /* already closed */ }
       }

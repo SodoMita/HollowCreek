@@ -20,8 +20,8 @@ export async function GET(req: NextRequest) {
   const codeParam = sp.get("code") ?? "";
   const code = codeParam.length <= 8 ? codeParam.toUpperCase() : "";
   const playerId = (sp.get("playerId") ?? "").slice(0, 64);
-  // Each soul polls ~1-10 times a second while playing, so the soul bucket is generous.
-  if (!admit(req, "state", `${code}:${playerId}`, 1800, 12000)) {
+  // Each soul may poll up to the 40 Hz tick cadence while playing, so the soul bucket is generous.
+  if (!admit(req, "state", `${code}:${playerId}`, 3600, 24000)) {
     return NextResponse.json({ error: "Slow down." }, { status: 429 });
   }
   const rev = sp.get("rev");

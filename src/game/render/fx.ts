@@ -72,6 +72,7 @@ export function drawLeaves(v: View, leaves: Leaf[], count: number) {
     l.r += dt * 2;
     if (l.y > yMax) { l.y = -20; l.x = cam + nextRand() * w; }
     if (l.x < cam - 60) l.x = cam + w + 40;
+    else if (l.x > cam + w + 60) l.x = cam - 40;
     const sx = l.x - cam;
     if (sx < -20 || sx > w + 20) continue;
     const sy = l.y * yScale - lift;
@@ -195,9 +196,9 @@ export function drawReeds(v: View) {
   }
 }
 
-// Pre-baked 512x512 radial darkness square: fills the full square with one
-// radial gradient reaching rgba(3,1,6,0.965) slightly inside the edge so the
-// corners match the 4 outer solid strips seamlessly with zero overlap.
+// Pre-baked 512x512 radial darkness square: transparent lantern circle in the
+// center fading seamlessly to rgba(3,1,6,0.992) so objects outside server
+// vision cannot faintly ghost into view on wide aspect ratios.
 let darkRing: HTMLCanvasElement | null = null;
 function getDarkRing(): HTMLCanvasElement {
   if (darkRing) return darkRing;
@@ -207,9 +208,9 @@ function getDarkRing(): HTMLCanvasElement {
   const g = c.getContext("2d")!;
   const dark = g.createRadialGradient(half, half, half * 0.45, half, half, half - 2);
   dark.addColorStop(0, "rgba(4,2,8,0)");
-  dark.addColorStop(0.55, "rgba(4,2,8,0.3)");
-  dark.addColorStop(0.78, "rgba(4,2,8,0.6)");
-  dark.addColorStop(1, "rgba(3,1,6,0.965)");
+  dark.addColorStop(0.55, "rgba(4,2,8,0.34)");
+  dark.addColorStop(0.78, "rgba(4,2,8,0.72)");
+  dark.addColorStop(1, "rgba(3,1,6,0.992)");
   g.fillStyle = dark;
   g.fillRect(0, 0, size, size);
   const warm = g.createRadialGradient(half, half, 4, half, half, half * 0.7);
@@ -244,7 +245,7 @@ export function drawDarkness(v: View, visionR: number): number {
   const y1 = Math.min(ch, ry1);
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = "rgba(3,1,6,0.965)";
+  ctx.fillStyle = "rgba(3,1,6,0.992)";
   if (y0 > 0) ctx.fillRect(0, 0, cw, y0);
   if (y1 < ch) ctx.fillRect(0, y1, cw, ch - y1);
   if (x0 > 0 && y1 > y0) ctx.fillRect(0, y0, x0, y1 - y0);

@@ -14,13 +14,14 @@ export function journal(room: Room, kind: JournalEntry["kind"], at: number, play
   at = Math.max(at, room.journal.at(-1)?.at ?? at);
   const entry: JournalEntry = { seq: ++room.journalSeq, at, kind, seed: randomInt(1, 0x7fffffff), playerId, body: body ? canonicalInput(body) : undefined };
   room.journal.push(entry); room.activeSeed = entry.seed; room.activeEventId = String(entry.seq);
-  // Ticks (10–20/s) and presence heartbeats flood the chronicle; evict only those.
-  if (room.journal.length > 1500) {
-    let i = 0;
-    while (room.journal.length > 1500 && i < room.journal.length) {
-      if (room.journal[i].kind === "tick" || room.journal[i].kind === "presence") room.journal.splice(i, 1);
-      else i++;
-    }
+  // Keep enough ticks/heartbeats to cover a full 40-minute night at 40 Hz;
+  // only trim oldest ticks/heartbeats if a match runs past 120k entries.
+  if (room.journal.length > 120_000) {
+    let drop = room.journal.length - 100_000;
+    room.journal = room.journal.filter((e) => {
+      if (drop > 0 && (e.kind === "tick" || e.kind === "presence")) { drop--; return false; }
+      return true;
+    });
   }
   return entry;
 }

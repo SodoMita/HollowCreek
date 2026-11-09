@@ -16,9 +16,11 @@ function create(prefix) {
   return { room, crew: players.filter((p) => p.role === "crew"), hollow: players.find((p) => p.role === "hollow") };
 }
 function advance(room, count) {
-  for (let i = 0; i < count; i++) {
-    clock += 50;
-    if (i % 20 === 0) for (const player of room.players.values()) game.snapshot(room, player.id);
+  const stepMs = game.TICK_MS ?? 50;
+  const substeps = Math.max(1, Math.round(50 / stepMs));
+  for (let i = 0; i < count * substeps; i++) {
+    clock += stepMs;
+    if (i % (20 * substeps) === 0) for (const player of room.players.values()) game.snapshot(room, player.id);
     game.advanceRoomForTest(room, clock);
   }
 }

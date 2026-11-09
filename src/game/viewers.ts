@@ -7,7 +7,7 @@ import { onRoomEvent } from "./chronicle";
 import { roomEtag, snapshot } from "./snapshot";
 import { applyFrame, diffView, encodeView, type EncodedView, type WireFrame } from "./wire";
 
-export const FRAME_MS = 50; // up to 20 state frames per second per viewer (matches server TICK_MS)
+export const FRAME_MS = 16; // coalesce rapid action bursts within one display frame
 export const SLOW_MS = 1000; // slow-class values ride at most once a second
 
 interface ViewerState {
@@ -88,9 +88,12 @@ export function waitForFrame(room: Room, playerId: string, holdsEtag: string | n
       timer = null;
       if (done) return;
       const now = Date.now();
-      const r = nextFrame(room, playerId, holdsEtag, now, now - started >= maxMs);
+      const elapsed = now - started;
+      const r = nextFrame(room, playerId, holdsEtag, now, elapsed >= maxMs);
       if (!r) { finish(null); return; }
-      if (r.frame) finish(r.frame);
+      if (r.frame) { finish(r.frame); return; }
+      const due = slowDueIn(room, playerId, now);
+      if (due > 0 && elapsed + due < maxMs) timer = setTimeout(check, due);
     };
     const onEvent = () => {
       if (timer || done) return;

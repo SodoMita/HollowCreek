@@ -52,7 +52,7 @@ import { PLAYER_COLORS } from "./types";
 
 const PRELOAD_TIMEOUT_MS = 4000;
 const SPRITE_CAP = 1800;
-const TRAVELER_CAP = 900;
+const TRAVELER_CAP = 1600;
 
 const images = new Map<string, HTMLImageElement>();
 const sprites = new Map<string, HTMLCanvasElement>();
@@ -224,6 +224,7 @@ function findTravelerSprite(cloak: string, redEyes: boolean, ghost: boolean, ste
     const fwd = travelers.get(travKey(cloak, redEyes, ghost, step, false, scale));
     if (fwd) {
       const mirrored = mirrorCanvas(fwd);
+      if (travelers.size >= TRAVELER_CAP) travelers.delete(travelers.keys().next().value as string);
       travelers.set(k, mirrored);
       return mirrored;
     }
@@ -231,14 +232,21 @@ function findTravelerSprite(cloak: string, redEyes: boolean, ghost: boolean, ste
   return undefined;
 }
 
-/** Synchronous fallback so a character never drops for even one frame while a pose/eye/zoom variant bakes. */
+/** Synchronous fallback so a character never drops for even one frame while a pose/eye/zoom variant bakes.
+ *  Preserves (redEyes, ghost) across all scales before relaxing pose so eyes/legs never flash. */
 function fallbackTravelerSprite(cloak: string, redEyes: boolean, ghost: boolean, step: number, flip: boolean): HTMLCanvasElement | undefined {
-  for (const sc of [artScale, 2, 1, 4]) {
+  const scales = [artScale, 2, 1, 4];
+  for (const st of [step, 0]) {
+    for (const sc of scales) {
+      const hit = findTravelerSprite(cloak, redEyes, ghost, st, flip, sc);
+      if (hit) return hit;
+    }
+  }
+  for (const sc of scales) {
     for (const [re, gh, st] of [
-      [redEyes, ghost, step],
-      [redEyes, ghost, 0],
       [redEyes, false, step],
       [redEyes, false, 0],
+      [false, ghost, 0],
       [false, false, step],
       [false, false, 0],
     ] as const) {
@@ -249,7 +257,7 @@ function fallbackTravelerSprite(cloak: string, redEyes: boolean, ghost: boolean,
   return undefined;
 }
 
-/** The traveller sprite in its own colours, baked per palette, pose and direction. */
+/** The traveller sprite in its own colours, baked per palette, 8-phase walk pose and direction. */
 export function drawTraveler(
   ctx: CanvasRenderingContext2D, color: string, redEyes: boolean, ghost: boolean, pose: number, facing = 1,
 ): boolean {
@@ -257,7 +265,7 @@ export function drawTraveler(
   void requestTraveler();
   if (!travelerTemplate) return false;
   const cloak = /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : "#3a7ca5";
-  const step = pose > 0 ? 3 : pose < 0 ? -3 : 0;
+  const step = ghost ? 0 : (pose >= 1 && pose <= 8 ? Math.round(pose) : 0);
   const flip = facing < 0;
   const hit = findTravelerSprite(cloak, redEyes, ghost, step, flip, artScale);
   if (hit) {
@@ -278,9 +286,14 @@ export function drawTraveler(
 }
 
 function legTransforms(step: number): [string, string] {
-  if (step > 0) return ["translate(-3px,0px)", "translate(3px,-2px)"];
-  if (step < 0) return ["translate(11px,-2px)", "translate(-11px,0px)"];
-  return ["translate(0px,0px)", "translate(0px,0px)"];
+  if (step < 1 || step > 8) return ["translate(0px,0px)", "translate(0px,0px)"];
+  const th = ((step - 1) / 8) * Math.PI * 2;
+  // Opposite-phase hip swing (+x is forward, clockwise SVG rotation swings backward).
+  const aL = (-Math.sin(th) * 28).toFixed(1);
+  const aR = (Math.sin(th) * 28).toFixed(1);
+  const yL = (-Math.max(0, Math.cos(th)) * 3.2).toFixed(1);
+  const yR = (-Math.max(0, -Math.cos(th)) * 3.2).toFixed(1);
+  return [`translate(0px,${yL}px) rotate(${aL}deg)`, `translate(0px,${yR}px) rotate(${aR}deg)`];
 }
 
 function bakeTraveler(
@@ -368,18 +381,48 @@ function warmCommonSprites(): Promise<void> {
   artScale = prevScale;
 
   if (!travelerTemplate || typeof window === "undefined") return Promise.resolve();
-  const colors = [...new Set([...PLAYER_COLORS, "#d9a441", "#c44a3a"])];
+  const colors = [...new Set([...PLAYER_COLORS, "#d9a441", "#c44a3a", "#7ab0c9", "#8ec46f", "#c97fb0", "#e0785a", "#a9a0e8"])];
   const jobs: Promise<void>[] = [];
   for (const sc of [1, 2]) {
     for (const c of colors) {
       const cloak = c.toLowerCase();
-      for (const step of [-3, 0, 3]) {
-        jobs.push(bakeTraveler(travKey(cloak, false, false, step, false, sc), cloak, false, false, step, sc, travelerTemplate));
+      for (const redEyes of [false, true]) {
+        for (const ghost of [false, true]) {
+          jobs.push(bakeTraveler(travKey(cloak, redEyes, ghost, 0, false, sc), cloak, redEyes, ghost, 0, sc, travelerTemplate));
+        }
       }
-      jobs.push(bakeTraveler(travKey(cloak, true, false, 0, false, sc), cloak, true, false, 0, sc, travelerTemplate));
     }
   }
-  return Promise.all(jobs).then(() => {});
+  // Pre-bake the tutorial's default cloak walk phases at scale 2 immediately;
+  // warm remaining player walk phases in tiny background batches so startup rAF never stalls.
+  const tpl = travelerTemplate;
+  for (let step = 1; step <= 8; step++) {
+    jobs.push(bakeTraveler(travKey("#3a7ca5", false, false, step, false, 2), "#3a7ca5", false, false, step, 2, tpl));
+  }
+  return Promise.all(jobs).then(() => {
+    const queue: [string, boolean, number, number][] = [];
+    for (const sc of [2, 1]) {
+      for (const c of colors) {
+        const cloak = c.toLowerCase();
+        for (let step = 1; step <= 8; step++) {
+          for (const re of [false, true]) {
+            const k = travKey(cloak, re, false, step, false, sc);
+            if (!travelers.has(k)) queue.push([cloak, re, step, sc]);
+          }
+        }
+      }
+    }
+    let idx = 0;
+    const drain = () => {
+      const end = Math.min(idx + 4, queue.length);
+      for (; idx < end; idx++) {
+        const [cloak, re, step, sc] = queue[idx];
+        void bakeTraveler(travKey(cloak, re, false, step, false, sc), cloak, re, false, step, sc, tpl);
+      }
+      if (idx < queue.length) setTimeout(drain, 16);
+    };
+    if (queue.length) setTimeout(drain, 32);
+  });
 }
 
 /** Starts loading all fixed art, room furniture and the traveller sprite. Idempotent. */

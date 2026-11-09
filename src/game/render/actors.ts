@@ -105,14 +105,17 @@ function getBubbleSprite(text: string): { canvas: HTMLCanvasElement; w: number; 
   return { canvas, w, h };
 }
 
+const TWO_PI = Math.PI * 2;
+
 export function drawFigure(
   ctx: CanvasRenderingContext2D, x: number, groundY: number, color: string,
   facing: number, moving: boolean, ghost: boolean, redEyes: boolean,
   stride: number, breathClock: number, worldSeed: number, bobAllowed: boolean,
 ) {
   const gait = Math.sin(stride);
-  const bob = bobAllowed ? (moving ? Math.abs(gait) * -2.2 : Math.sin(breathClock * 1.7 + worldSeed) * 0.35) : 0;
-  const pose = moving ? (gait > 0.32 ? 1 : gait < -0.32 ? -1 : 0) : 0;
+  const bob = bobAllowed ? (moving ? Math.abs(gait) * -1.8 : Math.sin(breathClock * 1.7 + worldSeed) * 0.35) : 0;
+  const norm = ((stride % TWO_PI) + TWO_PI) % TWO_PI;
+  const pose = moving && !ghost ? (Math.floor((norm / TWO_PI) * 8) % 8) + 1 : 0;
   ctx.translate(x, groundY + bob);
   drawTraveler(ctx, color, redEyes, ghost, pose, facing);
   ctx.translate(-x, -(groundY + bob));
@@ -163,7 +166,7 @@ function drawPlayer(v: View, motion: Map<string, Motion>, p: View["sorted"][numb
   const { ctx, w, t, clock, dt, cam, ground, now, snap, displayX, glassUp, reduced } = v;
   const shownX = displayX.get(p.id) ?? p.x;
   const px = shownX - cam;
-  if (px < -100 || px > w + 100) return;
+  if (px < -180 || px > w + 180) return;
   const ghost = !p.alive;
   if (ghost && snap.self.alive) return;
   const isMate = snap.self.teammates.includes(p.id);
@@ -176,19 +179,16 @@ function drawPlayer(v: View, motion: Map<string, Motion>, p: View["sorted"][numb
   }
   const dx = shownX - seen.x;
   const moved = Math.abs(dx);
-  // Distance-driven stride works at any FPS, slow cart-push speed, under reducedMotion,
-  // and identically near buildings or map edges.
-  if (moved > 0.02) {
-    seen.facing = dx > 0 ? 1 : -1;
-    seen.movingUntil = clock + 0.12;
-    seen.stride += Math.max(moved * 0.085, dt * 7);
-  } else if (p.moving && p.id !== snap.self.id) {
+  // Large jumps (teleports or re-entering server vision) snap without faking a stride or turn.
+  const teleported = moved > 120;
+  const walking = p.moving || (moved > 0.02 && !teleported);
+  if (teleported) {
     seen.facing = p.facing || seen.facing;
-    seen.movingUntil = Math.max(seen.movingUntil, clock + 0.08);
-    seen.stride += dt * 10;
+  } else if (walking) {
+    seen.facing = moved > 0.02 ? (dx > 0 ? 1 : -1) : (p.facing || seen.facing);
+    seen.stride += Math.max(moved * 0.085, dt * 11);
   }
   seen.x = shownX;
-  const walking = clock < seen.movingUntil;
 
   const prev = ctx.globalAlpha;
   if (ghost) ctx.globalAlpha = prev * 0.45;

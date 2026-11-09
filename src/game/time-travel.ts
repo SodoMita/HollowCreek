@@ -114,10 +114,16 @@ export function visitCursor(visit: TimeVisit, now: number) {
 type ReplayTimelineItem = { at: number; rank: number; order: number; original?: JournalEntry; arrival?: { id: string; initial: P }; action?: { id: string; entry: ReplayAction }; consume?: { id: string; entry: ReplayAction }; suspend?: string };
 
 export function timelineItems(room: Room, visit: TimeVisit, until: number): ReplayTimelineItem[] {
-  // Sequence numbers are contiguous, so skip the unchanged prefix instead of
-  // scanning the entire night on every past frame.
+  // Sequence numbers are strictly increasing; binary-search the first entry
+  // after visit.base.seq so journal trimming never shifts offsets.
   const items: ReplayTimelineItem[] = [];
-  for (let i = visit.base.seq; i < room.journal.length; i++) {
+  let lo = 0, hi = room.journal.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (room.journal[mid].seq <= visit.base.seq) lo = mid + 1;
+    else hi = mid;
+  }
+  for (let i = lo; i < room.journal.length; i++) {
     const entry = room.journal[i];
     if (entry.at > until) break;
     items.push({ at: entry.at, rank: 0, order: entry.seq, original: entry });

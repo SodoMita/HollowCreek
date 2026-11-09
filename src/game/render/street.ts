@@ -55,7 +55,7 @@ export function drawRoadDressing(v: View) {
   }
   if (quality === "low") return;
   const f0 = Math.max(0, Math.floor((cam - 80 - WORLD_MIN) / 320));
-  const f1 = Math.min(33, Math.ceil((cam + w + 80 - WORLD_MIN) / 320));
+  const f1 = Math.min(40, Math.ceil((cam + w + 80 - WORLD_MIN) / 320));
   for (let i = f0; i <= f1; i++) {
     const fx = WORLD_MIN + i * 320 - cam;
     if (fx < -80 || fx > w + 80) continue;
@@ -63,7 +63,7 @@ export function drawRoadDressing(v: View) {
     drawSvg(ctx, "props/broken-fence.svg", fx - 6, fy - 34, 86, 38);
   }
   const p0 = Math.max(0, Math.floor((cam - 20 - (WORLD_MIN + 60)) / 260));
-  const p1 = Math.min(41, Math.ceil((cam + w + 20 - (WORLD_MIN + 60)) / 260));
+  const p1 = Math.min(49, Math.ceil((cam + w + 20 - (WORLD_MIN + 60)) / 260));
   for (let i = p0; i <= p1; i++) {
     const sx = WORLD_MIN + i * 260 + 60 - cam;
     if (sx < -10 || sx > w + 10) continue;

@@ -4,6 +4,7 @@ import { tickRoom } from "./tick";
 import { snapshot } from "./snapshot";
 export { roomEtag, snapshot } from "./snapshot";
 export { endTimeVisit, handlePastInput, pastRoom, pastSnapshot, reconcileFuture, simulatePastForTest, spawnNextTimepiece, startTimeVisit } from "./time-travel";
+export { TICK_MS } from "./types";
 export { advanceRoomForTest, tick, tickRoom, tickRooms } from "./tick";
 export { createRoom, handleInput, joinRoom, leaveRoom, listRooms, restartGame, startGame } from "./actions";
 

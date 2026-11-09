@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/db";
 import { roomPlayers, roomRows } from "@/db/schema";
 import { BUILDINGS, dropBuildingKeys, interactWithBuilding, newDoors, snapAnchor } from "./buildings";
-import { feed, journal, markDirty, record, roomNow, seeded, kitId } from "./chronicle";
+import { emitRoom, feed, journal, markDirty, record, roomNow, seeded, kitId } from "./chronicle";
 import { captureHistory } from "./history";
 import { applyWardMove, validWardMove, wardProgress, wardSolved } from "./wards";
 import { inMeetingArea, killTarget, nearestBody, nearestOccupiedCage, stationNear } from "./proximity";
@@ -381,6 +381,15 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
 // ---------------------------------------------------------------------------
 
 export function handleInput(room: Room, body: InputBody): { ok: boolean; error?: string } {
+  const res = applyInput(room, body);
+  if (res.ok && !room.replaying && !room.temporalShadow && (body.action || body.chat)) {
+    room.rev++;
+    emitRoom(room.code);
+  }
+  return res;
+}
+
+function applyInput(room: Room, body: InputBody): { ok: boolean; error?: string } {
   const p = room.players.get(body.playerId);
   if (!p) return { ok: false, error: "Unknown soul." };
   p.lastSeen = roomNow(room);
