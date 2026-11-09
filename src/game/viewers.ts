@@ -7,7 +7,7 @@ import { onRoomEvent } from "./chronicle";
 import { roomEtag, snapshot } from "./snapshot";
 import { applyFrame, diffView, encodeView, type EncodedView, type WireFrame } from "./wire";
 
-export const FRAME_MS = 50; // at most 20 state frames per second per viewer (matches TICK_MS)
+export const FRAME_MS = 16; // coalesce bursts within one display frame; do not wait a whole tick
 export const SLOW_MS = 1000; // slow-class values ride at most once a second
 
 interface ViewerState {

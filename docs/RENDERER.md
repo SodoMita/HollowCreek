@@ -43,8 +43,11 @@ bundle is ~46 KB gzipped.
   walk cycle keeps playing when a soul presses into a wall or doorway.
 - The tutorial steps its simulation inside `requestAnimationFrame`; the HUD updates
   ~8×/s instead of once per step.
-- Multiplayer draws other souls on a 60 ms interpolation delay between server
-  positions with a capped extrapolation; the local soul is predicted immediately.
+- Multiplayer draws other souls on a PER-CLIENT interpolation delay measured from that
+  client's own frame gaps: clamp(p50 × 0.6 + 6, 20, 60) ms. It is deliberately below
+  one frame gap; the renderer extrapolates the remainder with the known facing and
+  speed (capped at 150 ms), so the picture stays fresh. The local soul is predicted
+  from input immediately.
 - A cart pusher is predicted at cart speed (`CART_SOLO_SPEED` plus helper bonus),
   matching the server's movement, so there is no lunge-and-snap.
 - The camera follows the viewer at 18/s (6/s only under the spyglass).
@@ -73,8 +76,8 @@ The state wire sends **one latest value per changed entity per frame**, not a hi
 - The client long-polls at 50 ms with `delta=1&wait=1`; a room event that changes
   nothing *for this viewer* keeps the request open instead of ending it (the old
   behaviour churned one request per viewer per event).
-- The client interpolates between the last two positions (60 ms behind) and predicts
-  its own soul locally, so 20 position updates/s render as continuous 60 fps motion.
+- The client interpolates between the last two positions on an adaptive delay (20-60 ms)
+  and extrapolates the remainder, so 20 position updates/s render as continuous motion.
 
 Measured on a 4-soul town, viewer walking (`/api/game/state?delta=1&wait=1`):
 
@@ -88,3 +91,17 @@ Measured on a 4-soul town, viewer walking (`/api/game/state?delta=1&wait=1`):
 Sending a *sequence* of 120 frames/s instead would cost ~600+ bytes/s per neighbour
 just for x values, grow with every player and the cart, and buy nothing: the client
 already renders at 60 fps by interpolating between the two newest positions.
+
+## Latency budget (measured)
+
+| Component | Before | Now |
+| --- | --- | --- |
+| Input → server state | ~25 ms median (half a tick) | ~25 ms median (tick-bound) |
+| Server event → frame sent | up to 50 ms (coalescing window) | ~16 ms (one display frame) |
+| State frames per second | 10 | 20 (one per server tick) |
+| Client interpolation delay | fixed 60 ms | adaptive 20–60 ms per client |
+| Client poll interval | 100 ms | 16 ms (long-poll self-paces) |
+
+The floor for other players is one server tick (~50 ms) plus network: the server only
+moves souls on ticks, so no client poll rate can invent fresher positions. The client
+sends input the moment a key changes and predicts its own soul immediately.

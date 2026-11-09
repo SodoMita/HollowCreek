@@ -280,7 +280,7 @@ function enterRoom(code: string) {
   // probe a different server and turn a valid room into an empty screen.
   history.replaceState(null, "", `${location.pathname}?room=${code}&server=${encodeURIComponent(server)}`);
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(poll, 50);
+  pollTimer = setInterval(poll, 16);
   void poll();
 }
 function leaveToMenu() {
@@ -357,7 +357,10 @@ async function poll() {
     if (!s || !s.self) { held = null; heldRev = ""; return; } // out of sync — the next request fetches a full snapshot
     held = s;
     heldRev = frame.etag ?? heldRev;
-    if (frameTouchesPlayers(frame)) net.arrival = performance.now();
+    if (frameTouchesPlayers(frame)) {
+      net.arrival = performance.now();
+      notePlayerFrame(net.arrival);
+    }
     pollFailures = 0;
     roomError = "";
     snap = s;
@@ -820,6 +823,29 @@ function walkSpeed(snap: Snapshot, p: Snapshot["players"][number]): number {
 // Other players are drawn on a short interpolation delay between the last two
 // server positions (plus a capped extrapolation past the newest), so state frames
 // arriving ~10×/s read as continuous motion instead of visible steps.
+// Per-client interpolation delay: sized from THIS client's measured frame gaps, so a
+// fast connection renders with less delay and a jittery one still hides the gaps.
+let interpDelayMs = 60;
+const playerFrameGaps: number[] = [];
+let lastPlayerFrameAt = 0;
+function notePlayerFrame(now: number) {
+  if (lastPlayerFrameAt) {
+    const gap = now - lastPlayerFrameAt;
+    if (gap > 0 && gap < 500) {
+      playerFrameGaps.push(gap);
+      if (playerFrameGaps.length > 40) playerFrameGaps.shift();
+      if (playerFrameGaps.length >= 8) {
+        const sorted = [...playerFrameGaps].sort((a, b) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)];
+        // Deliberately BELOW one frame gap: the renderer extrapolates the remaining
+        // distance with the known facing and speed (capped at 150 ms), so a shorter
+        // delay means a fresher picture. Clamped so a bad connection cannot add lag.
+        interpDelayMs = Math.max(20, Math.min(60, Math.round(median * 0.6 + 6)));
+      }
+    }
+  }
+  lastPlayerFrameAt = now;
+}
 const interp = new Map<string, { fromX: number; toX: number; fromT: number; toT: number; facing: number; moving: boolean; spd: number }>();
 let interpSnap: Snapshot | null = null;
 let last = performance.now();
@@ -867,7 +893,7 @@ function loop(nowMs: number) {
         if (it) { it.fromX = it.toX; it.fromT = it.toT; }
         continue;
       }
-      const rt = nowMs - 60; // interpolation delay: 1.5 server ticks, enough to hide snapshot gaps
+      const rt = nowMs - interpDelayMs; // adaptive: one measured frame gap + margin
       let x: number;
       if (rt <= it.fromT) x = it.fromX;
       else if (rt <= it.toT) x = it.fromX + (it.toX - it.fromX) * ((rt - it.fromT) / Math.max(1, it.toT - it.fromT));

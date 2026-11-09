@@ -15,9 +15,23 @@ function create(prefix) {
   const players = [...room.players.values()];
   return { room, crew: players.filter((p) => p.role === "crew"), hollow: players.find((p) => p.role === "hollow") };
 }
+// Step by the real server tick so the script stays valid if TICK_MS changes.
+const balance = await build({ entryPoints: ["src/game/balance.ts"], bundle: true, write: false, platform: "node", format: "cjs", packages: "external" });
+const balanceMod = new Module(`${process.cwd()}/scripts/.command-replay-balance.cjs`);
+balanceMod.filename = balanceMod.id; balanceMod.paths = Module._nodeModulePaths(process.cwd());
+balanceMod._compile(balance.outputFiles[0].text, balanceMod.id);
+const TICK_MS = balanceMod.exports.TICK_MS;
+function advanceMs(room, ms) {
+  const ticks = Math.round(ms / TICK_MS);
+  for (let i = 0; i < ticks; i++) {
+    clock += TICK_MS;
+    if (i % 20 === 0) for (const player of room.players.values()) game.snapshot(room, player.id);
+    game.advanceRoomForTest(room, clock);
+  }
+}
 function advance(room, count) {
   for (let i = 0; i < count; i++) {
-    clock += 50;
+    clock += TICK_MS;
     if (i % 20 === 0) for (const player of room.players.values()) game.snapshot(room, player.id);
     game.advanceRoomForTest(room, clock);
   }
@@ -49,9 +63,9 @@ function recordedHouseRun(prefix) {
   advance(room, 200); const pickupAt = clock;
   assert.ok(input(room, actor, { action: "interact" }).ok);
   assert.equal(room.doors.find((door) => door.id === "tollhouse").holder, actor.id);
-  input(room, actor, { dir: -1 }); advance(room, 12); input(room, actor, { dir: 0 });
+  input(room, actor, { dir: -1 }); advanceMs(room, 600); input(room, actor, { dir: 0 });
   assert.ok(input(room, actor, { action: "interact" }).ok);
-  input(room, actor, { dir: -1 }); advance(room, 20); input(room, actor, { dir: 0 });
+  input(room, actor, { dir: -1 }); advanceMs(room, 1000); input(room, actor, { dir: 0 });
   assert.equal(actor.inside, "tollhouse"); solveHearth(room, actor);
   assert.equal(room.pool.find((task) => task.id === "tollhouse-hearth").done, true);
   advance(room, 11);
