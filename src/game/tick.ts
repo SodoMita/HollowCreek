@@ -8,7 +8,7 @@ import { rooms } from "./registry";
 import { captureHistory } from "./history";
 import { clampWorld, dropBuildingKeys, walkThroughBuildings } from "./buildings";
 import { stationNear } from "./proximity";
-import { CARRY_SPEED, CARRY_VIGOR_DRAIN, CART_HELPER_BONUS, CART_MAX_SPEED, CART_PUSH_RANGE, CART_SOLO_SPEED, CELL_HALF, GHOST_SPEED, INTERACT_RANGE, SPEED, STAMINA_IDLE_REGEN, STATIONS, TICK_MS, ix } from "./types";
+import { CARRY_SPEED, CARRY_VIGOR_DRAIN, CART_HELPER_BONUS, CART_MAX_SPEED, CART_PUSH_RANGE, CART_SOLO_SPEED, CELL_HALF, GHOST_SPEED, INTERACT_RANGE, SPEED, STAMINA_IDLE_REGEN, STATIONS, TICK_MS, cartVigorFactor, ix } from "./types";
 import type { Room } from "./engine";
 
 const dist = (a: number, b: number) => Math.abs(a - b);
@@ -64,7 +64,11 @@ export function tickRoom(room: Room, now: number) {
     const left = pushers.filter((p) => p.dir < 0);
     const team = right.length > left.length ? right : left.length > right.length ? left : [];
     const pushingIds = new Set(team.map((p) => p.id));
-    const cartSpeed = Math.min(CART_MAX_SPEED, CART_SOLO_SPEED + Math.max(0, team.length - 1) * CART_HELPER_BONUS);
+    const baseCartSpeed = Math.min(CART_MAX_SPEED, CART_SOLO_SPEED + Math.max(0, team.length - 1) * CART_HELPER_BONUS);
+    const teamVigor = team.length
+      ? team.reduce((sum, p) => sum + cartVigorFactor(p.stamina, p.exhausted), 0) / team.length
+      : 1;
+    const cartSpeed = baseCartSpeed * teamVigor;
     room.cartPushers = team.length;
     const prevCartX = room.cartX;
     if (team.length) {

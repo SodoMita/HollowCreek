@@ -49,6 +49,7 @@ export interface P {
   color: string;
   x: number;
   subX?: number;
+  steerSeq?: number;
   dir: number; // last INPUT direction (-1 | 0 | 1). Clients never send positions.
   facing: number;
   moving: boolean;

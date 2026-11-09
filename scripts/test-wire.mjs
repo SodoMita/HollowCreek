@@ -14,8 +14,8 @@ const load = async (file) => {
   const out = await build({ entryPoints: [resolve(repo, file)], bundle: true, write: false, format: "esm", platform: "neutral", target: "es2022", logLevel: "silent" });
   return import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString("base64")}`);
 };
-const { applyFrame } = await load("src/game/wire.ts");
-const { snapshotEtag } = await load("src/game/fingerprint.ts");
+const { applyFrame, encodeView, viewFingerprint } = await load("src/game/wire.ts");
+const etagOf = (s) => viewFingerprint(encodeView(s, ""));
 
 const post = (path, body) => fetch(`${BASE}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
 const ids = ["w-a", "w-b", "w-c", "w-d"];
@@ -51,7 +51,7 @@ while (Date.now() - started < 4500) {
     if (frame.snap) full++;
     held = applyFrame(held, frame);
     assert.ok(held, "a full frame arrives before any delta");
-    if (frame.etag) { assert.equal(snapshotEtag(held), frame.etag, `merged state matches the server etag (frame ${frames})`); checks++; }
+    if (frame.etag) { assert.equal(etagOf(held), frame.etag, `merged state matches the server etag (frame ${frames})`); checks++; }
   }
 }
 ctl.abort();
@@ -72,7 +72,7 @@ while (Date.now() - t0 < 3000) {
   if (frame.snap) lpFull++;
   lp = applyFrame(lp, frame);
   assert.ok(lp, "long-poll: a full frame arrives first");
-  assert.equal(snapshotEtag(lp), frame.etag, "long-poll: merged state matches the server etag");
+  assert.equal(etagOf(lp), frame.etag, "long-poll: merged state matches the server etag");
   rev = frame.etag;
 }
 assert.equal(lpFull, 1, "long-poll: one full snapshot, then deltas");

@@ -101,6 +101,7 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
     staleSeat.lastSeen = now;
     staleSeat.joinedAt = now;
     staleSeat.parked = false;
+    staleSeat.steerSeq = 0;
     room.players.set(playerId, staleSeat);
     record(room, staleSeat, "rejoin", { oldId });
     feed(room, `${staleSeat.name} returned to town.`);
@@ -350,6 +351,7 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
     q.actionText = ""; q.actionUntil = 0;
     q.interactHeld = false;
     q.activeWard = null;
+    q.steerSeq = 0;
     q.vote = null;
   }
   room.bodies = [];
@@ -399,13 +401,20 @@ function applyInput(room: Room, body: InputBody): { ok: boolean; error?: string 
   if (body.action === "time_travel") return startTimeVisit(room, p, body.targetAt);
   if (body.action === "time_return") return { ok: false, error: "You are already in the present." };
 
-  if (typeof body.dir === "number") {
-    const d = Math.max(-1, Math.min(1, Math.round(body.dir)));
-    if (d !== p.dir) record(room, p, "move_input", { dir: d });
-    p.dir = d;
+  let applySteer = true;
+  if (!room.replaying && !room.temporalShadow && typeof body.seq === "number" && Number.isFinite(body.seq)) {
+    if (body.seq <= (p.steerSeq ?? 0)) applySteer = false;
+    else p.steerSeq = body.seq;
   }
-  if (typeof body.interactHeld === "boolean") p.interactHeld = body.interactHeld;
-  if (typeof body.cartHeld === "boolean") p.cartHeld = body.cartHeld;
+  if (applySteer) {
+    if (typeof body.dir === "number") {
+      const d = Math.max(-1, Math.min(1, Math.round(body.dir)));
+      if (d !== p.dir) record(room, p, "move_input", { dir: d });
+      p.dir = d;
+    }
+    if (typeof body.interactHeld === "boolean") p.interactHeld = body.interactHeld;
+    if (typeof body.cartHeld === "boolean") p.cartHeld = body.cartHeld;
+  }
 
   if (typeof body.chat === "string" && body.chat.trim()) {
     const text = body.chat.trim().slice(0, 120);

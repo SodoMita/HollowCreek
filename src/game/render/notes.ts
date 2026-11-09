@@ -88,11 +88,16 @@ export function drawNote(v: View, x: number, kind: "wall" | "tree", big: boolean
   ctx.restore();
 }
 
+export function isNoteReadable(v: View, sx: number, noteX: number): boolean {
+  if (v.focused && v.focusX === noteX) return true;
+  return v.zoom >= 1.9 && Math.abs(sx - v.w / 2) <= 260;
+}
+
 export function drawStreetNotes(v: View) {
   for (const note of v.snap.notes ?? []) {
     if (note.house) continue;
     const sx = note.x - v.cam;
     if (sx < -100 || sx > v.w + 100) continue;
-    drawNote(v, sx, note.kind, v.focused && v.focusX === note.x, note);
+    drawNote(v, sx, note.kind, isNoteReadable(v, sx, note.x), note);
   }
 }

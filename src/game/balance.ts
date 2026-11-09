@@ -58,5 +58,12 @@ export const CART_SOLO_SPEED = 38;
 export const CART_HELPER_BONUS = 26;
 export const CART_MAX_SPEED = 116;
 
+/** Cart push speed multiplier from vigor (0..1); below STAMINA_SLOW_THRESHOLD it slows linearly, exhausted crawls at 25%. */
+export function cartVigorFactor(stamina: number, exhausted: boolean): number {
+  if (exhausted || stamina <= 0) return 0.25;
+  if (stamina < STAMINA_SLOW_THRESHOLD) return 0.35 + 0.65 * (stamina / STAMINA_SLOW_THRESHOLD);
+  return 1;
+}
+
 // --- The timepiece ---
 export const TIMEPIECE_X = 1260;

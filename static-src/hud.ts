@@ -105,7 +105,7 @@ export class RoomHud {
     this.set("soulcount", `${s.playerCount} souls${s.self.hasSupply ? " · kit carried" : ""}`);
     this.display("supplydrop", s.phase === "playing" && s.self.hasSupply ? "inline-block" : "none");
     const meX = me ? me.x : 0;
-    const nearNote = (s.notes ?? []).filter((n) => Math.abs(n.x - meX) <= 150).sort((a, b) => Math.abs(a.x - meX) - Math.abs(b.x - meX))[0];
+    const nearNote = (s.notes ?? []).filter((n) => Math.abs(n.x - meX) <= 200).sort((a, b) => Math.abs(a.x - meX) - Math.abs(b.x - meX))[0];
     this.display("readnote", s.phase === "playing" ? "inline-block" : "none");
     const noteId = nearNote ? nearNote.id : "";
     if (this.cache.get("noteId") !== noteId) { this.cache.set("noteId", noteId); $("readnote").dataset.noteId = noteId; }

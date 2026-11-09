@@ -4,8 +4,8 @@
 // persistence and history checkpoints never see it.
 import type { Room } from "./engine";
 import { onRoomEvent } from "./chronicle";
-import { roomEtag, snapshot } from "./snapshot";
-import { applyFrame, diffView, encodeView, type EncodedView, type WireFrame } from "./wire";
+import { snapshot } from "./snapshot";
+import { applyFrame, diffView, encodeView, viewFingerprint, type EncodedView, type WireFrame } from "./wire";
 
 export const FRAME_MS = 4; // coalesce sub-4ms action bursts; every 8ms server tick ships immediately
 export const SLOW_MS = 1000; // slow-class values ride at most once a second
@@ -38,15 +38,16 @@ export function viewerEtag(room: Room, playerId: string): string | null {
 export function nextFrame(room: Room, playerId: string, holdsEtag: string | null, now: number, flush = false): { frame: WireFrame | null; snapNow: number } | null {
   const snap = snapshot(room, playerId); // also the presence heartbeat
   if (!snap) return null;
-  const etag = roomEtag(room, playerId, snap);
   const m = states(room);
   const prev = m.get(playerId);
+  const next = encodeView(snap, "");
+  const etag = viewFingerprint(next);
+  next.etag = etag;
   if (!prev || holdsEtag !== prev.view.etag) {
-    m.set(playerId, { view: encodeView(snap, etag), slowAt: now, sentAt: now });
+    m.set(playerId, { view: next, slowAt: now, sentAt: now });
     return { frame: { etag, now: snap.now, snap }, snapNow: snap.now };
   }
   if (etag === prev.view.etag) return { frame: null, snapNow: snap.now };
-  const next = encodeView(snap, etag);
   const d = diffView(prev.view, next);
   if (!d.any) { prev.view = next; return { frame: null, snapNow: snap.now }; }
   if (!d.fast && !flush && now - prev.slowAt < SLOW_MS) return { frame: null, snapNow: snap.now };
@@ -54,7 +55,7 @@ export function nextFrame(room: Room, playerId: string, holdsEtag: string | null
   if (Object.keys(d.delta).length) frame.delta = d.delta;
   if (Object.keys(d.patch).length) frame.patch = d.patch;
   // Did this frame carry slow values? Then the beat restarts; fast-only frames leave it alone.
-  const carriedSlow = !d.fast || Object.keys(d.delta).some((k) => k === "nightT" || k === "time" || k === "danger") || !!d.patch.self || !!d.patch.tasks;
+  const carriedSlow = !d.fast || Object.keys(d.delta).some((k) => k === "nightT" || k === "time" || k === "danger" || k === "hint") || !!d.patch.self || !!d.patch.tasks;
   m.set(playerId, { view: next, slowAt: carriedSlow ? now : prev.slowAt, sentAt: now });
   return { frame, snapNow: snap.now };
 }
@@ -73,19 +74,21 @@ export function slowDueIn(room: Room, playerId: string, now: number): number {
 export function waitForFrame(room: Room, playerId: string, holdsEtag: string | null, maxMs: number, signal?: AbortSignal): Promise<WireFrame | null> {
   return new Promise((resolve) => {
     let done = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let coalesceTimer: ReturnType<typeof setTimeout> | null = null;
+    let slowTimer: ReturnType<typeof setTimeout> | null = null;
     const started = Date.now();
     const finish = (frame: WireFrame | null) => {
       if (done) return;
       done = true;
       unsub();
-      if (timer) clearTimeout(timer);
+      if (coalesceTimer) clearTimeout(coalesceTimer);
+      if (slowTimer) clearTimeout(slowTimer);
       clearTimeout(deadline);
       signal?.removeEventListener("abort", onAbort);
       resolve(frame);
     };
     const check = () => {
-      timer = null;
+      coalesceTimer = null;
       if (done) return;
       const now = Date.now();
       const elapsed = now - started;
@@ -93,14 +96,16 @@ export function waitForFrame(room: Room, playerId: string, holdsEtag: string | n
       if (!r) { finish(null); return; }
       if (r.frame) { finish(r.frame); return; }
       const due = slowDueIn(room, playerId, now);
-      if (due > 0 && elapsed + due < maxMs) timer = setTimeout(check, due);
+      if (due > 0 && elapsed + due < maxMs && !slowTimer) {
+        slowTimer = setTimeout(() => { slowTimer = null; check(); }, due);
+      }
     };
     const onEvent = () => {
-      if (timer || done) return;
+      if (coalesceTimer || done) return;
       const sentAt = states(room).get(playerId)?.sentAt ?? 0;
       const delay = Math.max(0, FRAME_MS - (Date.now() - sentAt));
       if (delay === 0) check();
-      else timer = setTimeout(check, delay);
+      else coalesceTimer = setTimeout(check, delay);
     };
     const unsub = onRoomEvent(room.code, onEvent);
     const deadline = setTimeout(() => { if (!done) { const now = Date.now(); const r = nextFrame(room, playerId, holdsEtag, now, true); finish(r?.frame ?? null); } }, maxMs);

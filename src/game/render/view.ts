@@ -34,6 +34,8 @@ export interface View {
   meX: number;
   focused: boolean;
   focusX: number | null;
+  /** Current camera zoom factor (worldZoom * viewZoom). */
+  zoom: number;
   /** The glass is up (zoomed or reading): HUD-like labels stay out of the view. */
   glassUp: boolean;
   /** Vertical lift applied to the whole view while reading a page. */

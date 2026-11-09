@@ -5,7 +5,7 @@ import { BUILDINGS, doorX, type Building } from "../buildings";
 import { drawSvg, roomItems, spriteFor } from "../svg-assets";
 import type { TaskView } from "../types";
 import { cachedSprite, drawShadowOval, drawWarmOval, light, makeCanvas } from "./paint";
-import { drawNote } from "./notes";
+import { drawNote, isNoteReadable } from "./notes";
 import { clamp, type View } from "./view";
 
 const WALL_HEIGHT = 112;
@@ -62,7 +62,7 @@ export function drawHouseInteriors(v: View) {
     for (const note of v.notesByHouse.get(b.id) ?? []) {
       const nx = note.x - cam;
       if (nx < -100 || nx > w + 100) continue;
-      drawNote(v, nx, "wall", v.focusX === note.x, note);
+      drawNote(v, nx, "wall", isNoteReadable(v, nx, note.x), note);
     }
   }
 }

@@ -216,6 +216,7 @@ export function matchesControl(controls: GameSettings["controls"], action: Binda
   if (controls[action] === code) return true;
   const fallback = (action === "left" && code === "ArrowLeft") ||
     (action === "right" && code === "ArrowRight") ||
+    (action === "push" && code === "ShiftRight") ||
     (action === "ability" && code === "Space");
   if (!fallback) return false;
   return !ACTIONS.some((other) => other !== action && controls[other] === code);

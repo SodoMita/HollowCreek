@@ -90,8 +90,10 @@ const keys = new Set<string>();
 let lastDir = 0;
 const displayX = new Map<string, number>();
 const steerState = { dir: 0, cartHeld: false, interactHeld: false };
-let steerInFlight = false;
-let steerQueued = false;
+let steerSeq = 0;
+let lastMoveSentAt = 0;
+let steerStopTimer: ReturnType<typeof setTimeout> | null = null;
+let sseWatchdog: ReturnType<typeof setTimeout> | null = null;
 const netStats = { rttMs: 40, droppedInputs: 0, lastPosAt: 0, gaps: [] as number[], renderFrames: 0 };
 const showNet = params.get("net") === "1";
 let netEl: HTMLElement | null = null;
@@ -169,6 +171,7 @@ async function postInput(payload: Record<string, unknown>, retry429 = true): Pro
     const res = await fetch(server + "/api/game/input", {
       method: "POST",
       headers: { "content-type": "application/json" },
+      keepalive: true,
       body: JSON.stringify({ code: roomCode, playerId: getPid(), ...payload }),
     });
     if (res.status === 429 && retry429) {
@@ -186,22 +189,25 @@ async function postInput(payload: Record<string, unknown>, retry429 = true): Pro
   }
 }
 
-async function flushSteer() {
-  if (steerInFlight) { steerQueued = true; return; }
-  steerInFlight = true;
-  try {
-    do {
-      steerQueued = false;
-      const snapSteer = { dir: steerState.dir, cartHeld: steerState.cartHeld, interactHeld: steerState.interactHeld };
-      const r = await postInput(snapSteer, false);
-      if (r.status === 429) {
-        await new Promise((r2) => setTimeout(r2, 80));
-        steerQueued = true; // resend freshest steering state
-      }
-    } while (steerQueued && roomCode);
-  } finally {
-    steerInFlight = false;
+function flushSteer() {
+  if (!roomCode) return;
+  if (steerStopTimer) { clearTimeout(steerStopTimer); steerStopTimer = null; }
+  const now = performance.now();
+  // If a tap is released within 50 ms of pressing, let the move packet have a brief head start
+  // so TCP jitter cannot deliver dir=0 before dir=±1 and swallow the tap; normal holds/turns send immediately.
+  if (steerState.dir === 0 && lastMoveSentAt && now - lastMoveSentAt < 50) {
+    steerStopTimer = setTimeout(() => { steerStopTimer = null; flushSteer(); }, Math.ceil(50 - (now - lastMoveSentAt)));
+    return;
   }
+  if (steerState.dir !== 0) lastMoveSentAt = now;
+  const seq = ++steerSeq;
+  const snapSteer = { seq, dir: steerState.dir, cartHeld: steerState.cartHeld, interactHeld: steerState.interactHeld };
+  void postInput(snapSteer, false).then((r) => {
+    // Only retry if throttled and no newer steering state superseded this one.
+    if (r.status === 429 && seq === steerSeq && roomCode) {
+      setTimeout(() => { if (seq === steerSeq && roomCode) flushSteer(); }, 80);
+    }
+  });
 }
 
 async function send(payload: Record<string, unknown>) {
@@ -303,6 +309,8 @@ async function refreshRooms() {
 // ---------------------------------------------------------------- room ----
 function stopStream() {
   streamEpoch++;
+  if (steerStopTimer) { clearTimeout(steerStopTimer); steerStopTimer = null; }
+  if (sseWatchdog) { clearTimeout(sseWatchdog); sseWatchdog = null; }
   if (eventSource) { eventSource.close(); eventSource = null; }
   if (pollAbort) { pollAbort.abort(); pollAbort = null; }
 }
@@ -312,7 +320,7 @@ function enterRoom(code: string) {
   cancelProbe();
   stopStream();
   roomCode = code;
-  held = null; heldRev = ""; steerQueued = false;
+  held = null; heldRev = ""; steerSeq = 0;
   steerState.dir = 0; steerState.cartHeld = false; steerState.interactHeld = false;
   netStats.gaps.length = 0; netStats.lastPosAt = 0; netStats.droppedInputs = 0;
   displayX.clear();
@@ -347,7 +355,7 @@ function leaveToMenu() {
       }).finally(() => { if ($("menu").style.display !== "none") void refreshRooms(); });
   }
   snap = null; roomCode = ""; hud.invalidateOverlay(); roomError = ""; pollFailures = 0; pollBackoffMs = 0; held = null; heldRev = ""; lowerGlass();
-  steerQueued = false; steerState.dir = 0; steerState.cartHeld = false; steerState.interactHeld = false;
+  steerSeq = 0; steerState.dir = 0; steerState.cartHeld = false; steerState.interactHeld = false;
   displayX.clear();
   wardPanel.update(null, 1, false);
   $("game").style.display = "none";
@@ -441,15 +449,27 @@ function startStream(code: string) {
   let gotFrame = false;
   const es = new EventSource(`${server}/api/game/state/stream?code=${code}&playerId=${encodeURIComponent(getPid())}`);
   eventSource = es;
+  const armWatchdog = () => {
+    if (sseWatchdog) clearTimeout(sseWatchdog);
+    sseWatchdog = setTimeout(() => {
+      if (myEpoch !== streamEpoch || code !== roomCode) return;
+      es.close();
+      if (eventSource === es) eventSource = null;
+      void pollLoop(code, myEpoch);
+    }, 3500);
+  };
+  armWatchdog();
   es.onmessage = (ev) => {
     if (myEpoch !== streamEpoch || code !== roomCode) { es.close(); return; }
     gotFrame = true;
+    armWatchdog();
     try { ingestFrame(JSON.parse(ev.data) as WireFrame & { error?: string }); } catch { /* ignore bad frame */ }
   };
   es.onerror = () => {
     if (myEpoch !== streamEpoch || code !== roomCode) { es.close(); return; }
     // If SSE fails before opening or disconnects twice, switch cleanly to zero-gap long-poll.
     if (!gotFrame || ++pollFailures >= 2) {
+      if (sseWatchdog) { clearTimeout(sseWatchdog); sseWatchdog = null; }
       es.close();
       if (eventSource === es) eventSource = null;
       void pollLoop(code, myEpoch);
@@ -548,7 +568,7 @@ function computeDir() {
 }
 function chatOpen() { return $("chatbox").style.display === "block"; }
 function openChat() {
-  stopInteract();
+  releaseInputs();
   $("chatbox").style.display = "block";
   setTimeout(() => $("chatinput").focus(), 30);
 }
@@ -675,7 +695,7 @@ $("talkbtn").addEventListener("click", openChat);
 $("leave").addEventListener("click", leaveToMenu);
 $("supplydrop").addEventListener("click", () => void send({ action: "drop_supply" }));
 let noteFocusX: number | null = null;
-$("pinbtn").addEventListener("click", () => { $("pinpanel").style.display = "flex"; ($("pintextarea") as HTMLTextAreaElement).focus(); });
+$("pinbtn").addEventListener("click", () => { releaseInputs(); $("pinpanel").style.display = "flex"; ($("pintextarea") as HTMLTextAreaElement).focus(); });
 $("pincancel").addEventListener("click", () => { $("pinpanel").style.display = "none"; ($("pintextarea") as HTMLTextAreaElement).value = ""; });
 $("pinsubmit").addEventListener("click", () => {
   const text = ($("pintextarea") as HTMLTextAreaElement).value.trim();
@@ -695,7 +715,18 @@ function applyZoom(z: number) {
   $("noteoverlay").style.display = up ? "block" : "none";
   $("readnote").setAttribute("aria-pressed", up ? "true" : "false");
   $("readnote").textContent = up ? "🔭 Lower glass" : "🔭 Spyglass";
-  if (!up) { noteFocusX = null; $("notetext").textContent = ""; $("noteauthor").textContent = ""; }
+  if (!up) {
+    noteFocusX = null;
+    $("notetext").textContent = "";
+    $("noteauthor").textContent = "";
+  } else if (viewZoom >= 1.9 && noteFocusX === null) {
+    const note = (snap?.notes ?? []).find((n) => n.id === ($("readnote").dataset.noteId ?? ""));
+    if (note) {
+      noteFocusX = note.x;
+      $("notetext").textContent = note.text;
+      $("noteauthor").textContent = `— pinned by ${note.author}`;
+    }
+  }
 }
 function lowerGlass() { applyZoom(1); }
 function toggleGlass() {
@@ -708,16 +739,16 @@ $("readnote").addEventListener("click", toggleGlass);
 $("noteclose").addEventListener("click", (e) => { e.stopPropagation(); lowerGlass(); });
 $("noteoverlay").addEventListener("click", lowerGlass);
 {
-  const canvas = $("cv") as HTMLCanvasElement;
-  canvas.addEventListener("wheel", (e) => {
-    if (!roomCode) return;
+  const gameEl = $("game");
+  gameEl.addEventListener("wheel", (e) => {
+    if (!roomCode || settingsDialog.isOpen || timePanel.isOpen || wardPanel.isOpen || $("pinpanel").style.display === "flex") return;
     e.preventDefault();
     applyZoom(viewZoom * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)));
   }, { passive: false });
   const pointers = new Map<number, { x: number; y: number }>();
   let pinchStart = 0, zoomStart = 1;
   const dist = () => { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
-  canvas.addEventListener("pointerdown", (e) => {
+  gameEl.addEventListener("pointerdown", (e) => {
     if (e.pointerType !== "touch") return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.size === 2) { pinchStart = dist(); zoomStart = viewZoom; }

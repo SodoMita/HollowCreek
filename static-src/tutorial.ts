@@ -18,7 +18,7 @@ import { SettingsDialog } from "../src/game/settings-ui";
 import {
   BELL_X, CAGE_UNLOCK_RANGE, CART_PUSH_RANGE, CART_SOLO_SPEED, CARRY_SPEED, CARRY_VIGOR_DRAIN,
   INTERACT_RANGE, SPEED, STAMINA_IDLE_REGEN, STATIONS, SUPPLY_CART_START,
-  TIMEPIECE_X, TIME_VISIT_MS, HISTORY_SAMPLE_MS, type Snapshot, type TaskView,
+  TIMEPIECE_X, TIME_VISIT_MS, HISTORY_SAMPLE_MS, cartVigorFactor, type Snapshot, type TaskView,
 } from "../src/game/types";
 import { mergeReturnedDoors, mergeReturnedTasks } from "./tutorial/tutorial-time";
 import { buildTutorialSnapshot } from "./tutorial/tutorial-snapshot";
@@ -695,7 +695,7 @@ function step(dt: number): void {
     s.facing = dir;
     const pushing = !s.inside && s.cartHeld && !s.hasSupply && Math.abs(s.playerX - s.cartX) <= CART_PUSH_RANGE;
     s.cartPushers = pushing ? 1 : 0;
-    const speed = pushing ? CART_SOLO_SPEED : s.hasSupply ? CARRY_SPEED : SPEED;
+    const speed = pushing ? CART_SOLO_SPEED * cartVigorFactor(s.stamina, s.exhausted) : s.hasSupply ? CARRY_SPEED : SPEED;
     const prevInside = s.inside;
     const move = walkThroughBuildings(s.playerX, s.playerX + dir * speed * dt, s.inside, s.doors, false);
     s.playerX = move.x;

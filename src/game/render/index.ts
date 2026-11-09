@@ -177,7 +177,7 @@ export class Renderer {
     if (!v) {
       this.view = {
         ctx, w: vw, h: vh, t: reduced ? 0 : t, clock: this.clock, dt, cam: this.cameraX, ground, roadEdge, now: snap.now,
-        night, nb, snap, displayX, meX, focused, focusX: this.focusX, glassUp, lift,
+        night, nb, snap, displayX, meX, focused, focusX: this.focusX, zoom, glassUp, lift,
         quality: graphics.quality, reduced, glow: graphics.glow, flicker: graphics.flicker,
         playerNames: this.settings.interface.playerNames, speechBubbles: this.settings.interface.speechBubbles,
         sorted: ix.sorted, tasks: ix.tasks, houseTask: ix.houseTask, doors: ix.doors,
@@ -187,7 +187,7 @@ export class Renderer {
       v.ctx = ctx; v.w = vw; v.h = vh; v.t = reduced ? 0 : t; v.clock = this.clock; v.dt = dt; v.cam = this.cameraX;
       v.ground = ground; v.roadEdge = roadEdge; v.now = snap.now; v.night = night; v.nb = nb; v.snap = snap;
       v.displayX = displayX; v.meX = meX; v.focused = focused; v.focusX = this.focusX;
-      v.glassUp = glassUp; v.lift = lift; v.quality = graphics.quality; v.reduced = reduced;
+      v.zoom = zoom; v.glassUp = glassUp; v.lift = lift; v.quality = graphics.quality; v.reduced = reduced;
       v.glow = graphics.glow; v.flicker = graphics.flicker;
       v.playerNames = this.settings.interface.playerNames;
       v.speechBubbles = this.settings.interface.speechBubbles;

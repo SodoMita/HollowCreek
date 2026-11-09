@@ -40,6 +40,7 @@ export {
   CART_SOLO_SPEED,
   CART_HELPER_BONUS,
   CART_MAX_SPEED,
+  cartVigorFactor,
   CARRY_SPEED,
   CARRY_VIGOR_DRAIN,
   SABOTAGE_COOLDOWN_MS,
@@ -267,6 +268,7 @@ export interface RoomListing {
 
 export interface InputBody {
   playerId: string;
+  seq?: number; // monotonic steering sequence from client so out-of-order HTTP packets cannot revert newer steering
   dir?: number;
   interactHeld?: boolean;
   cartHeld?: boolean; // hold Push + a direction while beside the cart
