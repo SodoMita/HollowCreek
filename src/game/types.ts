@@ -269,6 +269,7 @@ export interface RoomListing {
 export interface InputBody {
   playerId: string;
   seq?: number; // monotonic steering sequence from client so out-of-order HTTP packets cannot revert newer steering
+  tapDir?: number; // set if a quick tap was released before dir!=0 acked, in case dir=0 overtakes dir=±1
   dir?: number;
   interactHeld?: boolean;
   cartHeld?: boolean; // hold Push + a direction while beside the cart

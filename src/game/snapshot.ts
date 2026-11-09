@@ -15,6 +15,8 @@ import {
 import type { Room } from "./engine";
 
 const dist = (a: number, b: number) => Math.abs(a - b);
+const STATION_BY_ID = new Map(STATIONS.map((s) => [s.id, s]));
+const BUILDING_BY_ID = new Map(BUILDINGS.map((b) => [b.id, b]));
 
 // ---------------------------------------------------------------------------
 // Snapshot (per-viewer, roles hidden)
@@ -100,7 +102,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
   const activeTask = room.phase === "playing" && me.alive && !me.caged && canRepair(room, me)
     ? room.pool.find((t) => t.id === me.activeWard && t.delivered && !t.done)
     : undefined;
-  const activeStation = activeTask && STATIONS.find((s) => s.id === activeTask.id);
+  const activeStation = activeTask && STATION_BY_ID.get(activeTask.id);
   const minigame = activeTask?.puzzle && activeStation
     ? wardView(activeTask.id, activeStation.name, activeTask.puzzle, Math.max(0, activeTask.previewUntil - now)) : null;
   const results = room.phase === "ended" ? {
@@ -121,7 +123,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     : blackout ? VISION_BLACKOUT
     : VISION_CREW;
   if (room.phase === "lobby" || room.phase === "ended") vision = 99999;
-  const canSee = (x: number) => ghostView || dist(x, me.x) <= vision;
+  const canSee = (x: number) => ghostView || dist(x, me.x) <= vision + 40;
 
   // proximity dread for the living crew — drives heartbeat / tension audio
   let danger = 0;
@@ -199,7 +201,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
       }),
     bodies: room.bodies.filter((b) => canSee(b.x)).map((b) => ({ x: b.x, color: b.color, name: b.name, id: b.id, at: b.at, inside: b.inside })),
     doors: room.doors.map((d) => {
-      const b = BUILDINGS.find((item) => item.id === d.id)!;
+      const b = BUILDING_BY_ID.get(d.id)!;
       const visible = canSee(doorX(b));
       const owner = d.holder ? room.players.get(d.holder) : null;
       return { id: d.id, locked: visible ? d.locked : true, open: visible && d.open,
@@ -217,7 +219,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     cartPushers: room.cartPushers,
     cages: room.cages.map((c) => ({ x: c.x, occupant: c.occupant })),
     tasks: room.pool.map((t) => {
-      const st = STATIONS.find((s) => s.id === t.id)!;
+      const st = STATION_BY_ID.get(t.id)!;
       return { id: t.id, name: st.name, x: st.x, inside: st.inside, done: t.done, delivered: t.delivered, sabotaged: t.sabotaged, progress: Math.round(t.progress * 100) / 100 };
     }),
     minigame,

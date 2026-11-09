@@ -402,13 +402,22 @@ function applyInput(room: Room, body: InputBody): { ok: boolean; error?: string 
   if (body.action === "time_return") return { ok: false, error: "You are already in the present." };
 
   let applySteer = true;
+  const prevSeq = p.steerSeq ?? 0;
   if (!room.replaying && !room.temporalShadow && typeof body.seq === "number" && Number.isFinite(body.seq)) {
-    if (body.seq <= (p.steerSeq ?? 0)) applySteer = false;
+    if (body.seq <= prevSeq) applySteer = false;
     else p.steerSeq = body.seq;
   }
   if (applySteer) {
     if (typeof body.dir === "number") {
       const d = Math.max(-1, Math.min(1, Math.round(body.dir)));
+      // If a dir=0 packet overtook an unapplied quick tap (seq jumped >1 while p.dir was 0),
+      // apply a minimal 1-tick facing/nudge in tapDir so quick taps are never lost.
+      if (d === 0 && p.dir === 0 && typeof body.tapDir === "number" && body.tapDir !== 0 &&
+          typeof body.seq === "number" && body.seq > prevSeq + 1) {
+        const td = Math.sign(body.tapDir);
+        p.facing = td;
+        p.x = Math.max(-3570, Math.min(8570, p.x + td * 2));
+      }
       if (d !== p.dir) record(room, p, "move_input", { dir: d });
       p.dir = d;
     }

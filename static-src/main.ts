@@ -91,8 +91,8 @@ let lastDir = 0;
 const displayX = new Map<string, number>();
 const steerState = { dir: 0, cartHeld: false, interactHeld: false };
 let steerSeq = 0;
+let lastMoveDir = 0;
 let lastMoveSentAt = 0;
-let steerStopTimer: ReturnType<typeof setTimeout> | null = null;
 let sseWatchdog: ReturnType<typeof setTimeout> | null = null;
 const netStats = { rttMs: 40, droppedInputs: 0, lastPosAt: 0, gaps: [] as number[], renderFrames: 0 };
 const showNet = params.get("net") === "1";
@@ -100,6 +100,8 @@ let netEl: HTMLElement | null = null;
 let lastAudioAt = 0;
 let audioEdgeKey = "";
 let hudDirty = false;
+let lastHudAt = 0;
+let lastHudEdge = "";
 let held: Snapshot | null = null; // what the server thinks we hold (deltas merge into it)
 let lastPollAt = 0;
 let heldRev = "";
@@ -164,7 +166,7 @@ function toast(msg: string) {
   const t = $("toast"); t.textContent = msg; t.style.display = "block";
   setTimeout(() => { t.style.display = "none"; }, 2200);
 }
-async function postInput(payload: Record<string, unknown>, retry429 = true): Promise<{ ok: boolean; status: number }> {
+async function postInput(payload: Record<string, unknown>, retry429 = true, parseOk = true): Promise<{ ok: boolean; status: number }> {
   if (!roomCode) return { ok: false, status: 0 };
   const sentAt = performance.now();
   try {
@@ -176,11 +178,13 @@ async function postInput(payload: Record<string, unknown>, retry429 = true): Pro
     });
     if (res.status === 429 && retry429) {
       await new Promise((r) => setTimeout(r, 80));
-      return postInput(payload, false);
+      return postInput(payload, false, parseOk);
     }
-    const d = await res.json().catch(() => ({}));
     netStats.rttMs = netStats.rttMs * 0.7 + Math.min(1500, Math.max(5, performance.now() - sentAt)) * 0.3;
-    if (d && d.ok === false && d.error) toast(d.error);
+    if (!res.ok || parseOk) {
+      const d = await res.json().catch(() => ({}));
+      if (d && d.ok === false && d.error) toast(d.error);
+    }
     if (!res.ok && res.status !== 400) netStats.droppedInputs++;
     return { ok: res.ok, status: res.status };
   } catch {
@@ -191,19 +195,19 @@ async function postInput(payload: Record<string, unknown>, retry429 = true): Pro
 
 function flushSteer() {
   if (!roomCode) return;
-  if (steerStopTimer) { clearTimeout(steerStopTimer); steerStopTimer = null; }
   const now = performance.now();
-  // If a tap is released within 50 ms of pressing, let the move packet have a brief head start
-  // so TCP jitter cannot deliver dir=0 before dir=±1 and swallow the tap; normal holds/turns send immediately.
-  if (steerState.dir === 0 && lastMoveSentAt && now - lastMoveSentAt < 50) {
-    steerStopTimer = setTimeout(() => { steerStopTimer = null; flushSteer(); }, Math.ceil(50 - (now - lastMoveSentAt)));
-    return;
-  }
-  if (steerState.dir !== 0) lastMoveSentAt = now;
   const seq = ++steerSeq;
-  const snapSteer = { seq, dir: steerState.dir, cartHeld: steerState.cartHeld, interactHeld: steerState.interactHeld };
-  void postInput(snapSteer, false).then((r) => {
-    // Only retry if throttled and no newer steering state superseded this one.
+  const snapSteer: Record<string, unknown> = {
+    seq, dir: steerState.dir, cartHeld: steerState.cartHeld, interactHeld: steerState.interactHeld,
+  };
+  if (steerState.dir !== 0) {
+    lastMoveDir = steerState.dir;
+    lastMoveSentAt = now;
+  } else if (lastMoveDir !== 0 && now - lastMoveSentAt < 60) {
+    snapSteer.tapDir = lastMoveDir;
+    lastMoveDir = 0;
+  }
+  void postInput(snapSteer, false, false).then((r) => {
     if (r.status === 429 && seq === steerSeq && roomCode) {
       setTimeout(() => { if (seq === steerSeq && roomCode) flushSteer(); }, 80);
     }
@@ -309,7 +313,6 @@ async function refreshRooms() {
 // ---------------------------------------------------------------- room ----
 function stopStream() {
   streamEpoch++;
-  if (steerStopTimer) { clearTimeout(steerStopTimer); steerStopTimer = null; }
   if (sseWatchdog) { clearTimeout(sseWatchdog); sseWatchdog = null; }
   if (eventSource) { eventSource.close(); eventSource = null; }
   if (pollAbort) { pollAbort.abort(); pollAbort = null; }
@@ -425,7 +428,7 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
   roomError = "";
   snap = s;
   if (timePanel.isOpen && (!s.self.hasTimepiece || s.phase !== "playing")) timePanel.close();
-  wardPanel.update(s.minigame, s.self.stamina, s.self.exhausted);
+  if (s.minigame || wardPanel.isOpen) wardPanel.update(s.minigame, s.self.stamina, s.self.exhausted);
   const edgeKey = `${s.phase}|${s.taskBar?.done ?? 0}|${s.self.alive ? 1 : 0}|${s.bellAt}|${s.blackoutUntil}`;
   if (edgeKey !== audioEdgeKey || now - lastAudioAt >= 120) {
     audioEdgeKey = edgeKey;
@@ -435,7 +438,10 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
   const phaseChanged = s.phase !== lastPhase;
   if (lastPhase === "lobby" && s.phase === "playing") reveal(s.self.role === "hollow");
   lastPhase = s.phase;
-  if (phaseChanged || !prevHeld) {
+  const hudEdge = `${s.phase}|${s.playerCount}|${s.self.hasSupply}|${s.self.hasKey}|${s.self.hasTimepiece}|${s.hint ?? ""}|${s.abilityReady}|${s.cartPushers}|${s.self.caged}|${s.self.alive}|${s.self.myVote ?? ""}|${s.feed.length}|${s.taskBar.done}`;
+  if (phaseChanged || !prevHeld || hudEdge !== lastHudEdge) {
+    lastHudEdge = hudEdge;
+    lastHudAt = now;
     hudDirty = false;
     renderHud(s);
   } else {
@@ -582,8 +588,14 @@ function submitChat() {
 function bound(action: BindableAction, e: KeyboardEvent) {
   return matchesControl(settingsStore.value.controls, action, e.code);
 }
+let audioBootQueued = false;
+function bootAudioAsync() {
+  if (audioBootQueued) return;
+  audioBootQueued = true;
+  setTimeout(() => { audioBootQueued = false; audio.start(); }, 0);
+}
 window.addEventListener("keydown", (e) => {
-  audio.start();
+  bootAudioAsync();
   if (settingsDialog.isOpen || timePanel.isOpen || !roomCode) return;
   if (wardPanel.isOpen) {
     if (e.code === "Escape") { e.preventDefault(); void send({ action: "ward_cancel" }); }
@@ -617,7 +629,7 @@ window.addEventListener("keyup", (e) => {
 window.addEventListener("blur", releaseInputs);
 $("chatinput").addEventListener("keydown", (e) => { if (e.key === "Enter") submitChat(); e.stopPropagation(); });
 $("chatinput").addEventListener("blur", () => setTimeout(submitChat, 50));
-window.addEventListener("pointerdown", () => audio.start());
+window.addEventListener("pointerdown", bootAudioAsync);
 
 // Pointer-captured touch rocker for ◀ ▶ so mobile thumbs never drop movement
 // from small drift, and sliding across the gap switches direction cleanly.
@@ -825,8 +837,9 @@ function loop(nowMs: number) {
   const dt = Math.min(0.05, (nowMs - last) / 1000);
   last = nowMs;
   if (!snap || !gameVisible) return;
-  if (hudDirty) {
+  if (hudDirty && nowMs - lastHudAt >= 80) {
     hudDirty = false;
+    lastHudAt = nowMs;
     renderHud(snap);
   }
   netStats.renderFrames++;

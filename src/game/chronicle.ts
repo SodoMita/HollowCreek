@@ -72,13 +72,15 @@ export function feed(room: Room, text: string) {
 export const gPersist = globalThis as typeof globalThis & {
   __hollowDirtyRooms?: Set<string>;
   __hollowPersistTimer?: ReturnType<typeof setInterval>;
+  __hollowRoomListeners?: Map<string, Set<() => void>>;
 };
 export const dirtyRooms: Set<string> = gPersist.__hollowDirtyRooms ?? new Set();
 gPersist.__hollowDirtyRooms = dirtyRooms;
 
 // Change listeners for server-push (SSE) state streaming: fired on every
 // mutation and every tick, so subscribers can re-fingerprint and push.
-const roomListeners: Map<string, Set<() => void>> = new Map();
+const roomListeners: Map<string, Set<() => void>> = gPersist.__hollowRoomListeners ?? new Map();
+gPersist.__hollowRoomListeners = roomListeners;
 export function onRoomEvent(code: string, cb: () => void): () => void {
   let set = roomListeners.get(code);
   if (!set) { set = new Set(); roomListeners.set(code, set); }

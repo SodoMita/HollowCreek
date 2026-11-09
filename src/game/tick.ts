@@ -185,8 +185,8 @@ export function tick() {
   const nowWall = typeof performance !== "undefined" ? performance.now() : Date.now();
   if (nowWall - nextTickWall > TICK_MS * 10) nextTickWall = nowWall - TICK_MS * 10;
   let ran = 0;
-  // 1.5 ms early-wakeup tolerance prevents OS timer jitter from skipping a tick and double-bursting later.
-  while (nowWall >= nextTickWall - 1.5 && ran < 10) {
+  // 2.5 ms early-wakeup tolerance prevents OS timer jitter from bouncing onto a slow 2ms retry hop.
+  while (nowWall >= nextTickWall - 2.5 && ran < 10) {
     nextTickWall += TICK_MS;
     tickRooms();
     ran++;
@@ -196,7 +196,7 @@ export function tick() {
 function scheduleLoop() {
   tick();
   const nowWall = typeof performance !== "undefined" ? performance.now() : Date.now();
-  const wait = Math.max(1, Math.round(nextTickWall - nowWall));
+  const wait = Math.max(2, Math.floor(nextTickWall - nowWall));
   g.__hollowLoop = setTimeout(scheduleLoop, wait);
 }
 

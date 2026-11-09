@@ -14,9 +14,30 @@ interface ViewerState {
   view: EncodedView;
   slowAt: number; // last time a frame carrying slow values went out
   sentAt: number; // last time any frame went out
+  rev: number;
+  nextExpiryAt: number;
 }
 
 const store = new WeakMap<Room, Map<string, ViewerState>>();
+
+function earliestExpiry(room: Room, playerId: string, now: number): number {
+  let min = Infinity;
+  const me = room.players.get(playerId);
+  if (me) {
+    if (me.killAt > now && me.killAt < min) min = me.killAt;
+    if (me.sabotageAt > now && me.sabotageAt < min) min = me.sabotageAt;
+  }
+  if (room.blackoutUntil > now && room.blackoutUntil < min) min = room.blackoutUntil;
+  if (room.blackoutReadyAt > now && room.blackoutReadyAt < min) min = room.blackoutReadyAt;
+  if (room.flickerAt + 900 > now && room.flickerAt + 900 < min) min = room.flickerAt + 900;
+  if (room.meeting?.endsAt && room.meeting.endsAt > now && room.meeting.endsAt < min) min = room.meeting.endsAt;
+  if (room.timeVisit?.endsAt && room.timeVisit.endsAt > now && room.timeVisit.endsAt < min) min = room.timeVisit.endsAt;
+  for (const p of room.players.values()) {
+    if (p.bubbleUntil > now && p.bubbleUntil < min) min = p.bubbleUntil;
+    if (p.actionUntil > now && p.actionUntil < min) min = p.actionUntil;
+  }
+  return min;
+}
 
 function states(room: Room) {
   let m = store.get(room);
@@ -36,27 +57,39 @@ export function viewerEtag(room: Room, playerId: string): string | null {
  * the last slow beat, unless `flush` forces them out (the long-poll deadline).
  */
 export function nextFrame(room: Room, playerId: string, holdsEtag: string | null, now: number, flush = false): { frame: WireFrame | null; snapNow: number } | null {
-  const snap = snapshot(room, playerId); // also the presence heartbeat
-  if (!snap) return null;
   const m = states(room);
   const prev = m.get(playerId);
+  const me = room.players.get(playerId);
+  // Fast skip on idle heartbeats when room.rev and timed expiries have not advanced.
+  if (prev && me && !me.parked && !room.timeVisit && room.phase === "lobby" &&
+      prev.rev === room.rev && holdsEtag === prev.view.etag && now < prev.nextExpiryAt) {
+    me.lastSeen = now;
+    return { frame: null, snapNow: now };
+  }
+  const snap = snapshot(room, playerId); // also the presence heartbeat
+  if (!snap) return null;
+  const nextExpiryAt = earliestExpiry(room, playerId, now);
   const next = encodeView(snap, "");
   const etag = viewFingerprint(next);
   next.etag = etag;
   if (!prev || holdsEtag !== prev.view.etag) {
-    m.set(playerId, { view: next, slowAt: now, sentAt: now });
+    m.set(playerId, { view: next, slowAt: now, sentAt: now, rev: room.rev, nextExpiryAt });
     return { frame: { etag, now: snap.now, snap }, snapNow: snap.now };
   }
-  if (etag === prev.view.etag) return { frame: null, snapNow: snap.now };
+  if (etag === prev.view.etag) {
+    prev.rev = room.rev;
+    prev.nextExpiryAt = nextExpiryAt;
+    return { frame: null, snapNow: snap.now };
+  }
   const d = diffView(prev.view, next);
-  if (!d.any) { prev.view = next; return { frame: null, snapNow: snap.now }; }
+  if (!d.any) { prev.view = next; prev.rev = room.rev; prev.nextExpiryAt = nextExpiryAt; return { frame: null, snapNow: snap.now }; }
   if (!d.fast && !flush && now - prev.slowAt < SLOW_MS) return { frame: null, snapNow: snap.now };
   const frame: WireFrame = { etag, now: snap.now };
   if (Object.keys(d.delta).length) frame.delta = d.delta;
   if (Object.keys(d.patch).length) frame.patch = d.patch;
   // Did this frame carry slow values? Then the beat restarts; fast-only frames leave it alone.
   const carriedSlow = !d.fast || Object.keys(d.delta).some((k) => k === "nightT" || k === "time" || k === "danger" || k === "hint") || !!d.patch.self || !!d.patch.tasks;
-  m.set(playerId, { view: next, slowAt: carriedSlow ? now : prev.slowAt, sentAt: now });
+  m.set(playerId, { view: next, slowAt: carriedSlow ? now : prev.slowAt, sentAt: now, rev: room.rev, nextExpiryAt });
   return { frame, snapNow: snap.now };
 }
 

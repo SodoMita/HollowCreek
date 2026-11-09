@@ -74,6 +74,7 @@ export function drawWarmOval(ctx: CanvasRenderingContext2D, cx: number, cy: numb
 
 export interface PillSprite { canvas: HTMLCanvasElement; w: number; h: number }
 const pillCache = new Map<string, PillSprite>();
+let measureCtx: CanvasRenderingContext2D | null = null;
 
 /** Cached pill label (roundRect + text baked at 2x density). Zero path or fillText calls per frame. */
 export function getPillBadge(
@@ -82,7 +83,7 @@ export function getPillBadge(
   const hit = pillCache.get(key);
   if (hit) return hit;
   const s = 2;
-  const measure = makeCanvas(1, 1).getContext("2d")!;
+  const measure = (measureCtx ??= makeCanvas(1, 1).getContext("2d")!);
   measure.font = font;
   const w = Math.ceil(measure.measureText(text).width + padX * 2);
   const canvas = makeCanvas(w * s, h * s);

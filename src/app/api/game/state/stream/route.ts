@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { loadRoom, onRoomEvent } from "@/game/engine";
-import { FRAME_MS, nextFrame, slowDueIn } from "@/game/viewers";
+import { nextFrame, slowDueIn } from "@/game/viewers";
 import { admit } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -27,7 +27,6 @@ export async function GET(req: NextRequest) {
   let holds: string | null = null; // etag of what this client holds
   let computedAt = 0;
   let clockAt = 0;
-  let coalesceTimer: ReturnType<typeof setTimeout> | null = null;
   let slowTimer: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
   const encoder = new TextEncoder();
@@ -43,21 +42,16 @@ export async function GET(req: NextRequest) {
         if (closed) return;
         try { controller.enqueue(encoder.encode(":hb\n\n")); } catch { /* closed */ }
       };
-      const scheduleCoalesce = (ms: number) => {
-        if (coalesceTimer || closed) return;
-        coalesceTimer = setTimeout(() => { coalesceTimer = null; push(true); }, Math.max(1, ms));
-      };
       const scheduleSlow = (ms: number) => {
         if (slowTimer || closed) return;
         slowTimer = setTimeout(() => { slowTimer = null; push(false); }, Math.max(1, ms));
       };
-      // Coalesce sub-3ms bursts without delaying any 8ms server tick or blocking
-      // fast position frames behind the 1s slow-value timer.
-      const COALESCE_MS = Math.min(3, FRAME_MS);
+      // Push room events immediately in the same event-loop turn (zero timer jitter);
+      // only coalesce multiple synchronous emits within the same microtask/1ms burst.
+      let microQueued = false;
       const push = (isEvent = true) => {
         if (closed) return;
         const t = Date.now();
-        if (isEvent && t - computedAt < COALESCE_MS) { scheduleCoalesce(COALESCE_MS - (t - computedAt)); return; }
         const r = nextFrame(room, playerId, holds, t);
         if (!r) { send({ gone: true, now: t }); cleanup(); return; }
         if (r.frame) {
@@ -65,14 +59,22 @@ export async function GET(req: NextRequest) {
           computedAt = t;
           clockAt = t;
           send(r.frame);
-        } else if (t - clockAt >= CLOCK_MS) {
+        } else if (!isEvent && t - clockAt >= CLOCK_MS) {
+          clockAt = t;
+          send({ now: r.snapNow });
+        } else if (isEvent && t - clockAt >= CLOCK_MS && t - computedAt >= CLOCK_MS) {
           clockAt = t;
           send({ now: r.snapNow });
         }
         const due = slowDueIn(room, playerId, t);
         if (due > 0) scheduleSlow(due); // held slow values go out on the beat even if the room sleeps
       };
-      const unsub = onRoomEvent(code, () => push(true));
+      const onEvent = () => {
+        if (closed || microQueued) return;
+        microQueued = true;
+        queueMicrotask(() => { microQueued = false; push(true); });
+      };
+      const unsub = onRoomEvent(code, onEvent);
       const hb = setInterval(heartbeat, 15_000);
       const tick = setInterval(() => push(false), 250); // presence heartbeat + clock between room events
       function cleanup() {
@@ -80,7 +82,6 @@ export async function GET(req: NextRequest) {
         closed = true;
         clearInterval(hb);
         clearInterval(tick);
-        if (coalesceTimer) clearTimeout(coalesceTimer);
         if (slowTimer) clearTimeout(slowTimer);
         unsub();
         try { controller.close(); } catch { /* already closed */ }

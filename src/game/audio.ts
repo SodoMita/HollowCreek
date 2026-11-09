@@ -484,8 +484,10 @@ export class AudioDirector {
     const buf = ctx.createBuffer(1, ctx.sampleRate * seconds, ctx.sampleRate);
     const data = buf.getChannelData(0);
     let last = 0;
+    let s = 0x9e3779b9;
     for (let i = 0; i < data.length; i++) {
-      const white = Math.random() * 2 - 1;
+      s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+      const white = ((s >>> 0) / 0x80000000) - 1;
       last = (last + 0.02 * white) / 1.02;
       data[i] = last * 3.2;
     }
@@ -496,10 +498,20 @@ export class AudioDirector {
     const rate = ctx.sampleRate;
     const len = Math.floor(rate * seconds);
     const buf = ctx.createBuffer(2, len, rate);
+    // Approximate (1 - i/len)^decay via a cheap coarse piecewise-linear envelope + fast xorshift32
+    // instead of 250k Math.pow + Math.random calls blocking the first keypress for 50ms.
+    let s = 0x12345678;
+    const invLen = 1 / len;
+    const step = 64;
     for (let c = 0; c < 2; c++) {
       const data = buf.getChannelData(c);
-      for (let i = 0; i < len; i++) {
-        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+      for (let i = 0; i < len; i += step) {
+        const env = Math.pow(Math.max(0, 1 - i * invLen), decay);
+        const end = Math.min(len, i + step);
+        for (let j = i; j < end; j++) {
+          s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+          data[j] = (((s >>> 0) / 0x80000000) - 1) * env;
+        }
       }
     }
     return buf;

@@ -414,14 +414,14 @@ function warmCommonSprites(): Promise<void> {
     }
     let idx = 0;
     const drain = () => {
-      const end = Math.min(idx + 4, queue.length);
+      const end = Math.min(idx + 2, queue.length);
       for (; idx < end; idx++) {
         const [cloak, re, step, sc] = queue[idx];
         void bakeTraveler(travKey(cloak, re, false, step, false, sc), cloak, re, false, step, sc, tpl);
       }
-      if (idx < queue.length) setTimeout(drain, 16);
+      if (idx < queue.length) setTimeout(drain, 45);
     };
-    if (queue.length) setTimeout(drain, 32);
+    if (queue.length) setTimeout(drain, 250);
   });
 }
 
