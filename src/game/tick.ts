@@ -8,7 +8,7 @@ import { rooms } from "./registry";
 import { captureHistory } from "./history";
 import { clampWorld, dropBuildingKeys, walkThroughBuildings } from "./buildings";
 import { stationNear } from "./proximity";
-import { CARRY_SPEED, CARRY_VIGOR_DRAIN, CART_HELPER_BONUS, CART_MAX_SPEED, CART_PUSH_RANGE, CART_SOLO_SPEED, CELL_HALF, GHOST_SPEED, INTERACT_RANGE, SPEED, STAMINA_IDLE_REGEN, STATIONS, TICK_MS } from "./types";
+import { CARRY_SPEED, CARRY_VIGOR_DRAIN, CART_HELPER_BONUS, CART_MAX_SPEED, CART_PUSH_RANGE, CART_SOLO_SPEED, CELL_HALF, GHOST_SPEED, INTERACT_RANGE, SPEED, STAMINA_IDLE_REGEN, STAMINA_SLOW_THRESHOLD, STATIONS, TICK_MS } from "./types";
 import type { Room } from "./engine";
 
 const dist = (a: number, b: number) => Math.abs(a - b);
@@ -66,11 +66,20 @@ export function tickRoom(room: Room, now: number) {
       ? [...room.players.values()].filter((p) => !p.temporalAbsent && p.id !== room.timeVisit?.playerId && p.alive && !p.caged && !p.inside && !p.hasSupply &&
           p.cartHeld && p.dir !== 0 && now - p.lastSeen < 15000 && dist(p.x, room.cartX) <= CART_PUSH_RANGE)
       : [];
-    const right = pushers.filter((p) => p.dir > 0);
-    const left = pushers.filter((p) => p.dir < 0);
+    // Vigor matters when pushing, exactly as it does at a ward: an exhausted
+    // soul cannot push at all, and low vigor slows the cart proportionally, so a
+    // tired crew cannot use the cart as an infinite sprint.
+    const able = pushers.filter((p) => !p.exhausted && p.stamina > 0);
+    const right = able.filter((p) => p.dir > 0);
+    const left = able.filter((p) => p.dir < 0);
     const team = right.length > left.length ? right : left.length > right.length ? left : [];
     const pushingIds = new Set(team.map((p) => p.id));
-    const cartSpeed = Math.min(CART_MAX_SPEED, CART_SOLO_SPEED + Math.max(0, team.length - 1) * CART_HELPER_BONUS);
+    // Each pusher contributes its own vigor-weighted share; the slowest soul sets
+    // the pace, so one exhausted-but-not-yet-stopped pusher cannot be carried.
+    const vigorFactor = (p: { stamina: number }) =>
+      p.stamina >= STAMINA_SLOW_THRESHOLD ? 1 : Math.max(0.2, p.stamina / STAMINA_SLOW_THRESHOLD);
+    const baseSpeed = Math.min(CART_MAX_SPEED, CART_SOLO_SPEED + Math.max(0, team.length - 1) * CART_HELPER_BONUS);
+    const cartSpeed = team.length ? baseSpeed * Math.min(...team.map(vigorFactor)) : baseSpeed;
     room.cartPushers = team.length;
     const prevCartX = room.cartX;
     if (team.length) {
