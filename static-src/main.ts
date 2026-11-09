@@ -694,7 +694,6 @@ $("snuffbtn").addEventListener("click", () => send({ action: "blackout" }));
 $("talkbtn").addEventListener("click", openChat);
 $("leave").addEventListener("click", leaveToMenu);
 $("supplydrop").addEventListener("click", () => void send({ action: "drop_supply" }));
-let noteFocusX: number | null = null;
 $("pinbtn").addEventListener("click", () => { releaseInputs(); $("pinpanel").style.display = "flex"; ($("pintextarea") as HTMLTextAreaElement).focus(); });
 $("pincancel").addEventListener("click", () => { $("pinpanel").style.display = "none"; ($("pintextarea") as HTMLTextAreaElement).value = ""; });
 $("pinsubmit").addEventListener("click", () => {
@@ -716,13 +715,12 @@ function applyZoom(z: number) {
   $("readnote").setAttribute("aria-pressed", up ? "true" : "false");
   $("readnote").textContent = up ? "🔭 Lower glass" : "🔭 Spyglass";
   if (!up) {
-    noteFocusX = null;
     $("notetext").textContent = "";
     $("noteauthor").textContent = "";
-  } else if (viewZoom >= 1.9 && noteFocusX === null) {
+  } else {
+    // Screen-reader-only sr-only copy; never opens a visual popout or moves the camera.
     const note = (snap?.notes ?? []).find((n) => n.id === ($("readnote").dataset.noteId ?? ""));
     if (note) {
-      noteFocusX = note.x;
       $("notetext").textContent = note.text;
       $("noteauthor").textContent = `— pinned by ${note.author}`;
     }
@@ -731,8 +729,6 @@ function applyZoom(z: number) {
 function lowerGlass() { applyZoom(1); }
 function toggleGlass() {
   if (viewZoom > 1.05) { lowerGlass(); return; }
-  const note = (snap?.notes ?? []).find((n) => n.id === ($("readnote").dataset.noteId ?? ""));
-  if (note) { noteFocusX = note.x; $("notetext").textContent = note.text; $("noteauthor").textContent = `— pinned by ${note.author}`; }
   applyZoom(ZOOM_READ);
 }
 $("readnote").addEventListener("click", toggleGlass);
@@ -843,7 +839,6 @@ function loop(nowMs: number) {
     const p50 = sorted.length ? Math.round(sorted[Math.floor(sorted.length * 0.5)]) : 0;
     netEl.textContent = `${fps} fps · rtt ${Math.round(netStats.rttMs)} ms · gap p50 ${p50} ms · drop ${netStats.droppedInputs} · souls ${snap.players.length}`;
   }
-  renderer.setFocus(noteFocusX);
   renderer.render(ctx, viewW, viewH, snap, displayX, nowMs / 1000, dt);
 }
 requestAnimationFrame(loop);

@@ -55,8 +55,8 @@ export const ZOOM_READ = 3.2;
 export const ZOOM_MAX = 4;
 
 // ---- Pinned pages ----------------------------------------------------------
-export const NOTE_FAR = { w: 18, h: 24 };   // a scribble from the road
-export const NOTE_NEAR = { w: 84, h: 108 }; // legible under the glass
+export const NOTE_FAR = { w: 28, h: 36 };   // pinned page on the wall/tree (drawn with real text)
+export const NOTE_NEAR = { w: 84, h: 108 };
 
 // ---- Landmarks -------------------------------------------------------------
 /** The meeting house, the one building drawn from metric dimensions in render.ts. */

@@ -1,28 +1,30 @@
-// Handwritten pages, pinned to a wall or leaning on a trunk. Far pages are one
-// pre-baked scribble bitmap; close-up focused pages are cached per note content.
-import { NOTE_FAR, NOTE_NEAR } from "../units";
+// Handwritten pages, pinned to a wall or leaning on a trunk.
+// Every note always bakes its real text and author onto the paper bitmap at
+// crisp 8x resolution so zooming anywhere (wheel, pinch, or spyglass) reads
+// the page directly without any popout or camera hijack.
+import { NOTE_FAR } from "../units";
 import { cachedSprite, makeCanvas } from "./paint";
 import type { PinnedNote, View } from "./view";
 
-const PAD = 6; // extra space for drop shadow
+const PAD = 4; // extra space for drop shadow
 
-function bakeNoteBitmap(big: boolean, note: PinnedNote | undefined): HTMLCanvasElement {
-  const { w, h } = big ? NOTE_NEAR : NOTE_FAR;
-  const s = big ? 4 : 2;
+function bakeNoteBitmap(note: PinnedNote | undefined): HTMLCanvasElement {
+  const { w, h } = NOTE_FAR;
+  const s = 8; // 8x bitmap density so wheel/pinch/spyglass zoom stays razor sharp
   const c = makeCanvas((w + PAD * 2) * s, (h + PAD * 2) * s);
   const g = c.getContext("2d")!;
   g.scale(s, s);
   g.translate(PAD, PAD);
-  const offset = big ? 5 : 2;
   g.fillStyle = "rgba(0,0,0,0.4)";
-  g.fillRect(offset * 0.5, offset, w, h);
-  g.fillStyle = big ? "#f4ead2" : "#e9dfc4";
+  g.fillRect(1.5, 2.5, w, h);
+  g.fillStyle = "#f4ead2";
   g.strokeStyle = "#8a6f4d";
-  g.lineWidth = big ? 1.6 : 1;
+  g.lineWidth = 0.85;
   g.beginPath();
   g.rect(0, 0, w, h);
   g.fill();
   g.stroke();
+  // folded corner
   g.beginPath();
   g.moveTo(w, 0);
   g.lineTo(w, h * 0.2);
@@ -31,23 +33,22 @@ function bakeNoteBitmap(big: boolean, note: PinnedNote | undefined): HTMLCanvasE
   g.fillStyle = "#d8c9a8";
   g.fill();
   g.stroke();
-  if (big && note?.text) {
-    g.font = "italic 6.5px Georgia, serif";
-    g.fillStyle = "#43301f";
+  if (note?.text) {
+    g.font = "italic 2.5px Georgia, serif";
+    g.fillStyle = "#3a291a";
     g.textAlign = "left";
-    const lines = wrapText(g, note.text, w - 14);
-    for (let i = 0; i < lines.length; i++) g.fillText(lines[i], 7, 15 + i * 8);
-    g.font = "italic 5.5px Georgia, serif";
+    const lines = wrapText(g, note.text, w - 5);
+    for (let i = 0; i < lines.length; i++) g.fillText(lines[i], 2.4, 5.6 + i * 2.9);
+    g.font = "italic 2.1px Georgia, serif";
     g.fillStyle = "#6e5638";
     g.textAlign = "right";
-    g.fillText(`— ${note.author}`, w - 7, h - 6, w - 14);
+    g.fillText(`— ${note.author}`, w - 2.2, h - 2.2, w - 4.4);
   } else {
-    const lines = big ? 8 : 3;
     g.strokeStyle = "#7a6a52";
-    g.lineWidth = big ? 1.4 : 1;
+    g.lineWidth = 0.9;
     g.beginPath();
-    for (let i = 1; i <= lines; i++) {
-      const ly = (h / (lines + 1)) * i;
+    for (let i = 1; i <= 3; i++) {
+      const ly = (h / 4) * i;
       g.moveTo(w * 0.16, ly);
       g.lineTo(w * (0.84 - (i % 3) * 0.08), ly);
     }
@@ -64,23 +65,23 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, width: number): s
     if (ctx.measureText(test).width > width && line) {
       lines.push(line);
       line = word;
-      if (lines.length === 10) break;
+      if (lines.length === 9) break;
     } else line = test;
   }
-  if (lines.length < 10 && line) lines.push(line);
-  if (lines.length === 10 && ctx.measureText(`${lines[9]}…`).width > width) lines[9] = lines[9].slice(0, -1);
-  if (lines.length === 10) lines[9] += "…";
+  if (lines.length < 9 && line) lines.push(line);
+  if (lines.length === 9 && ctx.measureText(`${lines[8]}…`).width > width) lines[8] = lines[8].slice(0, -1);
+  if (lines.length === 9) lines[8] += "…";
   return lines;
 }
 
 /** Draws one page from its cached bitmap. Zero per-frame paths or text layout. */
-export function drawNote(v: View, x: number, kind: "wall" | "tree", big: boolean, note: PinnedNote | undefined) {
+export function drawNote(v: View, x: number, kind: "wall" | "tree", note: PinnedNote | undefined) {
   const { ctx, ground, t } = v;
-  const { w, h } = big ? NOTE_NEAR : NOTE_FAR;
-  const key = big ? `near:${note?.id ?? ""}:${note?.text ?? ""}:${note?.author ?? ""}` : "far";
-  const sprite = cachedSprite(key, 64, () => bakeNoteBitmap(big, note));
+  const { w, h } = NOTE_FAR;
+  const key = `note:${note?.id ?? ""}:${note?.text ?? ""}:${note?.author ?? ""}`;
+  const sprite = cachedSprite(key, 64, () => bakeNoteBitmap(note));
   const y = kind === "wall" ? ground - 118 - h : ground - 74 - h;
-  const sway = Math.sin(t * 1.7 + x * 0.05) * (big ? 1.2 : 1.1);
+  const sway = Math.sin(t * 1.7 + x * 0.05) * 1.1;
   ctx.save();
   ctx.translate(x, y + h);
   ctx.rotate((kind === "tree" ? 0.1 : -0.05) + sway * 0.012);
@@ -88,16 +89,11 @@ export function drawNote(v: View, x: number, kind: "wall" | "tree", big: boolean
   ctx.restore();
 }
 
-export function isNoteReadable(v: View, sx: number, noteX: number): boolean {
-  if (v.focused && v.focusX === noteX) return true;
-  return v.zoom >= 1.9 && Math.abs(sx - v.w / 2) <= 260;
-}
-
 export function drawStreetNotes(v: View) {
   for (const note of v.snap.notes ?? []) {
     if (note.house) continue;
     const sx = note.x - v.cam;
     if (sx < -100 || sx > v.w + 100) continue;
-    drawNote(v, sx, note.kind, isNoteReadable(v, sx, note.x), note);
+    drawNote(v, sx, note.kind, note);
   }
 }
