@@ -113,14 +113,14 @@ export function visitCursor(visit: TimeVisit, now: number) {
 
 type ReplayTimelineItem = { at: number; rank: number; order: number; original?: JournalEntry; arrival?: { id: string; initial: P }; action?: { id: string; entry: ReplayAction }; consume?: { id: string; entry: ReplayAction }; suspend?: string };
 
-export function timelineItems(room: Room, visit: TimeVisit, until: number): ReplayTimelineItem[] {
+export function timelineItems(room: Room, visit: TimeVisit, until: number, after = -Infinity): ReplayTimelineItem[] {
   // Sequence numbers are strictly increasing; binary-search the first entry
   // after visit.base.seq so journal trimming never shifts offsets.
   const items: ReplayTimelineItem[] = [];
   let lo = 0, hi = room.journal.length;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
-    if (room.journal[mid].seq <= visit.base.seq) lo = mid + 1;
+    if (room.journal[mid].seq <= visit.base.seq || room.journal[mid].at <= after) lo = mid + 1;
     else hi = mid;
   }
   for (let i = lo; i < room.journal.length; i++) {
@@ -141,7 +141,7 @@ export function timelineItems(room: Room, visit: TimeVisit, until: number): Repl
     if (entry.body.action === "time_travel") items.push({ at: entry.at, rank: 2, order: entry.order, consume: { id: visit.visitorId, entry } });
     else items.push({ at: entry.at, rank: 2, order: entry.order, action: { id: visit.visitorId, entry } });
   }
-  return items.sort((a, b) => a.at - b.at || a.rank - b.rank || a.order - b.order);
+  return items.filter(item => item.at > after).sort((a, b) => a.at - b.at || a.rank - b.rank || a.order - b.order);
 }
 
 export function applyTimelineItem(sim: Room, item: ReplayTimelineItem): { ok: boolean; error?: string } | undefined {
@@ -168,7 +168,7 @@ export function applyTimelineItem(sim: Room, item: ReplayTimelineItem): { ok: bo
 }
 
 /** Replay real commands and every earlier visit in chronological order. */
-export function simulatePast(room: Room, visit: TimeVisit, until: number, resultOrder?: number): { room: Room; result?: { ok: boolean; error?: string } } {
+function rebuildPast(room: Room, visit: TimeVisit, until: number, resultOrder?: number): { room: Room; result?: { ok: boolean; error?: string } } {
   // Nested time travel: using a timepiece inside the past re-bases the whole
   // visit at that earlier recorded moment, and every recorded action (including
   // the earlier ones) replays forward from there. The visit itself — the causal
@@ -193,6 +193,38 @@ export function simulatePast(room: Room, visit: TimeVisit, until: number, result
   return { room: sim, result };
 }
 
+// Cache only on the authoritative server. Clients receive fully simulated values.
+// Every caller gets an independent copy, so snapshot presence/mutations cannot contaminate replay.
+interface PastCache { sim: Room; until: number; actions: number; revisions: number; baseSeq: number; firstSeq: number; sourceSeq: number; originAt: number }
+const pastCache = new WeakMap<TimeVisit, PastCache>();
+function appendedBeforeCursor(room: Room, sourceSeq: number, cursor: number): boolean {
+  if (sourceSeq === room.journalSeq) return false;
+  let lo = 0, hi = room.journal.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (room.journal[mid].seq <= sourceSeq) lo = mid + 1; else hi = mid;
+  }
+  return lo < room.journal.length && room.journal[lo].at <= cursor;
+}
+export function simulatePast(room: Room, visit: TimeVisit, until: number, resultOrder?: number): { room: Room; result?: { ok: boolean; error?: string } } {
+  const cached = pastCache.get(visit);
+  const firstSeq = room.journal[0]?.seq ?? 0;
+  if (resultOrder === undefined && cached && until >= cached.until && cached.actions === visit.actions.length &&
+      cached.revisions === room.revisions.length && cached.baseSeq === visit.base.seq && cached.firstSeq === firstSeq &&
+      cached.originAt === visit.originAt && !appendedBeforeCursor(room, cached.sourceSeq, cached.until)) {
+    for (const item of timelineItems(room, visit, until, cached.until)) applyTimelineItem(cached.sim, item);
+    cached.sim.replayNow = until; cached.until = until; cached.sourceSeq = room.journalSeq;
+    return { room: structuredClone(cached.sim) };
+  }
+  const rebuilt = rebuildPast(room, visit, until, resultOrder);
+  pastCache.set(visit, { sim: structuredClone(rebuilt.room), until, actions: visit.actions.length, revisions: room.revisions.length, baseSeq: visit.base.seq, firstSeq, sourceSeq: room.journalSeq, originAt: visit.originAt });
+  return rebuilt;
+}
+/** Regression oracle: fresh deterministic command replay, deliberately bypassing the cache. */
+export function simulatePastUncachedForTest(room: Room, until: number): Room | null {
+  return room.timeVisit ? rebuildPast(room, room.timeVisit, until).room : null;
+}
+
 export function replayFuture(room: Room, visit: TimeVisit, past: Room, cursor: number, now: number): Room {
   const future = structuredClone(past);
   const visitor = future.players.get(visit.visitorId);
@@ -203,8 +235,8 @@ export function replayFuture(room: Room, visit: TimeVisit, past: Room, cursor: n
 }
 
 export function copyActor(target: P, source: P) {
-  const lastSeen = target.lastSeen, joinedAt = target.joinedAt, parked = target.parked, id = target.id;
-  Object.assign(target, structuredClone(source), { id, lastSeen, joinedAt, parked, temporalAbsent: false, temporalVisitor: false });
+  const lastSeen = target.lastSeen, joinedAt = target.joinedAt, parked = target.parked, id = target.id, steerSeq = target.steerSeq;
+  Object.assign(target, structuredClone(source), { id, lastSeen, joinedAt, parked, steerSeq, temporalAbsent: false, temporalVisitor: false });
 }
 
 export function mergeMatch(original: MatchStats, visit: MatchStats): MatchStats {
@@ -388,7 +420,7 @@ export function pastSnapshot(room: Room, p: P, visit: TimeVisit, now: number): S
   const witnessed = shadow.historyEvents.filter((event) => event.at <= cursor && event.at >= cursor - 8000 && event.actorId !== visit.visitorId && event.inside === p.inside && dist(event.x, p.x) <= view.visionRadius && label(event)).slice(-4)
     .map((event) => ({ text: `Past echo: ${event.name} ${label(event)}.`, at: now - (cursor - event.at) }));
   view.feed = [...view.feed, ...witnessed].slice(-8);
-  view.self.id = p.id; view.self.hasTimepiece = !!heldPiece(shadow, visit.visitorId);
+  view.self.id = p.id; view.self.steerSeq = p.steerSeq ?? 0; view.self.hasTimepiece = !!heldPiece(shadow, visit.visitorId);
   view.self.teammates = view.self.teammates.map((id) => id === visit.visitorId ? p.id : `echo:${id}`);
   view.now = now;
   view.bellAt = view.bellAt ? view.bellAt + shift : 0; view.flickerAt = view.flickerAt ? view.flickerAt + shift : 0; view.blackoutUntil = view.blackoutUntil ? view.blackoutUntil + shift : 0;

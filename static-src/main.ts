@@ -11,6 +11,7 @@ import { SettingsDialog } from "../src/game/settings-ui";
 import type { RoomListing, Snapshot } from "../src/game/types";
 import { applyFrame, type WireFrame } from "../src/game/wire";
 import { RoomHud, esc } from "./hud";
+import { InputTransport } from "./input-transport";
 
 // Temporary author-built sandboxes run the same unified code (see SYNC.md).
 // The menu probes them in order; room-code joins also discover the backend
@@ -90,11 +91,12 @@ const keys = new Set<string>();
 let lastDir = 0;
 const displayX = new Map<string, number>();
 const steerState = { dir: 0, cartHeld: false, interactHeld: false };
-let steerSeq = 0;
-let lastMoveDir = 0;
-let lastMoveSentAt = 0;
-let sseWatchdog: ReturnType<typeof setTimeout> | null = null;
-const netStats = { rttMs: 40, droppedInputs: 0, lastPosAt: 0, gaps: [] as number[], renderFrames: 0 };
+let sseWatchdog: ReturnType<typeof setInterval> | null = null;
+const transportClientId = crypto.randomUUID();
+let lastStreamFrameAt = 0;
+let nextSseProbeAt = 0;
+let sseRetryDelay = 250;
+const netStats = { rttMs: 40, droppedInputs: 0, lastPosAt: 0, gaps: [] as number[], renderFrames: 0, mode: "connecting" };
 const showNet = params.get("net") === "1";
 let netEl: HTMLElement | null = null;
 let lastAudioAt = 0;
@@ -166,57 +168,17 @@ function toast(msg: string) {
   const t = $("toast"); t.textContent = msg; t.style.display = "block";
   setTimeout(() => { t.style.display = "none"; }, 2200);
 }
-async function postInput(payload: Record<string, unknown>, retry429 = true, parseOk = true): Promise<{ ok: boolean; status: number }> {
-  if (!roomCode) return { ok: false, status: 0 };
-  const sentAt = performance.now();
-  try {
-    const res = await fetch(server + "/api/game/input", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      keepalive: true,
-      body: JSON.stringify({ code: roomCode, playerId: getPid(), ...payload }),
-    });
-    if (res.status === 429 && retry429) {
-      await new Promise((r) => setTimeout(r, 80));
-      return postInput(payload, false, parseOk);
-    }
-    netStats.rttMs = netStats.rttMs * 0.7 + Math.min(1500, Math.max(5, performance.now() - sentAt)) * 0.3;
-    if (!res.ok || parseOk) {
-      const d = await res.json().catch(() => ({}));
-      if (d && d.ok === false && d.error) toast(d.error);
-    }
-    if (!res.ok && res.status !== 400) netStats.droppedInputs++;
-    return { ok: res.ok, status: res.status };
-  } catch {
-    netStats.droppedInputs++;
-    return { ok: false, status: 0 };
-  }
-}
-
+const inputTransport = new InputTransport({
+  identity: () => roomCode ? { code: roomCode, playerId: getPid(), base: server } : null,
+  rtt: (ms) => { netStats.rttMs = netStats.rttMs * 0.7 + ms * 0.3; },
+  error: toast,
+  failed: () => { netStats.droppedInputs++; },
+});
 function flushSteer() {
-  if (!roomCode) return;
-  const now = performance.now();
-  const seq = ++steerSeq;
-  const snapSteer: Record<string, unknown> = {
-    seq, dir: steerState.dir, cartHeld: steerState.cartHeld, interactHeld: steerState.interactHeld,
-  };
-  if (steerState.dir !== 0) {
-    lastMoveDir = steerState.dir;
-    lastMoveSentAt = now;
-  } else if (lastMoveDir !== 0 && now - lastMoveSentAt < 60) {
-    snapSteer.tapDir = lastMoveDir;
-    lastMoveDir = 0;
-  }
-  void postInput(snapSteer, false, false).then((r) => {
-    if (r.status === 429 && seq === steerSeq && roomCode) {
-      setTimeout(() => { if (seq === steerSeq && roomCode) flushSteer(); }, 80);
-    }
-  });
+  // Wait for the initial authoritative sequence high-water mark, not a guessed local seed.
+  if (roomCode && snap) void inputTransport.steer(steerState);
 }
-
-async function send(payload: Record<string, unknown>) {
-  await postInput(payload, true);
-}
+async function send(payload: Record<string, unknown>) { await inputTransport.send(payload); }
 
 // ---------------------------------------------------------------- menu ----
 function initMenu() {
@@ -313,7 +275,7 @@ async function refreshRooms() {
 // ---------------------------------------------------------------- room ----
 function stopStream() {
   streamEpoch++;
-  if (sseWatchdog) { clearTimeout(sseWatchdog); sseWatchdog = null; }
+  if (sseWatchdog) { clearInterval(sseWatchdog); sseWatchdog = null; }
   if (eventSource) { eventSource.close(); eventSource = null; }
   if (pollAbort) { pollAbort.abort(); pollAbort = null; }
 }
@@ -323,7 +285,7 @@ function enterRoom(code: string) {
   cancelProbe();
   stopStream();
   roomCode = code;
-  held = null; heldRev = ""; steerSeq = 0;
+  held = null; heldRev = ""; inputTransport.reset();
   steerState.dir = 0; steerState.cartHeld = false; steerState.interactHeld = false;
   netStats.gaps.length = 0; netStats.lastPosAt = 0; netStats.droppedInputs = 0;
   displayX.clear();
@@ -340,7 +302,7 @@ function enterRoom(code: string) {
   if (roomsTimer) { clearInterval(roomsTimer); roomsTimer = null; }
   // Preserve the backend that actually accepted the join. A refresh must not
   // probe a different server and turn a valid room into an empty screen.
-  history.replaceState(null, "", `${location.pathname}?room=${code}&server=${encodeURIComponent(server)}`);
+  history.replaceState(null, "", `${location.pathname}?room=${code}&server=${encodeURIComponent(server)}${showNet ? "&net=1" : ""}`);
   startStream(code);
 }
 function leaveToMenu() {
@@ -349,16 +311,17 @@ function leaveToMenu() {
   stopStream();
   const departingCode = roomCode;
   const departingServer = server;
+  const departingSeq = inputTransport.lastSequence;
   if (departingCode) {
-    void api("/api/game/leave", { code: departingCode, playerId: getPid() }, departingServer, 5000)
+    void api("/api/game/leave", { code: departingCode, playerId: getPid(), seq: departingSeq }, departingServer, 5000)
       .catch(() => {
         try { navigator.sendBeacon(departingServer + "/api/game/leave",
-          new Blob([JSON.stringify({ code: departingCode, playerId: getPid() })], { type: "application/json" })); }
+          new Blob([JSON.stringify({ code: departingCode, playerId: getPid(), seq: departingSeq })], { type: "application/json" })); }
         catch { /* still return to the menu */ }
       }).finally(() => { if ($("menu").style.display !== "none") void refreshRooms(); });
   }
   snap = null; roomCode = ""; hud.invalidateOverlay(); roomError = ""; pollFailures = 0; pollBackoffMs = 0; held = null; heldRev = ""; lowerGlass();
-  steerSeq = 0; steerState.dir = 0; steerState.cartHeld = false; steerState.interactHeld = false;
+  inputTransport.reset(); steerState.dir = 0; steerState.cartHeld = false; steerState.interactHeld = false;
   displayX.clear();
   wardPanel.update(null, 1, false);
   $("game").style.display = "none";
@@ -371,7 +334,7 @@ function leaveToMenu() {
 function beaconLeave() {
   if (!roomCode) return;
   try {
-    navigator.sendBeacon(server + "/api/game/leave", new Blob([JSON.stringify({ code: roomCode, playerId: getPid() })], { type: "application/json" }));
+    navigator.sendBeacon(server + "/api/game/leave", new Blob([JSON.stringify({ code: roomCode, playerId: getPid(), seq: inputTransport.lastSequence })], { type: "application/json" }));
   } catch { /* noop */ }
 }
 window.addEventListener("pagehide", beaconLeave);
@@ -393,7 +356,7 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
   if (frame.error) { showRoomError(frame.error); return; }
   if (frame.gone) { held = null; heldRev = ""; return; }
   // Bare clock tick `{ now }` with no state diff.
-  if (!frame.snap && !frame.delta && !frame.patch) {
+  if (!frame.snap && !frame.delta && !frame.patch && !frame.motion && !frame.cartMotion) {
     if (snap) {
       snap.now = frame.now;
       lastPollAt = performance.now();
@@ -402,8 +365,14 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
     return;
   }
   const prevHeld = held;
-  const s = applyFrame(held, frame);
-  if (!s || !s.self) { held = null; heldRev = ""; return; }
+  const s = applyFrame(held, frame, heldRev);
+  if (!s || !s.self) {
+    held = null; heldRev = "";
+    // A missing/wrong baseline is not a position update. Reconnect for a full snapshot.
+    if (roomCode) startStream(roomCode);
+    return;
+  }
+  inputTransport.resume(s.self.steerSeq ?? 0);
   const now = performance.now();
   lastPollAt = now;
   held = s;
@@ -411,14 +380,14 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
 
   // Record real position-frame cadence and sync authoritative server positions directly
   // without client-side prediction or artificial interpolation delay.
-  if (frame.snap || frame.patch?.players || frame.delta?.players !== undefined) {
+  if (frame.snap || frame.motion || frame.patch?.players || frame.delta?.players !== undefined) {
     if (netStats.lastPosAt > 0) {
       netStats.gaps.push(now - netStats.lastPosAt);
       if (netStats.gaps.length > 40) netStats.gaps.shift();
     }
     netStats.lastPosAt = now;
   }
-  for (const p of s.players) displayX.set(p.id, p.x);
+  for (const p of s.players) displayX.set(p.id, p.drawX ?? p.x);
   if (displayX.size > s.players.length) {
     for (const id of displayX.keys()) if (!s.players.some((p) => p.id === id)) displayX.delete(id);
   }
@@ -427,6 +396,7 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
   pollBackoffMs = 0;
   roomError = "";
   snap = s;
+  if (frame.snap) flushSteer(); // resync/reconnect also repairs a release lost while offline
   if (timePanel.isOpen && (!s.self.hasTimepiece || s.phase !== "playing")) timePanel.close();
   if (s.minigame || wardPanel.isOpen) wardPanel.update(s.minigame, s.self.stamina, s.self.exhausted);
   const edgeKey = `${s.phase}|${s.taskBar?.done ?? 0}|${s.self.alive ? 1 : 0}|${s.bellAt}|${s.blackoutUntil}`;
@@ -449,49 +419,56 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
   }
 }
 
-function startStream(code: string) {
-  const myEpoch = ++streamEpoch;
-  if (typeof EventSource === "undefined") { void pollLoop(code, myEpoch); return; }
-  let gotFrame = false;
-  const es = new EventSource(`${server}/api/game/state/stream?code=${code}&playerId=${encodeURIComponent(getPid())}`);
+function startStream(code: string, probeWhilePolling = false) {
+  if (!probeWhilePolling) stopStream();
+  let myEpoch = streamEpoch;
+  if (!probeWhilePolling) netStats.mode = "connecting";
+  if (typeof EventSource === "undefined") { netStats.mode = "poll"; void pollLoop(code, myEpoch); return; }
+  let active = !probeWhilePolling;
+  const es = new EventSource(`${server}/api/game/state/stream?code=${code}&playerId=${encodeURIComponent(getPid())}&format=2`);
   eventSource = es;
-  const armWatchdog = () => {
-    if (sseWatchdog) clearTimeout(sseWatchdog);
-    sseWatchdog = setTimeout(() => {
-      if (myEpoch !== streamEpoch || code !== roomCode) return;
-      es.close();
-      if (eventSource === es) eventSource = null;
-      void pollLoop(code, myEpoch);
-    }, 3500);
+  const current = () => myEpoch === streamEpoch && code === roomCode && eventSource === es;
+  const fallback = () => {
+    if (!current()) return;
+    if (sseWatchdog) { clearInterval(sseWatchdog); sseWatchdog = null; }
+    es.close(); eventSource = null;
+    nextSseProbeAt = performance.now() + sseRetryDelay;
+    sseRetryDelay = Math.min(5000, sseRetryDelay * 2);
+    netStats.mode = "poll";
+    if (active) { stopStream(); void pollLoop(code, streamEpoch); }
+    // A failed probe leaves the CURRENT long-poll running; no display outage.
   };
-  armWatchdog();
+  lastStreamFrameAt = performance.now();
+  sseWatchdog = setInterval(() => {
+    if (current() && performance.now() - lastStreamFrameAt > 3000) fallback();
+  }, 500);
   es.onmessage = (ev) => {
-    if (myEpoch !== streamEpoch || code !== roomCode) { es.close(); return; }
-    gotFrame = true;
-    armWatchdog();
-    try { ingestFrame(JSON.parse(ev.data) as WireFrame & { error?: string }); } catch { /* ignore bad frame */ }
-  };
-  es.onerror = () => {
-    if (myEpoch !== streamEpoch || code !== roomCode) { es.close(); return; }
-    // If SSE fails before opening or disconnects twice, switch cleanly to zero-gap long-poll.
-    if (!gotFrame || ++pollFailures >= 2) {
-      if (sseWatchdog) { clearTimeout(sseWatchdog); sseWatchdog = null; }
-      es.close();
-      if (eventSource === es) eventSource = null;
-      void pollLoop(code, myEpoch);
+    if (!current()) return;
+    if (!active) {
+      // Switch only when a real full stream frame has arrived. Invalidate old poll callbacks first.
+      streamEpoch++; myEpoch = streamEpoch; active = true;
+      pollAbort?.abort(); pollAbort = null;
     }
+    lastStreamFrameAt = performance.now(); sseRetryDelay = 250;
+    netStats.mode = "sse";
+    try { ingestFrame(JSON.parse(ev.data) as WireFrame & { error?: string }); }
+    catch { fallback(); }
   };
+  es.onerror = fallback;
 }
 
 /** Zero-gap continuous long-poll fallback when SSE is unavailable. */
 async function pollLoop(code: string, myEpoch: number) {
   while (myEpoch === streamEpoch && code === roomCode) {
+    if (!pollFailures && !eventSource && performance.now() >= nextSseProbeAt && typeof EventSource !== "undefined") {
+      startStream(code, true); // keep polling until the pushed full snapshot actually arrives
+    }
     const rev = held && heldRev ? `&rev=${encodeURIComponent(heldRev)}` : "";
     const ctl = new AbortController();
     pollAbort = ctl;
     const timer = setTimeout(() => ctl.abort(), 6000);
     try {
-      const res = await fetch(`${server}/api/game/state?code=${code}&playerId=${getPid()}&delta=1&wait=1${rev}`, { signal: ctl.signal });
+      const res = await fetch(`${server}/api/game/state?code=${code}&playerId=${getPid()}&delta=1&wait=1&format=2&client=${transportClientId}${rev}`, { signal: ctl.signal });
       clearTimeout(timer);
       if (myEpoch !== streamEpoch || code !== roomCode) return;
       if (res.status === 304) {
@@ -627,6 +604,7 @@ window.addEventListener("keyup", (e) => {
   else if (bound("push", e)) { steerState.cartHeld = false; void flushSteer(); }
 });
 window.addEventListener("blur", releaseInputs);
+document.addEventListener("visibilitychange", () => { if (document.hidden) releaseInputs(); });
 $("chatinput").addEventListener("keydown", (e) => { if (e.key === "Enter") submitChat(); e.stopPropagation(); });
 $("chatinput").addEventListener("blur", () => setTimeout(submitChat, 50));
 window.addEventListener("pointerdown", bootAudioAsync);
@@ -829,6 +807,7 @@ let netSampleAt = last;
 let netSampleFrames = 0;
 if (showNet) {
   netEl = document.createElement("div");
+  netEl.id = "hc-net-debug";
   netEl.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:90;background:rgba(13,8,16,.85);border:1px solid #3a2733;border-radius:6px;padding:4px 8px;font:11px/1.35 monospace;color:#d8c9b4;pointer-events:none";
   document.body.appendChild(netEl);
 }
@@ -850,10 +829,12 @@ function loop(nowMs: number) {
     netSampleFrames = 0;
     const sorted = netStats.gaps.slice().sort((a, b) => a - b);
     const p50 = sorted.length ? Math.round(sorted[Math.floor(sorted.length * 0.5)]) : 0;
-    netEl.textContent = `${fps} fps · rtt ${Math.round(netStats.rttMs)} ms · gap p50 ${p50} ms · drop ${netStats.droppedInputs} · souls ${snap.players.length}`;
+    netEl.textContent = `${netStats.mode} · ${fps} fps · rtt ${Math.round(netStats.rttMs)} ms · gap p50 ${p50} ms · drop ${netStats.droppedInputs} · souls ${snap.players.length}`;
   }
   renderer.render(ctx, viewW, viewH, snap, displayX, nowMs / 1000, dt);
 }
 requestAnimationFrame(loop);
 
 initMenu();
+// Build a suspended, silent graph while the page/art loads, not during the first movement key.
+setTimeout(() => audio.prepare(), 0);

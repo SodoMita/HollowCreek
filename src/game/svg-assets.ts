@@ -202,6 +202,19 @@ function travKey(cloak: string, redEyes: boolean, ghost: boolean, step: number, 
   return `${cloak}:${redEyes}:${ghost}:${step}:${flip ? -1 : 1}:${scale}`;
 }
 
+/** Keep primed 1x/2x idle bodies available: every later pose/zoom can composite synchronously. */
+function rememberTraveler(key: string, canvas: HTMLCanvasElement) {
+  if (!travelers.has(key) && travelers.size >= TRAVELER_CAP) {
+    let victim: string | undefined;
+    for (const candidate of travelers.keys()) {
+      if (!/:0:-?1:[12]$/.test(candidate)) { victim = candidate; break; }
+    }
+    victim ??= travelers.keys().next().value;
+    if (victim) travelers.delete(victim);
+  }
+  travelers.set(key, canvas);
+}
+
 function mirrorCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = src.width;
@@ -224,8 +237,7 @@ function findTravelerSprite(cloak: string, redEyes: boolean, ghost: boolean, ste
     const fwd = travelers.get(travKey(cloak, redEyes, ghost, step, false, scale));
     if (fwd) {
       const mirrored = mirrorCanvas(fwd);
-      if (travelers.size >= TRAVELER_CAP) travelers.delete(travelers.keys().next().value as string);
-      travelers.set(k, mirrored);
+      rememberTraveler(k, mirrored);
       return mirrored;
     }
   }
@@ -257,7 +269,7 @@ function fallbackTravelerSprite(cloak: string, redEyes: boolean, ghost: boolean,
   return undefined;
 }
 
-/** The traveller sprite in its own colours, baked per palette, 8-phase walk pose and direction. */
+/** The traveller sprite in its own colours, baked per palette, 32-phase walk pose and direction. */
 export function drawTraveler(
   ctx: CanvasRenderingContext2D, color: string, redEyes: boolean, ghost: boolean, pose: number, facing = 1,
 ): boolean {
@@ -265,7 +277,7 @@ export function drawTraveler(
   void requestTraveler();
   if (!travelerTemplate) return false;
   const cloak = /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : "#3a7ca5";
-  const step = ghost ? 0 : (pose >= 1 && pose <= 8 ? Math.round(pose) : 0);
+  const step = ghost ? 0 : (pose >= 1 && pose <= 32 ? Math.round(pose) : 0);
   const flip = facing < 0;
   const hit = findTravelerSprite(cloak, redEyes, ghost, step, flip, artScale);
   if (hit) {
@@ -299,8 +311,40 @@ function legTransforms(step: number): [string, string] {
 function bakeTraveler(
   key: string, cloak: string, redEyes: boolean, ghost: boolean, step: number, scale: number, template: string,
 ): Promise<void> {
+  if (travelers.has(key)) return Promise.resolve();
   const existing = travelerPending.get(key);
   if (existing) return existing;
+  if (step > 0) {
+    // Composite a cached cloak with two tiny hip-pivoted legs ONCE per pose.
+    // Unlike an SVG Image decode this completes synchronously on first use, so
+    // a new walking pose never falls back to a visibly different idle frame.
+    const body = travelers.get(travKey(cloak, redEyes, true, 0, false, scale))
+      ?? travelers.get(travKey(cloak, redEyes, true, 0, false, 2))
+      ?? travelers.get(travKey(cloak, redEyes, true, 0, false, 1));
+    if (!body) {
+      const bodyKey = travKey(cloak, redEyes, true, 0, false, scale);
+      return bakeTraveler(bodyKey, cloak, redEyes, true, 0, scale, template).then(() => {
+        if (travelers.has(bodyKey)) return bakeTraveler(key, cloak, redEyes, ghost, step, scale, template);
+      });
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(40 * scale); canvas.height = Math.ceil(54 * scale);
+    const g = canvas.getContext("2d")!;
+    g.scale(scale, scale);
+    const th = (step - 1) * Math.PI * 2 / 32;
+    g.strokeStyle = "#141015"; g.lineWidth = 5; g.lineCap = "round";
+    for (let leg = 0; leg < 2; leg++) {
+      const phase = th + leg * Math.PI;
+      g.save();
+      g.translate(leg ? 24 : 16, 39 - Math.max(0, Math.cos(phase)) * 3.2);
+      g.rotate(-Math.sin(phase) * 28 * Math.PI / 180);
+      g.beginPath(); g.moveTo(0, 0); g.lineTo(0, 12); g.lineTo(3, 13); g.stroke();
+      g.restore();
+    }
+    g.drawImage(body, 0, 0, 40, 54);
+    rememberTraveler(key, canvas); artGen++;
+    return Promise.resolve();
+  }
   const p = new Promise<void>((resolve) => {
     const [legA, legB] = legTransforms(step);
     const variables = `--cloak:${cloak};--eyes:${redEyes ? "#ff5142" : "#eee6ce"};--leg-a:${legA};--leg-b:${legB};--legs-opacity:${ghost ? 0 : 1};`;
@@ -312,8 +356,7 @@ function bakeTraveler(
       canvas.width = pw;
       canvas.height = ph;
       canvas.getContext("2d")?.drawImage(image, 0, 0, pw, ph);
-      if (travelers.size >= TRAVELER_CAP) travelers.delete(travelers.keys().next().value as string);
-      travelers.set(key, canvas);
+      rememberTraveler(key, canvas);
       travelerPending.delete(key);
       artGen++;
       resolve();
@@ -393,36 +436,10 @@ function warmCommonSprites(): Promise<void> {
       }
     }
   }
-  // Pre-bake the tutorial's default cloak walk phases at scale 2 immediately;
-  // warm remaining player walk phases in tiny background batches so startup rAF never stalls.
-  const tpl = travelerTemplate;
-  for (let step = 1; step <= 8; step++) {
-    jobs.push(bakeTraveler(travKey("#3a7ca5", false, false, step, false, 2), "#3a7ca5", false, false, step, 2, tpl));
-  }
-  return Promise.all(jobs).then(() => {
-    const queue: [string, boolean, number, number][] = [];
-    for (const sc of [2, 1]) {
-      for (const c of colors) {
-        const cloak = c.toLowerCase();
-        for (let step = 1; step <= 8; step++) {
-          for (const re of [false, true]) {
-            const k = travKey(cloak, re, false, step, false, sc);
-            if (!travelers.has(k)) queue.push([cloak, re, step, sc]);
-          }
-        }
-      }
-    }
-    let idx = 0;
-    const drain = () => {
-      const end = Math.min(idx + 2, queue.length);
-      for (; idx < end; idx++) {
-        const [cloak, re, step, sc] = queue[idx];
-        void bakeTraveler(travKey(cloak, re, false, step, false, sc), cloak, re, false, step, sc, tpl);
-      }
-      if (idx < queue.length) setTimeout(drain, 45);
-    };
-    if (queue.length) setTimeout(drain, 250);
-  });
+  // Idle cloaks (including legs-hidden bodies) are ready before play. All 32
+  // walk poses now composite synchronously from those bodies on first use;
+  // no multi-second background SVG decode queue competes with input or rAF.
+  return Promise.all(jobs).then(() => {});
 }
 
 /** Starts loading all fixed art, room furniture and the traveller sprite. Idempotent. */

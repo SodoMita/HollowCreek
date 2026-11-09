@@ -22,14 +22,9 @@ const BUILDING_BY_ID = new Map(BUILDINGS.map((b) => [b.id, b]));
 // Snapshot (per-viewer, roles hidden)
 // ---------------------------------------------------------------------------
 
-/** ETag for a viewer's snapshot, cached per room revision so 10 pollers share one hash per tick. */
-export function roomEtag(room: Room, playerId: string, snap: Snapshot): string {
-  const cached = room.etags.get(playerId);
-  if (cached && cached.rev === room.rev) return cached.etag;
-  const etag = snapshotEtag(snap);
-  if (room.etags.size > 32) room.etags.clear();
-  room.etags.set(playerId, { rev: room.rev, etag });
-  return etag;
+/** Hash the actual supplied view. Rev-only caching was invalid for expiring notices/cooldowns in sleeping rooms. */
+export function roomEtag(_room: Room, _playerId: string, snap: Snapshot): string {
+  return snapshotEtag(snap);
 }
 
 export function snapshot(room: Room, playerId: string): Snapshot | null {
@@ -152,6 +147,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     nightT,
     self: {
       id: me.id,
+      steerSeq: me.steerSeq ?? 0,
       role: me.role,
       alive: me.alive,
       caged: me.caged,
@@ -179,7 +175,9 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
           id: p.id,
           name: p.name,
           color: p.color,
-          x: seen ? ix(p.x) : -9999, // positions are integers; meeting roster hides them
+          x: seen ? ix(p.x) : -9999, // integer gameplay position; meeting roster stays hidden
+          drawX: seen ? Math.round((p.x + (p.subX ?? 0)) * 1000) / 1000 : -9999,
+          walkFrame: seen && p.moving && p.dir !== 0 && p.alive ? Math.floor((p.walkCycle ?? 0) * 32 / (Math.PI * 2)) + 1 : 0,
           facing: p.facing,
           moving: seen && p.moving && p.dir !== 0,
           alive: p.alive,
@@ -216,6 +214,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     time: room.temporalShadow ? undefined : { mode: "present", earliest: room.history[0]?.at ?? room.startedAt, latest: Math.max(room.history[0]?.at ?? room.startedAt, Math.floor((room.history.at(-1)?.at ?? room.startedAt) / 5000) * 5000) }, // five-second steps: the scrubber label tolerates it, and it keeps the idle stream to a bare clock tick
     supplyDrops: room.supplyDrops.filter((item) => canSee(item.x)).map((item) => item.x),
     cartX: ix(room.cartX),
+    cartDrawX: Math.round((room.cartX + (room.cartSubX ?? 0)) * 1000) / 1000,
     cartPushers: room.cartPushers,
     cages: room.cages.map((c) => ({ x: c.x, occupant: c.occupant })),
     tasks: room.pool.map((t) => {

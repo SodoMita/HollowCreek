@@ -71,6 +71,7 @@ export function cagePlayer(room: Room, p: P): boolean {
   p.cageIndex = idx;
   p.match.timesCaged++;
   p.x = room.cages[idx].x;
+  p.subX = 0;
   p.dir = 0;
   p.activeWard = null;
   return true;
@@ -84,6 +85,7 @@ export function freePlayer(room: Room, p: P, stepOutside = true) {
   p.cageIndex = -1;
   if (stepOutside) {
     p.x = ix(Math.min(WORLD_W - 30, cage.x + CELL_HALF + 18));
+    p.subX = 0;
     p.dir = 0;
   }
 }
@@ -134,6 +136,7 @@ export function doKill(room: Room, killer: P, victim: P) {
   killer.killAt = roomNow(room) + KILL_COOLDOWN_MS;
   killer.stamina = Math.max(0, killer.stamina - STAMINA_KILL_COST);
   killer.x = victim.x; // lunge
+  killer.subX = victim.subX ?? 0;
   feed(room, "A scream cuts through the fog, then silence.");
   killer.match.kills++;
   victim.match.deaths++;

@@ -35,7 +35,7 @@ export function drawKit(ctx: CanvasRenderingContext2D, x: number, ground: number
 
 export function drawCart(v: View) {
   const { ctx, w, cam, ground, snap } = v;
-  const x = snap.cartX - cam;
+  const x = (snap.cartDrawX ?? snap.cartX) - cam;
   if (x <= -90 || x >= w + 90) return;
   if (drawSvg(ctx, "props/supply-cart.svg", x - 50, ground - 82, 100, 82)) {
     const sign = getPillBadge("cart:SUPPLIES", "SUPPLIES", "bold 11px Georgia, serif", "rgba(0,0,0,0)", "#e4cba8", 4, 15);

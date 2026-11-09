@@ -11,7 +11,10 @@ export async function POST(req: NextRequest) {
   const normCode = code && String(code).length <= 8 ? String(code).toUpperCase() : "";
   // Limit per soul (town + player) so a shared address never throttles a whole household.
   const soul = `${normCode}:${String(body.playerId ?? "").slice(0, 64)}`;
-  if (!admit(req, "input", soul, 1800, 18000)) {
+  // A spent movement/action window must never prevent release. This separate,
+  // still per-soul/per-address bounded lane cannot execute an action or chat.
+  const releaseOnly = body.dir === 0 && !body.action && !body.chat;
+  if (!admit(req, releaseOnly ? "stop" : "input", soul, 1800, 18000)) {
     return NextResponse.json({ ok: false, error: "Slow down." }, { status: 429 });
   }
   const room = normCode ? (getRoom(normCode) ?? await loadRoom(normCode)) : undefined;

@@ -6,6 +6,7 @@ import { dropKey, dropSupply, dropTimepiece, resolveMeeting } from "./rules";
 import { leaveRoom } from "./actions";
 import { rooms } from "./registry";
 import { captureHistory } from "./history";
+import { shouldTickRoom } from "./live-cadence";
 import { clampWorld, dropBuildingKeys, walkThroughBuildings } from "./buildings";
 import { stationNear } from "./proximity";
 import { CARRY_SPEED, CARRY_VIGOR_DRAIN, CART_HELPER_BONUS, CART_MAX_SPEED, CART_PUSH_RANGE, CART_SOLO_SPEED, CELL_HALF, GHOST_SPEED, INTERACT_RANGE, SPEED, STAMINA_IDLE_REGEN, STATIONS, TICK_MS, cartVigorFactor, ix } from "./types";
@@ -76,8 +77,7 @@ export function tickRoom(room: Room, now: number) {
       const stepCart = Math.round(rawCart);
       room.cartSubX = rawCart - stepCart;
       if (stepCart !== 0) room.cartX = clampWorld(room.cartX + stepCart, 90);
-    } else {
-      room.cartSubX = 0;
+      if (clampWorld(room.cartX + (room.cartSubX ?? 0), 90) !== room.cartX + (room.cartSubX ?? 0)) room.cartSubX = 0;
     }
     const cartDelta = room.cartX - prevCartX;
 
@@ -90,7 +90,7 @@ export function tickRoom(room: Room, now: number) {
           const visit = room.timeVisit, shadow = pastRoom(room, visit, now);
           const traveler = shadow?.players.get(visit.visitorId);
           if (traveler) {
-            p.x = traveler.x; p.subX = traveler.subX ?? 0; p.inside = traveler.inside; p.facing = traveler.facing; p.dir = traveler.dir; p.moving = traveler.moving;
+            p.x = traveler.x; p.subX = traveler.subX ?? 0; p.walkCycle = traveler.walkCycle ?? 0; p.inside = traveler.inside; p.facing = traveler.facing; p.dir = traveler.dir; p.moving = traveler.moving;
             p.stamina = traveler.stamina; p.exhausted = traveler.exhausted; p.hasKey = traveler.hasKey; p.hasSupply = traveler.hasSupply; p.supplyId = traveler.supplyId; p.activeWard = traveler.activeWard;
             continue;
           }
@@ -105,10 +105,10 @@ export function tickRoom(room: Room, now: number) {
       // Same-direction pushers move by the exact cartDelta so pushers and cart never drift apart.
       let nextX: number;
       if (pushingIds.has(p.id) && team.length && p.dir === team[0].dir) {
-        p.subX = 0;
+        p.subX = room.cartSubX ?? 0;
         nextX = p.x + cartDelta;
       } else if (p.dir === 0) {
-        p.subX = 0;
+        // Preserve precise position when stopping; zeroing the remainder made a backwards hop.
         nextX = p.x;
       } else {
         const raw = (p.subX ?? 0) + p.dir * speed * dt;
@@ -126,9 +126,19 @@ export function tickRoom(room: Room, now: number) {
         p.x = step.x;
         p.inside = step.inside;
       }
-      if (p.x === wasX && nextX !== wasX) p.subX = 0;
+      if (p.x !== nextX) p.subX = 0;
+      const precise = p.x + (p.subX ?? 0);
+      if (!p.alive) {
+        if (clampWorld(precise) !== precise) p.subX = 0;
+      } else if (!p.caged) {
+        p.subX = walkThroughBuildings(p.x, precise, p.inside, room.doors, false).x - p.x;
+      } else if (p.cageIndex >= 0) {
+        const cx = room.cages[p.cageIndex].x;
+        if (precise < cx - CELL_HALF + 8 || precise > cx + CELL_HALF - 8) p.subX = 0;
+      }
       // Keep walking intent so pressing against a wall or closed door still animates gait.
       p.moving = p.dir !== 0;
+      if (p.moving && p.alive) p.walkCycle = ((p.walkCycle ?? 0) + dt * 11 * Math.min(1, speed / SPEED)) % (Math.PI * 2);
       if (p.alive && !p.caged && p.dir !== 0 && (p.hasSupply || pushingIds.has(p.id))) {
         p.stamina = Math.max(0, p.stamina - CARRY_VIGOR_DRAIN * dt * (pushingIds.has(p.id) ? 1.2 : 1));
         if (p.stamina <= 0) p.exhausted = true;
@@ -173,6 +183,7 @@ export function tickRoom(room: Room, now: number) {
 export function tickRooms() {
   for (const room of rooms.values()) {
     const now = roomNow(room);
+    if (!shouldTickRoom(room, now)) continue;
     if (room.phase === "playing" || room.phase === "meeting") journal(room, "tick", now);
     tickRoom(room, now);
     room.rev++;
@@ -185,8 +196,8 @@ export function tick() {
   const nowWall = typeof performance !== "undefined" ? performance.now() : Date.now();
   if (nowWall - nextTickWall > TICK_MS * 10) nextTickWall = nowWall - TICK_MS * 10;
   let ran = 0;
-  // 2.5 ms early-wakeup tolerance prevents OS timer jitter from bouncing onto a slow 2ms retry hop.
-  while (nowWall >= nextTickWall - 2.5 && ran < 10) {
+  // Never run physics multiple milliseconds early: preserve the actual monotonic cadence.
+  while (nowWall >= nextTickWall - 0.25 && ran < 10) {
     nextTickWall += TICK_MS;
     tickRooms();
     ran++;
@@ -196,7 +207,7 @@ export function tick() {
 function scheduleLoop() {
   tick();
   const nowWall = typeof performance !== "undefined" ? performance.now() : Date.now();
-  const wait = Math.max(2, Math.floor(nextTickWall - nowWall));
+  const wait = Math.max(1, Math.ceil(nextTickWall - nowWall));
   g.__hollowLoop = setTimeout(scheduleLoop, wait);
 }
 

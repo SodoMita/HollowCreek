@@ -162,12 +162,13 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
 /** Explicit leave (button or sendBeacon on tab close). Lobby: removed + host
  *  promoted to the NEWEST remaining joiner (most likely to be present).
  *  In-game: seat is kept (roles must persist), but the lantern passes on. */
-export function leaveRoom(code: string, playerId: string): { ok: boolean } {
+export function leaveRoom(code: string, playerId: string, lastInputSeq?: number): { ok: boolean } {
   const room = rooms.get(code.toUpperCase());
   if (!room) return { ok: false };
   markDirty(room);
   const p = room.players.get(playerId);
   if (!p) return { ok: false };
+  if (typeof lastInputSeq === "number" && Number.isSafeInteger(lastInputSeq) && lastInputSeq >= 0) p.steerSeq = Math.max(p.steerSeq ?? 0, lastInputSeq);
   if (room.timeVisit?.playerId === p.id) endTimeVisit(room, p, "leaving");
   if (!room.replaying && room.phase !== "lobby" && room.phase !== "ended") journal(room, "leave", roomNow(room), p.id);
   record(room, p, "leave", { lobby: room.phase === "lobby" });
@@ -210,6 +211,7 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
   shuffled.forEach((p, i) => {
     p.role = i < hollowCount ? "hollow" : "crew";
     p.x = ix(300 + (seeded(room, `spawn:${p.id}`) % 100000) / 100000 * (WORLD_W - 600));
+    p.subX = 0; p.walkCycle = 0;
     p.killAt = Date.now() + 10000;
   });
   // Shared pool: the town's wards belong to everyone. A death never orphans
@@ -224,6 +226,7 @@ export function startGame(room: Room, playerId: string): { ok: boolean; error?: 
   room.supplyDrops = [];
   room.notes = [];
   room.cartX = SUPPLY_CART_START;
+  room.cartSubX = 0;
   room.cartPushers = 0;
   for (const p of ps) { p.stamina = 1; p.exhausted = false; p.hasSupply = false; p.supplyId = null; p.cartHeld = false; p.sabotageAt = 0; p.activeWard = null; p.match = newMatchStats(); }
   room.startedAt = Date.now();
@@ -328,6 +331,7 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
   let i = 0;
   for (const q of room.players.values()) {
     q.x = BELL_X + (i++ - 2) * 60;
+    q.subX = 0; q.walkCycle = 0;
     q.dir = 0;
     q.facing = 1;
     q.moving = false;
@@ -351,7 +355,7 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
     q.actionText = ""; q.actionUntil = 0;
     q.interactHeld = false;
     q.activeWard = null;
-    q.steerSeq = 0;
+    // Transport ordering spans rematches: an old in-flight packet must stay stale.
     q.vote = null;
   }
   room.bodies = [];
@@ -362,6 +366,7 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
   room.supplyDrops = [];
   room.notes = [];
   room.cartX = SUPPLY_CART_START;
+  room.cartSubX = 0;
   room.cartPushers = 0;
   for (const c of room.cages) c.occupant = null;
   room.meeting = null;
@@ -383,6 +388,19 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
 // ---------------------------------------------------------------------------
 
 export function handleInput(room: Room, body: InputBody): { ok: boolean; error?: string } {
+  const player = room.players.get(body.playerId);
+  if (!player) return { ok: false, error: "Unknown soul." };
+  if (body.dir !== undefined && (typeof body.dir !== "number" || !Number.isFinite(body.dir))) return { ok: false, error: "Invalid direction." };
+  if (!room.replaying && !room.temporalShadow && body.seq !== undefined) {
+    if (!Number.isSafeInteger(body.seq) || body.seq < 0) return { ok: false, error: "Invalid steering sequence." };
+    if (body.seq <= (player.steerSeq ?? 0)) {
+      // Do not journal discarded steering: replay strips seq and would resurrect it.
+      if (!body.action && !body.chat) return { ok: true };
+      const actionOnly = { ...body };
+      delete actionOnly.dir; delete actionOnly.cartHeld; delete actionOnly.interactHeld;
+      body = actionOnly;
+    } else player.steerSeq = body.seq;
+  }
   const res = applyInput(room, body);
   if (res.ok && !room.replaying && !room.temporalShadow && (body.action || body.chat)) {
     room.rev++;
@@ -401,29 +419,13 @@ function applyInput(room: Room, body: InputBody): { ok: boolean; error?: string 
   if (body.action === "time_travel") return startTimeVisit(room, p, body.targetAt);
   if (body.action === "time_return") return { ok: false, error: "You are already in the present." };
 
-  let applySteer = true;
-  const prevSeq = p.steerSeq ?? 0;
-  if (!room.replaying && !room.temporalShadow && typeof body.seq === "number" && Number.isFinite(body.seq)) {
-    if (body.seq <= prevSeq) applySteer = false;
-    else p.steerSeq = body.seq;
+  if (typeof body.dir === "number") {
+    const d = Math.max(-1, Math.min(1, Math.round(body.dir)));
+    if (d !== p.dir) record(room, p, "move_input", { dir: d });
+    p.dir = d;
   }
-  if (applySteer) {
-    if (typeof body.dir === "number") {
-      const d = Math.max(-1, Math.min(1, Math.round(body.dir)));
-      // If a dir=0 packet overtook an unapplied quick tap (seq jumped >1 while p.dir was 0),
-      // apply a minimal 1-tick facing/nudge in tapDir so quick taps are never lost.
-      if (d === 0 && p.dir === 0 && typeof body.tapDir === "number" && body.tapDir !== 0 &&
-          typeof body.seq === "number" && body.seq > prevSeq + 1) {
-        const td = Math.sign(body.tapDir);
-        p.facing = td;
-        p.x = Math.max(-3570, Math.min(8570, p.x + td * 2));
-      }
-      if (d !== p.dir) record(room, p, "move_input", { dir: d });
-      p.dir = d;
-    }
-    if (typeof body.interactHeld === "boolean") p.interactHeld = body.interactHeld;
-    if (typeof body.cartHeld === "boolean") p.cartHeld = body.cartHeld;
-  }
+  if (typeof body.interactHeld === "boolean") p.interactHeld = body.interactHeld;
+  if (typeof body.cartHeld === "boolean") p.cartHeld = body.cartHeld;
 
   if (typeof body.chat === "string" && body.chat.trim()) {
     const text = body.chat.trim().slice(0, 120);

@@ -51,7 +51,7 @@ export {
 } from "./balance";
 // Game state uses NO floats for positions: every world coordinate (player x,
 // cart, drops, keys, bodies, doors, cages) is an integer, so replays and
-// snapshots compare exactly. Rendering may still interpolate on the client.
+// snapshots compare exactly. Precise drawX is integrated on the server and displayed directly.
 export const ix = (v: number) => Math.round(v);
 /** A handwritten page pinned to a building wall or a tree trunk. */
 export interface Note {
@@ -112,6 +112,10 @@ export interface PublicPlayer {
   name: string;
   color: string;
   x: number;
+  /** Exact server-integrated subpixel position. Display directly; never extrapolate. */
+  drawX?: number;
+  /** Pre-rendered gait pose chosen by the authoritative simulation (0 = idle, 1..32 = walk). */
+  walkFrame?: number;
   facing: number;
   moving: boolean;
   alive: boolean;
@@ -131,6 +135,8 @@ export interface PublicPlayer {
 
 export interface SelfInfo {
   id: string;
+  /** Last accepted steering sequence: used to resume safely after reload. */
+  steerSeq?: number;
   role: Role;
   alive: boolean;
   caged: boolean;
@@ -225,6 +231,8 @@ export interface Snapshot {
   /** Pages pinned to walls/trees that are inside the viewer's vision. */
   notes?: { id: string; x: number; kind: "wall" | "tree"; house: string | null; author: string; text: string }[];
   cartX: number;
+  /** Exact cart position computed on the server, including its subpixel remainder. */
+  cartDrawX?: number;
   cartPushers: number;
   cages: { x: number; occupant: string | null }[];
   tasks: TaskView[];
@@ -269,7 +277,6 @@ export interface RoomListing {
 export interface InputBody {
   playerId: string;
   seq?: number; // monotonic steering sequence from client so out-of-order HTTP packets cannot revert newer steering
-  tapDir?: number; // set if a quick tap was released before dir!=0 acked, in case dir=0 overtakes dir=±1
   dir?: number;
   interactHeld?: boolean;
   cartHeld?: boolean; // hold Push + a direction while beside the cart

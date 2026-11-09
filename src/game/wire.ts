@@ -18,8 +18,13 @@ export interface WireItem extends Record<string, unknown> { i: number }
 
 export interface WireFrame {
   etag?: string;
+  /** Deltas are valid only on this exact baseline. */
+  base?: string;
   now: number;
   snap?: Snapshot;
+  /** Exact server values, compact protocol v2: [roster slot, integer x, precise x, gait pose]. */
+  motion?: [number, number, number, number][];
+  cartMotion?: [number, number];
   delta?: Partial<Record<keyof Snapshot, unknown>>;
   patch?: {
     players?: WireItem[];
@@ -181,10 +186,36 @@ export function diffView(prev: EncodedView, next: EncodedView): ViewDiff {
   return { any, fast, delta, patch };
 }
 
+/** Lossless wire compaction only; no movement is inferred or calculated on the client. */
+export function compactMotion(frame: WireFrame, snap: Snapshot): void {
+  if (frame.snap || frame.delta?.players) return;
+  if (frame.patch?.players) {
+    const remainder: WireItem[] = [];
+    const motion: NonNullable<WireFrame["motion"]> = [];
+    for (const part of frame.patch.players) {
+      const p = snap.players[part.i];
+      if (p && (part.x !== undefined || part.drawX !== undefined || part.walkFrame !== undefined)) {
+        motion.push([part.i, p.x, p.drawX ?? p.x, p.walkFrame ?? 0]);
+        const rest = { ...part }; delete rest.x; delete rest.drawX; delete rest.walkFrame;
+        if (Object.keys(rest).length > 1) remainder.push(rest);
+      } else remainder.push(part);
+    }
+    if (motion.length) frame.motion = motion;
+    if (remainder.length) frame.patch.players = remainder;
+    else delete frame.patch.players;
+    if (!Object.keys(frame.patch).length) delete frame.patch;
+  }
+  if (frame.delta && (frame.delta.cartX !== undefined || frame.delta.cartDrawX !== undefined)) {
+    frame.cartMotion = [snap.cartX, snap.cartDrawX ?? snap.cartX];
+    delete frame.delta.cartX; delete frame.delta.cartDrawX;
+    if (!Object.keys(frame.delta).length) delete frame.delta;
+  }
+}
+
 /** Merge a frame into the snapshot the client holds. Returns null when a delta arrives before any full frame. */
-export function applyFrame(held: Snapshot | null, frame: WireFrame): Snapshot | null {
+export function applyFrame(held: Snapshot | null, frame: WireFrame, holdsEtag?: string): Snapshot | null {
   if (frame.snap) return frame.snap;
-  if (!held) return null;
+  if (!held || (frame.base !== undefined && holdsEtag !== undefined && frame.base !== holdsEtag)) return null;
   const next = { ...held, now: frame.now } as Snapshot & Record<string, unknown>;
   if (frame.delta) for (const [k, v] of Object.entries(frame.delta)) next[k] = v;
   if (frame.patch) {
@@ -204,10 +235,20 @@ export function applyFrame(held: Snapshot | null, frame: WireFrame): Snapshot | 
       (next as Record<string, unknown>)[key] = list;
     }
   }
+  if (frame.motion) {
+    const list = next.players.slice();
+    for (const [i, x, drawX, walkFrame] of frame.motion) {
+      if (list[i]) list[i] = { ...list[i], x, drawX, walkFrame };
+    }
+    next.players = list;
+  }
+  if (frame.cartMotion) {
+    next.cartX = frame.cartMotion[0]; next.cartDrawX = frame.cartMotion[1];
+  }
   return next as Snapshot;
 }
 
-/** True when a frame carried positions, so clients can timestamp their prediction baseline. */
+/** True when a frame carried positions, for raw arrival-cadence diagnostics. */
 export function frameTouchesPlayers(frame: WireFrame): boolean {
-  return !!frame.snap || !!frame.patch?.players || frame.delta?.players !== undefined;
+  return !!frame.snap || !!frame.motion || !!frame.patch?.players || frame.delta?.players !== undefined;
 }

@@ -1,104 +1,70 @@
 import { NextRequest } from "next/server";
 import { loadRoom, onRoomEvent } from "@/game/engine";
-import { nextFrame, slowDueIn } from "@/game/viewers";
+import { createViewerCursor, nextFrame, slowDueIn } from "@/game/viewers";
 import { admit } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
 
-/**
- * Server-push state stream (SSE). One full `{etag, now, snap}` frame on
- * connect, then `{etag, now, delta?, patch?}` frames carrying only what
- * changed (see src/game/wire.ts), at most ten a second. Slow values ride once
- * a second; an idle town sends only a `{now}` tick once a second. Heartbeat
- * comments keep proxies from idling the connection out; the client falls
- * back to the long-poll on any error.
- */
+/** Each connection owns its baseline. Never queue a history of stale frames for a slow socket. */
 export async function GET(req: NextRequest) {
   const codeParam = req.nextUrl.searchParams.get("code") ?? "";
   const code = codeParam.length <= 8 ? codeParam.toUpperCase() : "";
   const playerId = (req.nextUrl.searchParams.get("playerId") ?? "").slice(0, 64);
-  // Connections are few per soul (one open stream plus occasional reconnects).
-  if (!admit(req, "stream", `${code}:${playerId}`, 30, 300)) {
-    return new Response("Slow down.", { status: 429 });
-  }
+  if (!admit(req, "stream", `${code}:${playerId}`, 30, 300)) return new Response("Slow down.", { status: 429 });
   const room = code ? await loadRoom(code) : undefined;
-  if (!room) return new Response("No such town.", { status: 404 });
+  if (!room || !room.players.has(playerId)) return new Response("No such town or soul.", { status: 404 });
 
-  let holds: string | null = null; // etag of what this client holds
-  let computedAt = 0;
-  let clockAt = 0;
-  let slowTimer: ReturnType<typeof setTimeout> | null = null;
-  let closed = false;
+  const cursor = createViewerCursor(req.nextUrl.searchParams.get("format") === "2");
   const encoder = new TextEncoder();
-  const CLOCK_MS = 1000;
-
+  let closed = false, dirty = false, queued = false, clockAt = 0;
+  let holds: string | null = null;
+  let controller: ReadableStreamDefaultController<Uint8Array>;
+  let slowTimer: ReturnType<typeof setTimeout> | undefined;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let unsubscribe = () => {};
+  const cleanup = () => {
+    if (closed) return;
+    closed = true; clearTimeout(slowTimer); clearInterval(heartbeat); unsubscribe();
+    req.signal.removeEventListener("abort", cleanup);
+    try { controller?.close(); } catch { /* consumer already cancelled */ }
+  };
+  const push = () => {
+    queued = false;
+    if (closed) return;
+    if ((controller.desiredSize ?? 0) <= 0) { dirty = true; return; }
+    dirty = false;
+    const now = Date.now();
+    const result = nextFrame(room, playerId, holds, now, false, cursor);
+    if (!result) { cleanup(); return; }
+    const frame = result.frame ?? (now - clockAt >= 1000 ? { now: result.snapNow } : null);
+    if (frame) {
+      holds = result.frame?.etag ?? holds;
+      clockAt = now;
+      try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(frame)}\n\n`)); }
+      catch { cleanup(); return; }
+    }
+    const due = slowDueIn(room, playerId, now, cursor);
+    if (!slowTimer && due > 0) slowTimer = setTimeout(() => { slowTimer = undefined; push(); }, due);
+  };
+  const requestPush = () => {
+    dirty = true;
+    if (closed || queued) return;
+    queued = true; queueMicrotask(push);
+  };
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const send = (obj: unknown) => {
-        if (closed) return;
-        try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`)); } catch { /* closed */ }
-      };
-      const heartbeat = () => {
-        if (closed) return;
-        try { controller.enqueue(encoder.encode(":hb\n\n")); } catch { /* closed */ }
-      };
-      const scheduleSlow = (ms: number) => {
-        if (slowTimer || closed) return;
-        slowTimer = setTimeout(() => { slowTimer = null; push(false); }, Math.max(1, ms));
-      };
-      // Push room events immediately in the same event-loop turn (zero timer jitter);
-      // only coalesce multiple synchronous emits within the same microtask/1ms burst.
-      let microQueued = false;
-      const push = (isEvent = true) => {
-        if (closed) return;
-        const t = Date.now();
-        const r = nextFrame(room, playerId, holds, t);
-        if (!r) { send({ gone: true, now: t }); cleanup(); return; }
-        if (r.frame) {
-          holds = r.frame.etag ?? holds;
-          computedAt = t;
-          clockAt = t;
-          send(r.frame);
-        } else if (!isEvent && t - clockAt >= CLOCK_MS) {
-          clockAt = t;
-          send({ now: r.snapNow });
-        } else if (isEvent && t - clockAt >= CLOCK_MS && t - computedAt >= CLOCK_MS) {
-          clockAt = t;
-          send({ now: r.snapNow });
-        }
-        const due = slowDueIn(room, playerId, t);
-        if (due > 0) scheduleSlow(due); // held slow values go out on the beat even if the room sleeps
-      };
-      const onEvent = () => {
-        if (closed || microQueued) return;
-        microQueued = true;
-        queueMicrotask(() => { microQueued = false; push(true); });
-      };
-      const unsub = onRoomEvent(code, onEvent);
-      const hb = setInterval(heartbeat, 15_000);
-      const tick = setInterval(() => push(false), 250); // presence heartbeat + clock between room events
-      function cleanup() {
-        if (closed) return;
-        closed = true;
-        clearInterval(hb);
-        clearInterval(tick);
-        if (slowTimer) clearTimeout(slowTimer);
-        unsub();
-        try { controller.close(); } catch { /* already closed */ }
-      }
-      req.signal.addEventListener("abort", cleanup);
-      push(); // initial full snapshot immediately
+    start(ctl) {
+      controller = ctl;
+      unsubscribe = onRoomEvent(code, requestPush);
+      heartbeat = setInterval(requestPush, 250);
+      req.signal.addEventListener("abort", cleanup, { once: true });
+      if (req.signal.aborted) cleanup(); else push();
     },
-    cancel() { closed = true; },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-cache, no-store, no-transform",
-      "content-encoding": "identity",
-      connection: "keep-alive",
-      "x-accel-buffering": "no",
-    },
-  });
+    pull() { if (dirty) requestPush(); },
+    cancel() { cleanup(); },
+  }, { highWaterMark: 1 });
+  return new Response(stream, { headers: {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-store, no-transform",
+    "content-encoding": "identity", connection: "keep-alive", "x-accel-buffering": "no",
+  } });
 }

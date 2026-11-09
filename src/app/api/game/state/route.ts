@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadRoom, roomEtag, snapshot } from "@/game/engine";
-import { nextFrame, waitForFrame } from "@/game/viewers";
+import { nextFrame, pollCursor, waitForFrame } from "@/game/viewers";
 import { admit } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -20,8 +20,8 @@ export async function GET(req: NextRequest) {
   const codeParam = sp.get("code") ?? "";
   const code = codeParam.length <= 8 ? codeParam.toUpperCase() : "";
   const playerId = (sp.get("playerId") ?? "").slice(0, 64);
-  // Each soul may poll up to the 40 Hz tick cadence while playing, so the soul bucket is generous.
-  if (!admit(req, "state", `${code}:${playerId}`, 3600, 24000)) {
+  // Fallback polls self-pace on RTT; SSE is preferred for high-rate positions.
+  if (!admit(req, "state", `${code}:${playerId}`, 18000, 180000)) {
     return NextResponse.json({ error: "Slow down." }, { status: 429 });
   }
   const rev = sp.get("rev");
@@ -32,10 +32,11 @@ export async function GET(req: NextRequest) {
 
   if (wantDelta) {
     const now = Date.now();
-    let r = nextFrame(room, playerId, rev, now);
+    const cursor = pollCursor(room, playerId, sp.get("format") === "2", sp.get("client") ?? "");
+    let r = nextFrame(room, playerId, rev, now, false, cursor);
     if (!r) return NextResponse.json({ error: "Unknown soul." }, { status: 404 });
     if (!r.frame && wait) {
-      const frame = await waitForFrame(room, playerId, rev, WAIT_MS, req.signal);
+      const frame = await waitForFrame(room, playerId, rev, WAIT_MS, req.signal, cursor);
       r = frame ? { frame, snapNow: frame.now } : r;
     }
     const headers = { "cache-control": "no-store", etag: r.frame?.etag ?? rev ?? "" };

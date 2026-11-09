@@ -110,12 +110,11 @@ const TWO_PI = Math.PI * 2;
 export function drawFigure(
   ctx: CanvasRenderingContext2D, x: number, groundY: number, color: string,
   facing: number, moving: boolean, ghost: boolean, redEyes: boolean,
-  stride: number, breathClock: number, worldSeed: number, bobAllowed: boolean,
+  stride: number, breathClock: number, worldSeed: number, bobAllowed: boolean, serverPose?: number,
 ) {
-  const gait = Math.sin(stride);
-  const bob = bobAllowed ? (moving ? Math.abs(gait) * -1.8 : Math.sin(breathClock * 1.7 + worldSeed) * 0.35) : 0;
-  const norm = ((stride % TWO_PI) + TWO_PI) % TWO_PI;
-  const pose = moving && !ghost ? (Math.floor((norm / TWO_PI) * 8) % 8) + 1 : 0;
+  const bob = bobAllowed && !moving ? Math.sin(breathClock * 1.7 + worldSeed) * 0.35 : 0;
+  // Multiplayer poses come straight from the server. Only the offline tutorial supplies a local cycle.
+  const pose = serverPose ?? (moving && !ghost ? Math.floor((((stride % TWO_PI) + TWO_PI) % TWO_PI) * 32 / TWO_PI) + 1 : 0);
   ctx.translate(x, groundY + bob);
   drawTraveler(ctx, color, redEyes, ghost, pose, facing);
   ctx.translate(-x, -(groundY + bob));
@@ -170,7 +169,8 @@ function drawPlayer(v: View, motion: Map<string, Motion>, p: View["sorted"][numb
   const ghost = !p.alive;
   if (ghost && snap.self.alive) return;
   const isMate = snap.self.teammates.includes(p.id);
-  const floatY = ghost ? -14 + Math.sin(t * 2 + p.x) * 5 : 0;
+  // Decorative bob must not use moving world x as its phase (that became a ~40Hz shake).
+  const floatY = ghost ? -14 + Math.sin(t * 2) * 5 : 0;
 
   let seen = motion.get(p.id);
   if (!seen) {
@@ -178,7 +178,7 @@ function drawPlayer(v: View, motion: Map<string, Motion>, p: View["sorted"][numb
     motion.set(p.id, seen);
   }
   seen.facing = p.facing || seen.facing;
-  if (p.moving) seen.stride += dt * 11;
+  if (p.moving && p.walkFrame === undefined) seen.stride += dt * 11;
   seen.x = shownX;
   const walking = p.moving;
 
@@ -188,7 +188,7 @@ function drawPlayer(v: View, motion: Map<string, Motion>, p: View["sorted"][numb
   if (!ghost) drawShadowOval(ctx, px, ground + 2, 17, 4, 0.35);
   drawFigure(ctx, px, ground + floatY, p.color, seen.facing, walking, ghost,
     isMate || (p.id === snap.self.id && snap.self.role === "hollow"),
-    seen.stride, clock, p.x * 0.05, !reduced);
+    seen.stride, clock, p.x * 0.05, !reduced, p.walkFrame);
   ctx.globalAlpha = prev;
 
   if (p.hasSupply) drawKit(ctx, px - 23, ground - 16 + floatY);

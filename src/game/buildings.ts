@@ -108,10 +108,10 @@ export function walkThroughBuildings(x: number, nextX: number, inside: string | 
     const farWall = b.x - b.side * (b.width / 2 - 25);
     next = b.side === 1 ? Math.max(farWall, next) : Math.min(farWall, next);
     if ((next - threshold) * b.side >= 0) {
-      if (d.open) return { x: next, inside: null };
-      next = threshold - b.side * 0.01;
+      if (d.open) return { x: round ? ix(next) : next, inside: null };
+      next = threshold - b.side * (round ? 1 : 0.01);
     }
-    return { x: next, inside };
+    return { x: round ? ix(next) : next, inside };
   }
   for (const b of BUILDINGS) {
     const d = doors.find((item) => item.id === b.id);

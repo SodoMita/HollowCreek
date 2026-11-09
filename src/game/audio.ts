@@ -36,6 +36,7 @@ interface CtxNodes {
 export class AudioDirector {
   private n: CtxNodes | null = null;
   private started = false;
+  private userStarted = false;
   private mutedFlag = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private nextHeart = 0;
@@ -57,8 +58,17 @@ export class AudioDirector {
     return this.mutedFlag;
   }
 
+  /** Prime a suspended, silent graph during loading, never during the first movement key. */
+  prepare() { this.initialize(false); }
+
   start() {
-    if (this.started) { if (this.n?.ctx.state === "suspended") void this.n.ctx.resume(); return; }
+    this.userStarted = true;
+    this.initialize(true);
+    this.applyMix();
+  }
+
+  private initialize(play: boolean) {
+    if (this.started) { if (play && this.n?.ctx.state === "suspended") void this.n.ctx.resume(); return; }
     const AC: typeof AudioContext | undefined =
       typeof window !== "undefined"
         ? window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
@@ -66,9 +76,10 @@ export class AudioDirector {
     if (!AC) return;
     try {
       const ctx = new AC();
+      if (!play) void ctx.suspend();
       this.started = true;
       const master = ctx.createGain();
-      master.gain.value = this.mutedFlag ? 0 : this.store.value.audio.master;
+      master.gain.value = this.mutedFlag || !play ? 0 : this.store.value.audio.master;
 
       const comp = ctx.createDynamicsCompressor();
       comp.threshold.value = -18;
@@ -185,7 +196,7 @@ export class AudioDirector {
       this.nextMotif = ctx.currentTime + 2.5;
       this.nextBell = ctx.currentTime + 12;
       this.schedule();
-      void ctx.resume();
+      if (play) void ctx.resume();
     } catch {
       this.started = false;
     }
@@ -197,7 +208,7 @@ export class AudioDirector {
     if (!this.n) return;
     const t = this.n.ctx.currentTime;
     for (const [node, value] of [
-      [this.n.master, a.muted ? 0 : a.master],
+      [this.n.master, a.muted || !this.userStarted ? 0 : a.master],
       [this.n.musicBus, a.music],
       [this.n.ambienceBus, a.ambience],
       [this.n.effectsBus, a.effects],

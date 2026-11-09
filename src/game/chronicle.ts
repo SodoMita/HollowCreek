@@ -2,7 +2,7 @@
 // the persisted event log. record() writes to the DB (fire-and-forget).
 import { db } from "@/db";
 import { gameEvents } from "@/db/schema";
-import { BELL_X, type InputBody } from "./types";
+import { BELL_X, NIGHT_LENGTH_MS, TICK_MS, type InputBody } from "./types";
 import { canonicalInput } from "./input";
 import { randomInt, randomUUID } from "node:crypto";
 import type { JournalEntry, P, Room } from "./engine";
@@ -14,10 +14,10 @@ export function journal(room: Room, kind: JournalEntry["kind"], at: number, play
   at = Math.max(at, room.journal.at(-1)?.at ?? at);
   const entry: JournalEntry = { seq: ++room.journalSeq, at, kind, seed: randomInt(1, 0x7fffffff), playerId, body: body ? canonicalInput(body) : undefined };
   room.journal.push(entry); room.activeSeed = entry.seed; room.activeEventId = String(entry.seq);
-  // Keep enough ticks/heartbeats to cover a full 40-minute night at 125 Hz;
-  // only trim oldest ticks/heartbeats if a match runs past 320k entries.
-  if (room.journal.length > 320_000) {
-    let drop = room.journal.length - 280_000;
+  // Retain a whole night plus headroom at the configured authoritative tick rate.
+  const journalCapacity = Math.ceil(NIGHT_LENGTH_MS / TICK_MS * 1.25);
+  if (room.journal.length > journalCapacity) {
+    let drop = room.journal.length - Math.ceil(journalCapacity * 0.9);
     room.journal = room.journal.filter((e) => {
       if (drop > 0 && (e.kind === "tick" || e.kind === "presence")) { drop--; return false; }
       return true;
@@ -87,6 +87,8 @@ export function onRoomEvent(code: string, cb: () => void): () => void {
   set.add(cb);
   return () => { set.delete(cb); if (set.size === 0) roomListeners.delete(code); };
 }
+/** Test/diagnostic hook: cancellation must return this count to zero. */
+export function roomEventListenerCount(code: string): number { return roomListeners.get(code)?.size ?? 0; }
 export function emitRoom(code: string) {
   for (const cb of roomListeners.get(code) ?? []) { try { cb(); } catch { /* listener bug must not break the room */ } }
 }

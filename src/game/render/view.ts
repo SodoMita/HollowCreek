@@ -28,7 +28,7 @@ export interface View {
   night: number;
   nb: number;
   snap: Snapshot;
-  /** Smoothed x of every figure this frame, keyed by player id. */
+  /** Authoritative displayed x of every figure this frame, keyed by player id. */
   displayX: Map<string, number>;
   /** Where the viewer's own traveller is drawn. */
   meX: number;
