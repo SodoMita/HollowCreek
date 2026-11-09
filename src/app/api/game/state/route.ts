@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
   const codeParam = sp.get("code") ?? "";
   const code = codeParam.length <= 8 ? codeParam.toUpperCase() : "";
   const playerId = (sp.get("playerId") ?? "").slice(0, 64);
-  // Each soul polls ~1-10 times a second while playing, so the soul bucket is generous.
+  // The long-poll fallback answers up to 20 times a second per soul while neighbours walk.
   if (!admit(req, "state", `${code}:${playerId}`, 1800, 12000)) {
     return NextResponse.json({ error: "Slow down." }, { status: 429 });
   }

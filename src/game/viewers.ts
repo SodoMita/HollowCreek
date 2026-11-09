@@ -7,7 +7,7 @@ import { onRoomEvent } from "./chronicle";
 import { roomEtag, snapshot } from "./snapshot";
 import { applyFrame, diffView, encodeView, type EncodedView, type WireFrame } from "./wire";
 
-export const FRAME_MS = 50; // up to 20 state frames per second per viewer (matches server TICK_MS)
+export const FRAME_MS = 50; // long-poll fallback only: at most 20 answers per second per viewer (SSE pushes every tick)
 export const SLOW_MS = 1000; // slow-class values ride at most once a second
 
 interface ViewerState {

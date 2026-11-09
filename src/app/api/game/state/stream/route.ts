@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { loadRoom, onRoomEvent } from "@/game/engine";
-import { FRAME_MS, nextFrame, slowDueIn } from "@/game/viewers";
+import { nextFrame, slowDueIn } from "@/game/viewers";
 import { admit } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -8,10 +8,12 @@ export const dynamic = "force-dynamic";
 /**
  * Server-push state stream (SSE). One full `{etag, now, snap}` frame on
  * connect, then `{etag, now, delta?, patch?}` frames carrying only what
- * changed (see src/game/wire.ts), at most ten a second. Slow values ride once
- * a second; an idle town sends only a `{now}` tick once a second. Heartbeat
- * comments keep proxies from idling the connection out; the client falls
- * back to the long-poll on any error.
+ * changed (see src/game/wire.ts). A frame goes out right after every server
+ * tick that changed something this viewer can see (TICK_RATE per second while
+ * a neighbour walks) — no coalescing window, so a client that draws raw server
+ * positions sees every tick. Slow values ride once a second; an idle town sends
+ * only a `{now}` tick once a second. Heartbeat comments keep proxies from
+ * idling the connection out; the client falls back to the long-poll on error.
  */
 export async function GET(req: NextRequest) {
   const codeParam = req.nextUrl.searchParams.get("code") ?? "";
@@ -25,8 +27,8 @@ export async function GET(req: NextRequest) {
   if (!room) return new Response("No such town.", { status: 404 });
 
   let holds: string | null = null; // etag of what this client holds
-  let computedAt = 0;
   let clockAt = 0;
+  let scheduled = false;
   let trailing: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
   const encoder = new TextEncoder();
@@ -42,20 +44,9 @@ export async function GET(req: NextRequest) {
         if (closed) return;
         try { controller.enqueue(encoder.encode(":hb\n\n")); } catch { /* closed */ }
       };
-      const later = (ms: number) => {
-        if (trailing || closed) return;
-        trailing = setTimeout(() => { trailing = null; push(); }, Math.max(1, ms));
-      };
-      // Room events fire every 50 ms tick; snapshots are computed at most
-      // once per FRAME_MS per viewer, and only the diff goes down the wire.
-      // Allow every 50 ms server tick through without timer jitter (49 ms -> +50 ms stall)
-      // while coalescing rapid bursts of actions within 35 ms.
-      const COALESCE_MS = Math.max(20, FRAME_MS - 15);
       const push = () => {
         if (closed) return;
         const t = Date.now();
-        if (t - computedAt < COALESCE_MS) { later(COALESCE_MS - (t - computedAt)); return; }
-        computedAt = t;
         const r = nextFrame(room, playerId, holds, t);
         if (!r) { send({ gone: true, now: t }); cleanup(); return; }
         if (r.frame) {
@@ -66,17 +57,26 @@ export async function GET(req: NextRequest) {
           clockAt = t;
           send({ now: r.snapNow });
         }
+        // Held slow values go out on the beat even if the room sleeps.
         const due = slowDueIn(room, playerId, t);
-        if (due > 0) later(due); // held slow values go out on the beat even if the room sleeps
+        if (due > 0 && !trailing) trailing = setTimeout(() => { trailing = null; push(); }, due);
       };
-      const unsub = onRoomEvent(code, push);
+      // A tick emits once per room, but an input between ticks also emits
+      // (markDirty). Several emits in one event-loop turn become one frame;
+      // nothing waits for a timer, so a frame leaves within the same turn.
+      const onEvent = () => {
+        if (scheduled || closed) return;
+        scheduled = true;
+        setImmediate(() => { scheduled = false; push(); });
+      };
+      const unsub = onRoomEvent(code, onEvent);
       const hb = setInterval(heartbeat, 15_000);
-      const tick = setInterval(push, 250); // presence heartbeat + clock between room events
+      const clock = setInterval(push, CLOCK_MS); // presence heartbeat + clock when the room is silent
       function cleanup() {
         if (closed) return;
         closed = true;
         clearInterval(hb);
-        clearInterval(tick);
+        clearInterval(clock);
         if (trailing) clearTimeout(trailing);
         unsub();
         try { controller.close(); } catch { /* already closed */ }

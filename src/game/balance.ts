@@ -9,7 +9,9 @@ export const CARRY_SPEED = 122; // carrying a repair kit
 export const CARRY_VIGOR_DRAIN = 0.045; // extra vigor drain per second while carrying
 
 // --- Tick & time ---
-export const TICK_MS = 50; // authoritative server tick (20/s)
+export const TICK_RATE = 60; // authoritative server ticks per second
+export const TICK_MS = 1000 / TICK_RATE; // one tick ≈ 16.7 ms; a state frame leaves right after each tick
+export const JOURNAL_CAP = 90 * TICK_RATE; // tick/presence entries kept for replay: ~90 s of ticks whatever the rate
 export const NIGHT_LENGTH_MS = 40 * 60_000; // one full night; drives the sky cycle (0=dusk, 1=deep night)
 export const TIME_VISIT_MS = 60_000; // how long a time-travel visit lasts
 export const HISTORY_SAMPLE_MS = 500; // snapshot sampling interval for the recorded night
@@ -41,6 +43,11 @@ export const CELL_HALF = 30; // cage cell half-width
 export const VISION_CREW = 420;
 export const VISION_HOLLOW = 620;
 export const VISION_BLACKOUT = 190;
+// Culling reach = vision + this. The darkness overlay fades to opaque only at
+// its rim, so a figure may be *partly* drawn out to the rim; and a wide window
+// shows more world than the vision circle covers. Anything inside this reach is
+// sent, everything outside is still invisible under the overlay.
+export const VISION_MARGIN = 220;
 
 // --- Vigor (stamina): work and deeds drain it; idling restores it ---
 export const STAMINA_WORK_DRAIN = 0.10; // per second while working a ward

@@ -8,11 +8,15 @@ import { rooms } from "./registry";
 import { captureHistory } from "./history";
 import { clampWorld, dropBuildingKeys, walkThroughBuildings } from "./buildings";
 import { stationNear } from "./proximity";
-import { CARRY_SPEED, CARRY_VIGOR_DRAIN, CART_HELPER_BONUS, CART_MAX_SPEED, CART_PUSH_RANGE, CART_SOLO_SPEED, CELL_HALF, GHOST_SPEED, INTERACT_RANGE, SPEED, STAMINA_IDLE_REGEN, STATIONS, TICK_MS, ix } from "./types";
+import { CARRY_SPEED, CARRY_VIGOR_DRAIN, CART_HELPER_BONUS, CART_MAX_SPEED, CART_PUSH_RANGE, CART_SOLO_SPEED, CELL_HALF, GHOST_SPEED, INTERACT_RANGE, SPEED, STAMINA_IDLE_REGEN, STATIONS, TICK_MS } from "./types";
 import type { Room } from "./engine";
 
 const dist = (a: number, b: number) => Math.abs(a - b);
-const g = globalThis as typeof globalThis & { __hollowLoop?: ReturnType<typeof setInterval> };
+// Sub-unit carry for the supply cart, kept per room object. A replay restores
+// into a *new* room object, so its carry starts at zero and replays stay
+// deterministic without the field being part of history or persistence.
+const cartCarry = new WeakMap<object, number>();
+const g = globalThis as typeof globalThis & { __hollowLoop?: boolean; __hollowTimer?: ReturnType<typeof setTimeout>; __hollowGrid?: number };
 
 // ---------------------------------------------------------------------------
 // Authoritative tick loop
@@ -68,7 +72,15 @@ export function tickRoom(room: Room, now: number) {
     room.cartPushers = team.length;
     const prevCartX = room.cartX;
     if (team.length) {
-      room.cartX = clampWorld(room.cartX + team[0].dir * ix(cartSpeed * dt), 90);
+      // World positions stay integers (the wire and the time-travel history both
+      // rely on it), so the fractional part of the cart's step carries over to the
+      // next tick instead of being lost: rounding the per-tick step to whole units
+      // made the cart's real speed depend on the tick rate.
+      const carry = cartCarry.get(room) ?? 0;
+      const want = carry + cartSpeed * dt;
+      const step = Math.trunc(want);
+      cartCarry.set(room, want - step);
+      if (step > 0) room.cartX = clampWorld(room.cartX + team[0].dir * step, 90);
     }
     const cartDelta = room.cartX - prevCartX;
 
@@ -159,17 +171,25 @@ export function tickRooms() {
   }
 }
 
-let tickAcc = 0;
-let lastTickWall = Date.now();
+/** Length of one server tick, for harnesses that drive the loop by hand. */
+export const TICK = TICK_MS;
+
+// Drift-corrected scheduler: one tick per slot on a fixed TICK_MS grid. Node
+// truncates timer delays to whole milliseconds, so a plain setInterval(TICK_MS)
+// at 60/s would run at 62.5/s, and a wall-clock accumulator on top of integer
+// timestamps double-ticks every few slots — a visible hitch for a client that
+// draws raw server positions. When the loop falls behind (GC, a slow request)
+// the missed slots run back-to-back; after a long stall the grid resets instead
+// of bursting more than ten ticks at once.
 export function tick() {
-  const wall = Date.now();
-  tickAcc += wall - lastTickWall;
-  lastTickWall = wall;
-  if (tickAcc > TICK_MS * 10) tickAcc = TICK_MS * 10; // a sleeping tab must not burst 10 ticks at once
-  while (tickAcc >= TICK_MS) {
-    tickAcc -= TICK_MS;
-    tickRooms();
-  }
+  tickRooms();
+}
+function scheduleTick() {
+  const now = Date.now();
+  if (g.__hollowGrid === undefined || g.__hollowGrid < now - TICK_MS * 10) g.__hollowGrid = now;
+  g.__hollowGrid += TICK_MS;
+  const delay = Math.max(0, g.__hollowGrid - now);
+  g.__hollowTimer = setTimeout(() => { tick(); scheduleTick(); }, delay);
 }
 
 /** Deterministic test harness: advances one room by a recorded server tick. */
@@ -179,6 +199,7 @@ export function advanceRoomForTest(room: Room, now: number) {
 }
 
 if (!g.__hollowLoop) {
-  g.__hollowLoop = setInterval(tick, TICK_MS);
+  g.__hollowLoop = true;
+  scheduleTick();
 }
 

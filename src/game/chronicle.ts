@@ -2,7 +2,7 @@
 // the persisted event log. record() writes to the DB (fire-and-forget).
 import { db } from "@/db";
 import { gameEvents } from "@/db/schema";
-import { BELL_X, type InputBody } from "./types";
+import { BELL_X, JOURNAL_CAP, type InputBody } from "./types";
 import { canonicalInput } from "./input";
 import { randomInt, randomUUID } from "node:crypto";
 import type { JournalEntry, P, Room } from "./engine";
@@ -14,10 +14,10 @@ export function journal(room: Room, kind: JournalEntry["kind"], at: number, play
   at = Math.max(at, room.journal.at(-1)?.at ?? at);
   const entry: JournalEntry = { seq: ++room.journalSeq, at, kind, seed: randomInt(1, 0x7fffffff), playerId, body: body ? canonicalInput(body) : undefined };
   room.journal.push(entry); room.activeSeed = entry.seed; room.activeEventId = String(entry.seq);
-  // Ticks (10–20/s) and presence heartbeats flood the chronicle; evict only those.
-  if (room.journal.length > 1500) {
+  // Ticks (TICK_RATE/s) and presence heartbeats flood the chronicle; evict only those.
+  if (room.journal.length > JOURNAL_CAP) {
     let i = 0;
-    while (room.journal.length > 1500 && i < room.journal.length) {
+    while (room.journal.length > JOURNAL_CAP && i < room.journal.length) {
       if (room.journal[i].kind === "tick" || room.journal[i].kind === "presence") room.journal.splice(i, 1);
       else i++;
     }

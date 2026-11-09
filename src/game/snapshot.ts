@@ -9,12 +9,40 @@ import { canRepair } from "./rules";
 import { wardView } from "./wards";
 import { snapshotEtag } from "./fingerprint";
 import {
-  BELL_X, CART_PUSH_RANGE, INTERACT_RANGE, NIGHT_LENGTH_MS, STATIONS, VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW, ix,
-  type Snapshot,
+  BELL_X, CART_PUSH_RANGE, INTERACT_RANGE, NIGHT_LENGTH_MS, STATIONS, VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW,
+  VISION_MARGIN, ix, type Snapshot,
 } from "./types";
 import type { Room } from "./engine";
 
 const dist = (a: number, b: number) => Math.abs(a - b);
+
+/** The arrow keeps its side until you have moved 12 units past the crossover, so it cannot flicker left/right while you stand beside the cart. */
+function cartSide(host: object, cartX: number, meX: number, d: number): number {
+  let m = hintMemory.get(host);
+  if (!m) { m = {}; hintMemory.set(host, m); }
+  const at = m.cartSideAt as number | undefined;
+  if (at === undefined || Math.abs(d - at) > 12) { m.cartSide = cartX < meX ? -1 : 1; m.cartSideAt = d; }
+  return (m.cartSide as number) ?? 1;
+}
+
+/**
+ * Hysteresis for proximity booleans: true once `d <= on`, and it stays true
+ * until `d > on + slack`. Purely presentational — kept out of the player record
+ * so history, persistence and replay never see it.
+ */
+const hintMemory = new WeakMap<object, Record<string, number | boolean>>();
+function sticky(host: object, key: string, d: number, on: number, slack: number): boolean {
+  let m = hintMemory.get(host);
+  if (!m) { m = {}; hintMemory.set(host, m); }
+  if (typeof m[key] === "boolean") {
+    const was = m[key] as boolean;
+    if (was ? d <= on + slack : d > on) return was; // still inside the slack band: keep the old answer
+  }
+  const now = d <= on;
+  m[key] = now;
+  if (now) m[key + "At"] = d;
+  return now;
+}
 
 // ---------------------------------------------------------------------------
 // Snapshot (per-viewer, roles hidden)
@@ -60,8 +88,15 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     const cageIdx = me.hasKey ? nearestOccupiedCage(room, me.x) : -1;
     const ward = room.pool.find((t) => !t.done && stationNear(me, t.id));
     const dropped = !me.inside && room.supplyDrops.some((item) => dist(item.x, me.x) < INTERACT_RANGE);
-    const atCart = !me.inside && dist(room.cartX, me.x) < INTERACT_RANGE;
-    const nearCart = !me.inside && dist(room.cartX, me.x) <= CART_PUSH_RANGE;
+    // Range hints stick until the player has clearly left the range. Without the
+    // slack, standing on the boundary flaps the text on and off several times a
+    // second — a glitch that never shows up in a single screenshot — and each
+    // flap was a stream frame plus a HUD rewrite.
+    const slack = 14;
+    const cartRange = sticky(me, "atCart", dist(room.cartX, me.x), INTERACT_RANGE, slack);
+    const pushRange = sticky(me, "nearCart", dist(room.cartX, me.x), CART_PUSH_RANGE, slack);
+    const atCart = !me.inside && cartRange;
+    const nearCart = !me.inside && pushRange;
     if (room.phase === "playing" && me.caged && ps.filter((p) => p.alive).every((p) => p.caged))
       hint = "E — call a vote to free someone";
     else if (cageIdx >= 0) hint = `E — unlock ${room.players.get(room.cages[cageIdx].occupant!)?.name}'s cage`;
@@ -82,7 +117,12 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
       else if (me.hasSupply) hint = "Hauling kit (slower) — G to drop";
       else if (nearCart) hint = "Hold Shift + A/D to push the cart";
       else if (room.pool.some((t) => !t.done && !t.delivered)) {
-        hint = `Supply cart ${room.cartX < me.x ? "←" : "→"} ${Math.round(dist(room.cartX, me.x))} steps`;
+        // The step count is bucketed and the arrow keeps its side until the cart
+        // has genuinely crossed over, so this line stops rewriting itself every
+        // tick while you walk towards it.
+        const d = dist(room.cartX, me.x);
+        const side = cartSide(me, room.cartX, me.x, d);
+        hint = `Supply cart ${side < 0 ? "←" : "→"} ${Math.min(9999, Math.round(d / 25) * 25)} steps`;
       }
     }
   }
@@ -121,7 +161,15 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     : blackout ? VISION_BLACKOUT
     : VISION_CREW;
   if (room.phase === "lobby" || room.phase === "ended") vision = 99999;
-  const canSee = (x: number) => ghostView || dist(x, me.x) <= vision;
+  // Everything the client can put on screen has to arrive. A wide window shows
+  // more world than the vision circle reaches, and the darkness overlay's own
+  // gradient is still partly transparent out to its edge, so culling at exactly
+  // `vision` made figures pop in and out at the rim — and on wide aspect ratios
+  // it deleted things sitting in the middle of the picture. `VISION_MARGIN`
+  // covers the gradient's visible tail plus a wide viewport; the overlay still
+  // hides it all, so nothing is revealed to an honest client.
+  const reach = ghostView ? Infinity : vision + VISION_MARGIN;
+  const canSee = (x: number) => ghostView || dist(x, me.x) <= reach;
 
   // proximity dread for the living crew — drives heartbeat / tension audio
   let danger = 0;
@@ -233,7 +281,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     flickerAt: room.flickerAt,
     blackoutUntil: room.blackoutUntil,
     danger: Math.round(danger * 100) / 100,
-    visionRadius: Math.min(vision, 9999),
+    visionRadius: Math.min(vision, 9999), // the darkness overlay radius; culling reach is larger by VISION_MARGIN
     hint,
     abilityLabel,
     abilityReady,

@@ -10,7 +10,13 @@ import "dotenv/config";
 const out = await build({ entryPoints: ["src/game/engine.ts"], bundle: true, write: false, platform: "node", format: "cjs", packages: "external" });
 const filename = `${process.cwd()}/scripts/.time-seeing-test.cjs`;
 const compiled = new Module(filename); compiled.filename = filename; compiled.paths = Module._nodeModulePaths(process.cwd()); compiled._compile(out.outputFiles[0].text, filename);
-const game = compiled.exports, realNow = Date.now; let clock = realNow(); Date.now = () => clock;
+const game = compiled.exports, realNow = Date.now;
+const TICK = game.TICK; // one server tick — never a hardcoded millisecond figure
+// Each `advance(room, n)` below means "n × 50 ms of night", matching the tick
+// grid the suites were written against; it now runs several real ticks per step
+// so the counts keep their meaning in both distance and wall time at any rate.
+const TICKS_PER_STEP = Math.max(1, Math.round(50 / TICK));
+let clock = realNow(); Date.now = () => clock;
 
 function create(prefix) {
   const ids = Array.from({ length: 4 }, () => crypto.randomUUID());
@@ -28,9 +34,9 @@ function create(prefix) {
   return { room, players, crew: players.slice(0, 3), hollow: players[3] };
 }
 function advance(room, count) {
-  for (let i = 0; i < count; i++) {
-    clock += 50;
-    if (i % 20 === 0) for (const player of room.players.values()) game.snapshot(room, player.id);
+  for (let i = 0; i < count * TICKS_PER_STEP; i++) {
+    clock += TICK;
+    if (i % TICKS_PER_STEP === 0) for (const player of room.players.values()) game.snapshot(room, player.id);
     game.advanceRoomForTest(room, clock);
   }
 }
