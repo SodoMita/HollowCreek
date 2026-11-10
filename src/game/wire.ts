@@ -17,6 +17,10 @@ import type { Snapshot } from "./types";
 export interface WireFrame {
   etag?: string;
   now: number;
+  /** Per-viewer monotonic frame number (1, 2, 3 …). A client that receives 7
+   *  then 9 knows the network dropped one, and can say so instead of being
+   *  smoothed over. Purely diagnostic: the client never reorders or replays. */
+  n?: number;
   snap?: Snapshot;
   delta?: Partial<Record<keyof Snapshot, unknown>>;
   patch?: {

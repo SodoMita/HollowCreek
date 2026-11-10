@@ -113,6 +113,8 @@ export interface PublicPlayer {
   id: string;
   name: string;
   color: string;
+  /** Integer world coordinate. Sent exactly as the server holds it: no
+   *  sub-pixel channel, no smoothing — a stutter must stay visible. */
   x: number;
   facing: number;
   moving: boolean;

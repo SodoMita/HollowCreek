@@ -16,6 +16,12 @@ import type { Room } from "./engine";
 
 const dist = (a: number, b: number) => Math.abs(a - b);
 
+// Indexed once instead of scanned per viewer per tick: snapshot() runs for every
+// open stream on every tick (TICK_RATE/s), and Array.find() over six buildings
+// times six doors plus a station scan per ward added up under load.
+const BUILDING_BY_ID = new Map(BUILDINGS.map((b) => [b.id, b]));
+const STATION_BY_ID = new Map(STATIONS.map((s) => [s.id, s]));
+
 /** The arrow keeps its side until you have moved 12 units past the crossover, so it cannot flicker left/right while you stand beside the cart. */
 function cartSide(host: object, cartX: number, meX: number, d: number): number {
   let m = hintMemory.get(host);
@@ -247,7 +253,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
       }),
     bodies: room.bodies.filter((b) => canSee(b.x)).map((b) => ({ x: b.x, color: b.color, name: b.name, id: b.id, at: b.at, inside: b.inside })),
     doors: room.doors.map((d) => {
-      const b = BUILDINGS.find((item) => item.id === d.id)!;
+      const b = BUILDING_BY_ID.get(d.id)!;
       const visible = canSee(doorX(b));
       const owner = d.holder ? room.players.get(d.holder) : null;
       return { id: d.id, locked: visible ? d.locked : true, open: visible && d.open,
@@ -265,7 +271,7 @@ export function snapshot(room: Room, playerId: string): Snapshot | null {
     cartPushers: room.cartPushers,
     cages: room.cages.map((c) => ({ x: c.x, occupant: c.occupant })),
     tasks: room.pool.map((t) => {
-      const st = STATIONS.find((s) => s.id === t.id)!;
+      const st = STATION_BY_ID.get(t.id)!;
       return { id: t.id, name: st.name, x: st.x, inside: st.inside, done: t.done, delivered: t.delivered, sabotaged: t.sabotaged, progress: Math.round(t.progress * 100) / 100 };
     }),
     minigame,

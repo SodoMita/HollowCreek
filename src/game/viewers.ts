@@ -15,6 +15,7 @@ interface ViewerState {
   slowAt: number; // last time a frame carrying slow values went out
   sentAt: number; // last time any frame went out
   slowPending: boolean; // true only when a slow-only diff was held back
+  frames: number; // frames handed to this viewer, for the wire's `n` gap counter
 }
 
 const store = new WeakMap<Room, Map<string, ViewerState>>();
@@ -43,8 +44,9 @@ export function nextFrame(room: Room, playerId: string, holdsEtag: string | null
   const m = states(room);
   const prev = m.get(playerId);
   if (!prev || holdsEtag !== prev.view.etag) {
-    m.set(playerId, { view: encodeView(snap, etag), slowAt: now, sentAt: now, slowPending: false });
-    return { frame: { etag, now: snap.now, snap }, snapNow: snap.now };
+    const state: ViewerState = { view: encodeView(snap, etag), slowAt: now, sentAt: now, slowPending: false, frames: 1 };
+    m.set(playerId, state);
+    return { frame: { etag, now: snap.now, n: 1, snap }, snapNow: snap.now };
   }
   if (etag === prev.view.etag) {
     prev.slowPending = false;
@@ -61,12 +63,12 @@ export function nextFrame(room: Room, playerId: string, holdsEtag: string | null
     prev.slowPending = true;
     return { frame: null, snapNow: snap.now };
   }
-  const frame: WireFrame = { etag, now: snap.now };
+  const frame: WireFrame = { etag, now: snap.now, n: prev.frames + 1 };
   if (Object.keys(d.delta).length) frame.delta = d.delta;
   if (Object.keys(d.patch).length) frame.patch = d.patch;
   // Did this frame carry slow values? Then the beat restarts; fast-only frames leave it alone.
   const carriedSlow = !d.fast || Object.keys(d.delta).some((k) => k === "nightT" || k === "time" || k === "danger") || !!d.patch.self || !!d.patch.tasks;
-  m.set(playerId, { view: next, slowAt: carriedSlow ? now : prev.slowAt, sentAt: now, slowPending: false });
+  m.set(playerId, { view: next, slowAt: carriedSlow ? now : prev.slowAt, sentAt: now, slowPending: false, frames: prev.frames + 1 });
   return { frame, snapNow: snap.now };
 }
 

@@ -97,6 +97,8 @@ const displayX = new Map<string, number>();
 const net = {
   rttMs: 0, frames: 0, posFrames: 0, bytes: 0, lastPosAt: 0, gaps: [] as number[], dropped: 0, retried: 0,
   windowAt: 0, framesPerSec: 0, posPerSec: 0, bytesPerSec: 0, renderFrames: 0, fps: 0, inputAt: 0, inputToMoveMs: 0, selfX: NaN,
+  wireSeq: 0, wireGaps: 0, wireLost: 0, // frames the network actually dropped (server `n` vs received)
+  lastPosFrameAt: 0, worstPosGapMs: 0,
 };
 const showNet = params.get("net") === "1";
 let held: Snapshot | null = null; // what the server thinks we hold (deltas merge into it)
@@ -319,6 +321,7 @@ function enterRoom(code: string) {
   held = null; heldRev = ""; fastSelf = null;
   displayX.clear();
   net.frames = 0; net.posFrames = 0; net.bytes = 0; net.lastPosAt = 0; net.gaps.length = 0; net.dropped = 0; net.retried = 0;
+  net.wireSeq = 0; net.wireGaps = 0; net.wireLost = 0; net.worstPosGapMs = 0;
   lastHudAt = 0; lastAudioAt = 0;
   snap = null;
   wardPanel.update(null, 1, false);
@@ -404,10 +407,24 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
     fastSelf = null;
   }
 
+  // Diagnostic sequence from the server: 7 then 9 means the network dropped one.
+  // A lower number than we hold is a fresh connection (counter restart), not loss.
+  if (typeof frame.n === "number") {
+    if (frame.n > net.wireSeq + 1 && net.wireSeq > 0) {
+      net.wireGaps++;
+      net.wireLost += frame.n - net.wireSeq - 1;
+    }
+    net.wireSeq = frame.n;
+  }
+
   // Measure the wire: every frame, and the gaps between frames that carried a position.
   net.frames++;
   if (frameTouchesPlayers(frame)) {
-    if (net.lastPosAt) { net.gaps.push(now - net.lastPosAt); if (net.gaps.length > 240) net.gaps.shift(); }
+    if (net.lastPosAt) {
+      const gap = now - net.lastPosAt;
+      net.gaps.push(gap); if (net.gaps.length > 240) net.gaps.shift();
+      if (gap > net.worstPosGapMs) net.worstPosGapMs = gap;
+    }
     net.lastPosAt = now;
     net.posFrames++;
     const meNow = s.players.find((p) => p.id === s.self.id)?.x ?? NaN;
@@ -848,6 +865,7 @@ function updateNetReadout(nowMs: number) {
     `wire   ${net.framesPerSec.toFixed(1)} frames/s · ${net.posPerSec.toFixed(1)} pos/s · ${(net.bytesPerSec / 1024).toFixed(1)} KB/s · ${eventSource ? "sse" : "poll"}\n` +
     `gap    p50 ${q(0.5)} · p90 ${q(0.9)} · max ${q(1)} ms between position frames\n` +
     `input  rtt ${net.rttMs.toFixed(0)} ms · key→move ${net.inputToMoveMs ? net.inputToMoveMs.toFixed(0) : "–"} ms · retried ${net.retried}\n` +
+    `lost   ${net.wireLost} state frames in ${net.wireGaps} gaps · worst position gap ${net.worstPosGapMs.toFixed(0)} ms\n` +
     `draw   ${net.fps.toFixed(0)} fps · ${snap?.players.length ?? 0} souls visible · no prediction, no interpolation`;
 }
 requestAnimationFrame(loop);

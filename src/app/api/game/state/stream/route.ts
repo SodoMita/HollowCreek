@@ -47,6 +47,14 @@ export async function GET(req: NextRequest) {
       };
       const push = (flush = false) => {
         if (closed) return;
+        // A viewer that has stopped reading (a backgrounded tab, a stalled
+        // proxy) must not make the server queue deltas it will never drain: that
+        // grows memory and, worse, would hand the client a backlog of stale
+        // positions. Skip this turn entirely and let the next one send the
+        // accumulated diff — the server-side "what the client holds" cursor is
+        // only advanced when a frame is actually enqueued.
+        const backpressure = (controller.desiredSize ?? 0) <= 0;
+        if (backpressure && !flush) return;
         const t = Date.now();
         const r = nextFrame(room, playerId, holds, t, flush);
         if (!r) { send({ gone: true, now: t }); cleanup(); return; }

@@ -4,15 +4,27 @@ import { db } from "@/db";
 import { gameEvents } from "@/db/schema";
 import { BELL_X, JOURNAL_CAP, type InputBody } from "./types";
 import { canonicalInput } from "./input";
-import { randomInt, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { JournalEntry, P, Room } from "./engine";
 
 export const roomNow = (room: Room) => room.replaying ? (room.replayNow ?? 0) : Math.max(Date.now(), room.journal.at(-1)?.at ?? 0);
 const observedTypes = ["pickup_key", "supply_taken", "supply_recovered", "supply_delivered", "task_complete", "ward_ruined", "kill", "door_action", "unlock_cage", "chat", "timepiece_taken", "pin_note"];
+
+// Journal seeds only have to be unpredictable enough to make events feel varied;
+// they are *recorded*, so replays use the stored number either way. crypto's
+// randomInt() at TICK_RATE per room was a measurable per-tick cost on the same
+// thread that paces the tick grid, so use a cheap xorshift instead. The stored
+// seed still makes every replay byte-identical.
+let journalSeed = (Date.now() ^ 0x9e3779b9) | 0 || 1;
+function nextJournalSeed(): number {
+  journalSeed ^= journalSeed << 13; journalSeed ^= journalSeed >>> 17; journalSeed ^= journalSeed << 5;
+  return (journalSeed >>> 0) % 0x7ffffffe + 1;
+}
+
 export function journal(room: Room, kind: JournalEntry["kind"], at: number, playerId?: string, body?: InputBody): JournalEntry {
   // Wall clocks can move backwards; journal order must not.
   at = Math.max(at, room.journal.at(-1)?.at ?? at);
-  const entry: JournalEntry = { seq: ++room.journalSeq, at, kind, seed: randomInt(1, 0x7fffffff), playerId, body: body ? canonicalInput(body) : undefined };
+  const entry: JournalEntry = { seq: ++room.journalSeq, at, kind, seed: nextJournalSeed(), playerId, body: body ? canonicalInput(body) : undefined };
   room.journal.push(entry); room.activeSeed = entry.seed; room.activeEventId = String(entry.seq);
   // Ticks (TICK_RATE/s) and presence heartbeats flood the chronicle; evict only those.
   if (room.journal.length > JOURNAL_CAP) {
