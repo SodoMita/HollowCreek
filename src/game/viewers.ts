@@ -14,6 +14,7 @@ interface ViewerState {
   view: EncodedView;
   slowAt: number; // last time a frame carrying slow values went out
   sentAt: number; // last time any frame went out
+  slowPending: boolean; // true only when a slow-only diff was held back
 }
 
 const store = new WeakMap<Room, Map<string, ViewerState>>();
@@ -42,27 +43,37 @@ export function nextFrame(room: Room, playerId: string, holdsEtag: string | null
   const m = states(room);
   const prev = m.get(playerId);
   if (!prev || holdsEtag !== prev.view.etag) {
-    m.set(playerId, { view: encodeView(snap, etag), slowAt: now, sentAt: now });
+    m.set(playerId, { view: encodeView(snap, etag), slowAt: now, sentAt: now, slowPending: false });
     return { frame: { etag, now: snap.now, snap }, snapNow: snap.now };
   }
-  if (etag === prev.view.etag) return { frame: null, snapNow: snap.now };
+  if (etag === prev.view.etag) {
+    prev.slowPending = false;
+    return { frame: null, snapNow: snap.now };
+  }
   const next = encodeView(snap, etag);
   const d = diffView(prev.view, next);
-  if (!d.any) { prev.view = next; return { frame: null, snapNow: snap.now }; }
-  if (!d.fast && !flush && now - prev.slowAt < SLOW_MS) return { frame: null, snapNow: snap.now };
+  if (!d.any) {
+    prev.view = next;
+    prev.slowPending = false;
+    return { frame: null, snapNow: snap.now };
+  }
+  if (!d.fast && !flush && now - prev.slowAt < SLOW_MS) {
+    prev.slowPending = true;
+    return { frame: null, snapNow: snap.now };
+  }
   const frame: WireFrame = { etag, now: snap.now };
   if (Object.keys(d.delta).length) frame.delta = d.delta;
   if (Object.keys(d.patch).length) frame.patch = d.patch;
   // Did this frame carry slow values? Then the beat restarts; fast-only frames leave it alone.
   const carriedSlow = !d.fast || Object.keys(d.delta).some((k) => k === "nightT" || k === "time" || k === "danger") || !!d.patch.self || !!d.patch.tasks;
-  m.set(playerId, { view: next, slowAt: carriedSlow ? now : prev.slowAt, sentAt: now });
+  m.set(playerId, { view: next, slowAt: carriedSlow ? now : prev.slowAt, sentAt: now, slowPending: false });
   return { frame, snapNow: snap.now };
 }
 
-/** Milliseconds until the held slow values may go out (0 when nothing is held). */
+/** Milliseconds until held slow values may go out (0 when nothing slow is pending). */
 export function slowDueIn(room: Room, playerId: string, now: number): number {
   const s = states(room).get(playerId);
-  return s ? Math.max(0, SLOW_MS - (now - s.slowAt)) : 0;
+  return s && s.slowPending ? Math.max(1, SLOW_MS - (now - s.slowAt)) : 0;
 }
 
 /**

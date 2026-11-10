@@ -1,6 +1,6 @@
 // Authoritative tick loop: advances every live room, emits change events for
 // SSE, and GCs dead rooms. Time-travel reconciliation is injected via hooks.
-import { emitRoom, feed, journal, roomNow, seeded } from "./chronicle";
+import { emitRoom, feed, journal, markDirty, roomNow, seeded } from "./chronicle";
 import { endTimeVisit, pastRoom, reconcileFuture } from "./time-travel";
 import { dropKey, dropSupply, dropTimepiece, resolveMeeting } from "./rules";
 import { leaveRoom } from "./actions";
@@ -44,6 +44,7 @@ export function tickRoom(room: Room, now: number) {
         const next = [...room.players.values()].sort((a, b) => b.joinedAt - a.joinedAt)[0];
         next.isHost = true;
         feed(room, `${next.name} now holds the town lantern (host).`);
+        markDirty(room);
       }
       // hand the lantern to someone present if the host went stale
       if (host && now - host.lastSeen > 12000) {
@@ -54,6 +55,7 @@ export function tickRoom(room: Room, now: number) {
           host.isHost = false;
           fresh.isHost = true;
           feed(room, `${fresh.name} now holds the town lantern (host).`);
+          markDirty(room);
         }
       }
       return;
@@ -181,13 +183,19 @@ export function tickRoom(room: Room, now: number) {
     captureHistory(room, now);
 }
 
+let idleTickCount = 0;
 export function tickRooms() {
+  const runIdle = idleTickCount++ % 12 === 0;
   for (const room of rooms.values()) {
+    const active = room.phase === "playing" || room.phase === "meeting";
+    if (!active && !room.timeVisit && !runIdle) continue;
     const now = roomNow(room);
-    if (room.phase === "playing" || room.phase === "meeting") journal(room, "tick", now);
+    if (active) journal(room, "tick", now);
     tickRoom(room, now);
-    room.rev++;
-    emitRoom(room.code);
+    if (active) {
+      room.rev++;
+      emitRoom(room.code);
+    }
   }
 }
 

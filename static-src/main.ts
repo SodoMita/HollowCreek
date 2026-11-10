@@ -100,6 +100,8 @@ const net = {
 };
 const showNet = params.get("net") === "1";
 let held: Snapshot | null = null; // what the server thinks we hold (deltas merge into it)
+let fastSelf: { at: number; x: number; recvMs: number } | null = null; // latest authoritative x from HTTP input response while SSE catches up
+let streamWatchdog: ReturnType<typeof setTimeout> | null = null;
 let lastPollAt = 0;
 let lastHudAt = 0;
 let lastAudioAt = 0;
@@ -179,20 +181,14 @@ async function send(payload: Record<string, unknown>): Promise<boolean> {
     // answers apply, and only while we are still in the room we sent from.
     const heldSnap = snap;
     if (d && d.ok && !d.stale && typeof d.x === "number" && heldSnap && heldSnap.self.id === getPid()) {
-      // Only apply the HTTP response's authoritative position when it is at least
-      // as fresh as the latest snapshot from the stream; otherwise a slower HTTP
-      // reply could step the soul backward behind an already-applied SSE tick.
-      if (typeof d.at !== "number" || d.at >= heldSnap.now) {
-        if (typeof d.at === "number") heldSnap.now = d.at;
-        const me = heldSnap.players.find((p) => p.id === heldSnap.self.id);
-        if (me) {
-          me.x = d.x;
-          if (typeof d.facing === "number") me.facing = d.facing;
-          if (d.inside !== undefined) me.inside = d.inside;
-          displayX.set(me.id, d.x);
-          net.selfX = d.x;
-          net.inputToMoveMs = performance.now() - sentAt;
-        }
+      // Keep wire `held` untouched so `applyFrame` / `etag` stay exact; stash the
+      // HTTP response's authoritative `x` separately until a newer stream tick passes `d.at`.
+      const at = typeof d.at === "number" ? d.at : heldSnap.now;
+      if (at >= heldSnap.now && (!fastSelf || at >= fastSelf.at)) {
+        fastSelf = { at, x: d.x, recvMs: performance.now() };
+        displayX.set(heldSnap.self.id, d.x);
+        net.selfX = d.x;
+        net.inputToMoveMs = performance.now() - sentAt;
       }
     }
     return true;
@@ -310,6 +306,7 @@ async function refreshRooms() {
 // ---------------------------------------------------------------- room ----
 function stopStream() {
   streamEpoch++;
+  if (streamWatchdog) { clearTimeout(streamWatchdog); streamWatchdog = null; }
   if (eventSource) { eventSource.close(); eventSource = null; }
   if (pollAbort) { pollAbort.abort(); pollAbort = null; }
 }
@@ -319,7 +316,7 @@ function enterRoom(code: string) {
   cancelProbe();
   stopStream();
   roomCode = code;
-  held = null; heldRev = "";
+  held = null; heldRev = ""; fastSelf = null;
   displayX.clear();
   net.frames = 0; net.posFrames = 0; net.bytes = 0; net.lastPosAt = 0; net.gaps.length = 0; net.dropped = 0; net.retried = 0;
   lastHudAt = 0; lastAudioAt = 0;
@@ -353,7 +350,7 @@ function leaveToMenu() {
         catch { /* still return to the menu */ }
       }).finally(() => { if ($("menu").style.display !== "none") void refreshRooms(); });
   }
-  snap = null; roomCode = ""; hud.invalidateOverlay(); roomError = ""; pollFailures = 0; held = null; heldRev = ""; lowerGlass();
+  snap = null; roomCode = ""; hud.invalidateOverlay(); roomError = ""; pollFailures = 0; held = null; heldRev = ""; fastSelf = null; lowerGlass();
   lastHudAt = 0; lastAudioAt = 0;
   displayX.clear();
   wardPanel.update(null, 1, false);
@@ -403,6 +400,9 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
   lastPollAt = now;
   held = s;
   heldRev = frame.etag ?? heldRev;
+  if (fastSelf && (s.now > fastSelf.at || now - fastSelf.recvMs > 250)) {
+    fastSelf = null;
+  }
 
   // Measure the wire: every frame, and the gaps between frames that carried a position.
   net.frames++;
@@ -446,30 +446,37 @@ function startStream(code: string) {
   let gotFrame = false;
   const es = new EventSource(`${server}/api/game/state/stream?code=${code}&playerId=${encodeURIComponent(getPid())}`);
   eventSource = es;
+  const switchToPoll = () => {
+    if (myEpoch !== streamEpoch || code !== roomCode) return;
+    if (streamWatchdog) { clearTimeout(streamWatchdog); streamWatchdog = null; }
+    es.close();
+    if (eventSource === es) eventSource = null;
+    void pollLoop(code, myEpoch);
+  };
+  const armWatchdog = (ms: number) => {
+    if (streamWatchdog) clearTimeout(streamWatchdog);
+    // Server emits frames or `{now}` every <=1000 ms; if a buffering proxy holds
+    // the connection open with silence, fall back cleanly instead of hanging.
+    streamWatchdog = setTimeout(switchToPoll, ms);
+  };
+  armWatchdog(3500);
   es.onmessage = (ev) => {
     if (myEpoch !== streamEpoch || code !== roomCode) { es.close(); return; }
     gotFrame = true;
+    armWatchdog(3500);
     net.bytes += ev.data.length;
     try { ingestFrame(JSON.parse(ev.data) as WireFrame & { error?: string }); } catch { /* ignore bad frame */ }
   };
   es.onerror = () => {
     if (myEpoch !== streamEpoch || code !== roomCode) { es.close(); return; }
-    // Two failures before the first frame, or repeated drops afterwards, fall
-    // back to the long-poll — but the fallback is temporary. A proxy that
-    // buffers SSE for a few seconds must not condemn the client to a third of
-    // the position rate for the rest of the match, so we keep re-arming the
-    // long-poll and probing for the stream again.
-    if (!gotFrame || ++pollFailures >= 2) {
-      es.close();
-      if (eventSource === es) eventSource = null;
-      void pollLoop(code, myEpoch);
-    }
+    if (!gotFrame || ++pollFailures >= 2) switchToPoll();
   };
 }
 
 /** Zero-gap continuous long-poll fallback when SSE is unavailable. */
 async function pollLoop(code: string, myEpoch: number) {
   let probeAt = performance.now() + 8000; // try SSE again after 8s of polling
+  let backoffMs = 200;
   while (myEpoch === streamEpoch && code === roomCode) {
     if (typeof EventSource !== "undefined" && performance.now() >= probeAt) {
       probeAt = performance.now() + 15_000;
@@ -490,23 +497,27 @@ async function pollLoop(code: string, myEpoch: number) {
         lastPollAt = now;
         if (snap) hud.renderCountdowns(snap);
         pollFailures = 0;
+        backoffMs = 200;
         continue;
       }
       if (!res.ok) {
         if (++pollFailures >= 5) showRoomError("The town server is not answering. Retrying…");
-        await new Promise((r) => setTimeout(r, 300));
+        await new Promise((r) => setTimeout(r, backoffMs));
+        backoffMs = Math.min(3200, backoffMs * 2);
         continue;
       }
       const text = await res.text();
       net.bytes += text.length;
       const frame = JSON.parse(text) as WireFrame & { error?: string };
       if (myEpoch !== streamEpoch || code !== roomCode) return;
+      backoffMs = 200;
       ingestFrame(frame);
     } catch {
       clearTimeout(timer);
       if (myEpoch !== streamEpoch || code !== roomCode) return;
       if (++pollFailures >= 5) showRoomError("The town server is not answering. Retrying…");
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise((r) => setTimeout(r, backoffMs));
+      backoffMs = Math.min(3200, backoffMs * 2);
     }
   }
 }
@@ -804,7 +815,13 @@ function loop(nowMs: number) {
   last = nowMs;
   if (!snap || !gameVisible) return;
   // Raw server positions, nothing invented between frames.
-  for (const p of snap.players) displayX.set(p.id, p.x);
+  for (const p of snap.players) {
+    if (fastSelf && p.id === snap.self.id && snap.now <= fastSelf.at && nowMs - fastSelf.recvMs <= 250) {
+      displayX.set(p.id, fastSelf.x);
+    } else {
+      displayX.set(p.id, p.x);
+    }
+  }
   renderer.setFocus(noteFocusX);
   renderer.render(ctx, viewW, viewH, snap, displayX, nowMs / 1000, dt);
   net.renderFrames++;

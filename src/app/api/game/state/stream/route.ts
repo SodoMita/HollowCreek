@@ -31,6 +31,7 @@ export async function GET(req: NextRequest) {
   let scheduled = false;
   let trailing: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
+  let closeStream: (() => void) | null = null;
   const encoder = new TextEncoder();
   const CLOCK_MS = 1000;
 
@@ -44,10 +45,10 @@ export async function GET(req: NextRequest) {
         if (closed) return;
         try { controller.enqueue(encoder.encode(":hb\n\n")); } catch { /* closed */ }
       };
-      const push = () => {
+      const push = (flush = false) => {
         if (closed) return;
         const t = Date.now();
-        const r = nextFrame(room, playerId, holds, t);
+        const r = nextFrame(room, playerId, holds, t, flush);
         if (!r) { send({ gone: true, now: t }); cleanup(); return; }
         if (r.frame) {
           holds = r.frame.etag ?? holds;
@@ -59,7 +60,7 @@ export async function GET(req: NextRequest) {
         }
         // Held slow values go out on the beat even if the room sleeps.
         const due = slowDueIn(room, playerId, t);
-        if (due > 0 && !trailing) trailing = setTimeout(() => { trailing = null; push(); }, due);
+        if (due > 0 && !trailing) trailing = setTimeout(() => { trailing = null; push(true); }, due);
       };
       // A tick emits once per room, but an input between ticks also emits
       // (markDirty). Batch multiple emits in one call stack into a single
@@ -71,20 +72,22 @@ export async function GET(req: NextRequest) {
       };
       const unsub = onRoomEvent(code, onEvent);
       const hb = setInterval(heartbeat, 15_000);
-      const clock = setInterval(push, CLOCK_MS); // presence heartbeat + clock when the room is silent
+      const clock = setInterval(() => push(), CLOCK_MS); // presence heartbeat + clock when the room is silent
       function cleanup() {
         if (closed) return;
         closed = true;
         clearInterval(hb);
         clearInterval(clock);
-        if (trailing) clearTimeout(trailing);
+        if (trailing) { clearTimeout(trailing); trailing = null; }
         unsub();
+        req.signal.removeEventListener("abort", cleanup);
         try { controller.close(); } catch { /* already closed */ }
       }
+      closeStream = cleanup;
       req.signal.addEventListener("abort", cleanup);
       push(); // initial full snapshot immediately
     },
-    cancel() { closed = true; },
+    cancel() { closeStream?.(); closed = true; },
   });
 
   return new Response(stream, {
