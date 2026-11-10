@@ -191,24 +191,21 @@ export function tickRooms() {
   }
 }
 
-let nextTickWall = typeof performance !== "undefined" ? performance.now() + TICK_MS : Date.now() + TICK_MS;
 export function tick() {
-  const nowWall = typeof performance !== "undefined" ? performance.now() : Date.now();
-  if (nowWall - nextTickWall > TICK_MS * 10) nextTickWall = nowWall - TICK_MS * 10;
-  let ran = 0;
-  // Never run physics multiple milliseconds early: preserve the actual monotonic cadence.
-  while (nowWall >= nextTickWall - 0.25 && ran < 10) {
-    nextTickWall += TICK_MS;
-    tickRooms();
-    ran++;
-  }
+  tickRooms();
 }
 
-function scheduleLoop() {
-  tick();
-  const nowWall = typeof performance !== "undefined" ? performance.now() : Date.now();
-  const wait = Math.max(1, Math.ceil(nextTickWall - nowWall));
-  g.__hollowLoop = setTimeout(scheduleLoop, wait);
+let tickGrid = typeof performance !== "undefined" ? performance.now() : Date.now();
+
+function scheduleTick() {
+  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+  if (tickGrid < now - TICK_MS * 10) tickGrid = now;
+  tickGrid += TICK_MS;
+  const delay = Math.max(1, Math.round(tickGrid - now));
+  g.__hollowLoop = setTimeout(() => {
+    tick();
+    scheduleTick();
+  }, delay);
 }
 
 /** Deterministic test harness: advances one room by a recorded server tick. */
@@ -218,6 +215,7 @@ export function advanceRoomForTest(room: Room, now: number) {
 }
 
 if (!g.__hollowLoop) {
-  g.__hollowLoop = setTimeout(scheduleLoop, TICK_MS);
+  g.__hollowLoop = true as unknown as ReturnType<typeof setTimeout>;
+  scheduleTick();
 }
 

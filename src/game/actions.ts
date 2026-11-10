@@ -72,6 +72,7 @@ export function joinRoom(code: string, playerId: string, rawName: string): { ok:
   const existing = room.players.get(playerId);
   if (existing) {
     existing.lastSeen = now;
+    existing.steerSeq = 0;
     if (!room.replaying && room.phase !== "lobby" && room.phase !== "ended" && now - (existing.lastPresenceAt ?? 0) > 30_000) {
       existing.lastPresenceAt = now;
       journal(room, "presence", now, existing.id);
@@ -387,25 +388,30 @@ export function restartGame(room: Room, playerId: string): { ok: boolean; error?
 // Input — clients send ONLY intent, never positions
 // ---------------------------------------------------------------------------
 
-export function handleInput(room: Room, body: InputBody): { ok: boolean; error?: string } {
+export function handleInput(room: Room, body: InputBody): { ok: boolean; error?: string; stale?: boolean } {
   const player = room.players.get(body.playerId);
   if (!player) return { ok: false, error: "Unknown soul." };
   if (body.dir !== undefined && (typeof body.dir !== "number" || !Number.isFinite(body.dir))) return { ok: false, error: "Invalid direction." };
+  let isStale = false;
   if (!room.replaying && !room.temporalShadow && body.seq !== undefined) {
     if (!Number.isSafeInteger(body.seq) || body.seq < 0) return { ok: false, error: "Invalid steering sequence." };
     if (body.seq <= (player.steerSeq ?? 0)) {
+      isStale = true;
       // Do not journal discarded steering: replay strips seq and would resurrect it.
-      if (!body.action && !body.chat) return { ok: true };
+      if (!body.action && !body.chat) return { ok: true, stale: true };
       const actionOnly = { ...body };
       delete actionOnly.dir; delete actionOnly.cartHeld; delete actionOnly.interactHeld;
       body = actionOnly;
-    } else player.steerSeq = body.seq;
+    } else {
+      player.steerSeq = body.seq;
+    }
   }
   const res = applyInput(room, body);
   if (res.ok && !room.replaying && !room.temporalShadow && (body.action || body.chat)) {
     room.rev++;
     emitRoom(room.code);
   }
+  if (isStale && res.ok) return { ...res, stale: true };
   return res;
 }
 

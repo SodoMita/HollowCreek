@@ -8,6 +8,8 @@ interface Options {
   rtt: (ms: number) => void;
   error: (text: string) => void;
   failed: () => void;
+  ack?: (data: Record<string, unknown>) => void;
+  initialSeq?: () => number;
   fetcher?: typeof fetch;
 }
 export class InputTransport {
@@ -16,10 +18,12 @@ export class InputTransport {
   private newestSteer = 0;
   private state: SteeringState = { dir: 0, cartHeld: false, interactHeld: false };
   private pending = new Map<number, AbortController>();
-  constructor(private options: Options) {}
+  constructor(private options: Options) {
+    this.sequence = options.initialSeq?.() ?? 0;
+  }
   get lastSequence(): number { return this.sequence; }
   reset() {
-    this.epoch++; this.sequence = 0; this.newestSteer = 0;
+    this.epoch++; this.sequence = this.options.initialSeq?.() ?? 0; this.newestSteer = 0;
     this.state = { dir: 0, cartHeld: false, interactHeld: false };
     for (const ctl of this.pending.values()) ctl.abort();
     this.pending.clear();
@@ -66,7 +70,13 @@ export class InputTransport {
         const text = await res.text();
         if (!current()) return;
         this.options.rtt(performance.now() - started);
-        if (res.ok) return;
+        if (res.ok) {
+          try {
+            const data = JSON.parse(text);
+            if (data && data.ok) this.options.ack?.(data);
+          } catch { /* ignore non-JSON ok bodies */ }
+          return;
+        }
         if (steering && (res.status === 429 || res.status >= 500)) retry = true;
         else {
           let message = "The input could not be delivered.";

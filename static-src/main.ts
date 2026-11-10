@@ -173,6 +173,21 @@ const inputTransport = new InputTransport({
   rtt: (ms) => { netStats.rttMs = netStats.rttMs * 0.7 + ms * 0.3; },
   error: toast,
   failed: () => { netStats.droppedInputs++; },
+  initialSeq: () => (Date.now() & 0x1fffffff) * 100,
+  ack: (d) => {
+    const s = snap;
+    if (!s || d.stale) return;
+    const me = s.players.find((p) => p.id === s.self.id);
+    if (!me) return;
+    if (typeof d.at !== "number" || d.at >= s.now) {
+      if (typeof d.at === "number") s.now = d.at;
+      if (typeof d.x === "number") me.x = d.x;
+      if (typeof d.drawX === "number") me.drawX = d.drawX;
+      if (typeof d.facing === "number") me.facing = d.facing;
+      if (d.inside !== undefined) me.inside = d.inside as string | null;
+      displayX.set(me.id, (me.drawX ?? me.x));
+    }
+  },
 });
 function flushSteer() {
   // Wait for the initial authoritative sequence high-water mark, not a guessed local seed.
