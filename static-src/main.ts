@@ -181,11 +181,19 @@ const inputTransport = new InputTransport({
     if (!me) return;
     if (typeof d.at !== "number" || d.at >= s.now) {
       if (typeof d.at === "number") s.now = d.at;
-      if (typeof d.x === "number") me.x = d.x;
-      if (typeof d.drawX === "number") me.drawX = d.drawX;
       if (typeof d.facing === "number") me.facing = d.facing;
       if (d.inside !== undefined) me.inside = d.inside as string | null;
-      displayX.set(me.id, (me.drawX ?? me.x));
+      // Never snap backward in the opposite direction of active travel from an earlier input response
+      const newX = typeof d.drawX === "number" ? d.drawX : d.x;
+      if (typeof newX === "number") {
+        const cur = displayX.get(me.id) ?? me.x;
+        const forward = (me.facing > 0 && newX >= cur) || (me.facing < 0 && newX <= cur) || !me.moving;
+        if (forward) {
+          if (typeof d.x === "number") me.x = d.x;
+          if (typeof d.drawX === "number") me.drawX = d.drawX;
+          displayX.set(me.id, newX);
+        }
+      }
     }
   },
 });
@@ -402,7 +410,6 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
     }
     netStats.lastPosAt = now;
   }
-  for (const p of s.players) displayX.set(p.id, p.drawX ?? p.x);
   if (displayX.size > s.players.length) {
     for (const id of displayX.keys()) if (!s.players.some((p) => p.id === id)) displayX.delete(id);
   }
@@ -831,6 +838,9 @@ function loop(nowMs: number) {
   const dt = Math.min(0.05, (nowMs - last) / 1000);
   last = nowMs;
   if (!snap || !gameVisible) return;
+  for (const p of snap.players) {
+    displayX.set(p.id, p.drawX ?? p.x);
+  }
   if (hudDirty && nowMs - lastHudAt >= 80) {
     hudDirty = false;
     lastHudAt = nowMs;

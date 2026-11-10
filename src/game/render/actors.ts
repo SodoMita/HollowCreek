@@ -112,7 +112,10 @@ export function drawFigure(
   facing: number, moving: boolean, ghost: boolean, redEyes: boolean,
   stride: number, breathClock: number, worldSeed: number, bobAllowed: boolean, serverPose?: number,
 ) {
-  const bob = bobAllowed && !moving ? Math.sin(breathClock * 1.7 + worldSeed) * 0.35 : 0;
+  const gaitCycle = serverPose ? ((serverPose - 1) / 32) * Math.PI * 2 : stride;
+  const bob = bobAllowed
+    ? (moving ? -Math.abs(Math.sin(gaitCycle)) * 1.6 : Math.sin(breathClock * 1.7 + worldSeed) * 0.35)
+    : 0;
   // Multiplayer poses come straight from the server. Only the offline tutorial supplies a local cycle.
   const pose = serverPose ?? (moving && !ghost ? Math.floor((((stride % TWO_PI) + TWO_PI) % TWO_PI) * 32 / TWO_PI) + 1 : 0);
   ctx.translate(x, groundY + bob);

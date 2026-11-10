@@ -298,8 +298,8 @@ export function drawTraveler(
 }
 
 function legTransforms(step: number): [string, string] {
-  if (step < 1 || step > 8) return ["translate(0px,0px)", "translate(0px,0px)"];
-  const th = ((step - 1) / 8) * Math.PI * 2;
+  if (step < 1 || step > 32) return ["translate(0px,0px)", "translate(0px,0px)"];
+  const th = ((step - 1) / 32) * Math.PI * 2;
   // Opposite-phase hip swing (+x is forward, clockwise SVG rotation swings backward).
   const aL = (-Math.sin(th) * 28).toFixed(1);
   const aR = (Math.sin(th) * 28).toFixed(1);
