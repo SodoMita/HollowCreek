@@ -11,6 +11,7 @@ import { SettingsDialog } from "../src/game/settings-ui";
 import type { RoomListing, Snapshot } from "../src/game/types";
 import { applyFrame, type WireFrame } from "../src/game/wire";
 import { RoomHud, esc } from "./hud";
+import { decideSelfEcho, notePushedPosition, type SelfSyncState } from "./self-sync";
 import { InputTransport } from "./input-transport";
 
 // Temporary author-built sandboxes run the same unified code (see SYNC.md).
@@ -103,6 +104,13 @@ const netStats = {
   lastStateAt: 0, drawnStill: 0, drawnMoved: 0, lastFrameNo: 0, lostFrames: 0,
 };
 let lastSelfDrawX: number | null = null;
+// Server clock of the newest self position we display. Input echoes are ordered
+// against this, not against the snapshot clock, so a fresh acknowledgement is
+// never thrown away just because an unrelated frame arrived first.
+const selfSync: SelfSyncState = { posAt: 0 };
+let lastDrawnSampleAt = -1;
+let stillNetworkStalls = 0;
+let stillSameSample = 0;
 const showNet = params.get("net") === "1";
 let netEl: HTMLElement | null = null;
 let lastAudioAt = 0;
@@ -182,24 +190,19 @@ const inputTransport = new InputTransport({
   initialSeq: () => (Date.now() & 0x1fffffff) * 100,
   ack: (d) => {
     const s = snap;
-    if (!s || d.stale) return;
+    if (!s) return;
     const me = s.players.find((p) => p.id === s.self.id);
     if (!me) return;
-    if (typeof d.at !== "number" || d.at >= s.now) {
-      if (typeof d.at === "number") s.now = d.at;
+    const decision = decideSelfEcho(selfSync, d as Record<string, unknown> & { stale?: boolean });
+    selfSync.posAt = decision.posAt;
+    if (decision.takeIntent) {
       if (typeof d.facing === "number") me.facing = d.facing;
       if (d.inside !== undefined) me.inside = d.inside as string | null;
-      // Never snap backward in the opposite direction of active travel from an earlier input response
-      const newX = typeof d.drawX === "number" ? d.drawX : d.x;
-      if (typeof newX === "number") {
-        const cur = displayX.get(me.id) ?? me.x;
-        const forward = (me.facing > 0 && newX >= cur) || (me.facing < 0 && newX <= cur) || !me.moving;
-        if (forward) {
-          if (typeof d.x === "number") me.x = d.x;
-          if (typeof d.drawX === "number") me.drawX = d.drawX;
-          displayX.set(me.id, newX);
-        }
-      }
+    }
+    if (decision.takePosition) {
+      if (typeof d.x === "number") me.x = d.x;
+      if (typeof d.drawX === "number") me.drawX = d.drawX;
+      displayX.set(me.id, me.drawX ?? me.x);
     }
   },
 });
@@ -408,7 +411,10 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
     if (netStats.lastFrameNo && frame.n > netStats.lastFrameNo + 1) netStats.lostFrames += frame.n - netStats.lastFrameNo - 1;
     netStats.lastFrameNo = Math.max(netStats.lastFrameNo, frame.n);
   }
-  if (frame.snap || frame.motion || frame.patch?.players || frame.delta?.players !== undefined) netStats.lastStateAt = now;
+  if (frame.snap || frame.motion || frame.patch?.players || frame.delta?.players !== undefined) {
+    netStats.lastStateAt = now;
+    notePushedPosition(selfSync, frame.now);
+  }
   held = s;
   heldRev = frame.etag ?? heldRev;
 
@@ -864,8 +870,14 @@ function loop(nowMs: number) {
   if (selfPlayer) {
     const drawn = selfPlayer.drawX ?? selfPlayer.x;
     if (selfPlayer.moving && lastSelfDrawX !== null) {
-      if (drawn === lastSelfDrawX) netStats.drawnStill++; else netStats.drawnMoved++;
+      if (drawn === lastSelfDrawX) {
+        netStats.drawnStill++;
+        // Attribute the hold: no new server sample (transport) vs. same sample.
+        if (netStats.lastStateAt === lastDrawnSampleAt) stillNetworkStalls++;
+        else stillSameSample++;
+      } else netStats.drawnMoved++;
     }
+    lastDrawnSampleAt = netStats.lastStateAt;
     lastSelfDrawX = drawn;
   }
   if (netEl && nowMs - netSampleAt >= 250) {
@@ -876,7 +888,7 @@ function loop(nowMs: number) {
     const p50 = sorted.length ? Math.round(sorted[Math.floor(sorted.length * 0.5)]) : 0;
     const age = netStats.lastStateAt ? Math.round(nowMs - netStats.lastStateAt) : -1;
     const totalDrawn = netStats.drawnStill + netStats.drawnMoved;
-    netEl.textContent = `${netStats.mode} · ${fps} fps · rtt ${Math.round(netStats.rttMs)} ms · gap p50 ${p50} ms · sample age ${age} ms · still ${netStats.drawnStill}/${totalDrawn} · lost ${netStats.lostFrames} · drop ${netStats.droppedInputs} · souls ${view.players.length}`;
+    netEl.textContent = `${netStats.mode} · ${fps} fps · rtt ${Math.round(netStats.rttMs)} ms · gap p50 ${p50} ms · sample age ${age} ms · still ${netStats.drawnStill}/${totalDrawn} · net-stall ${stillNetworkStalls} · lost ${netStats.lostFrames} · drop ${netStats.droppedInputs} · souls ${view.players.length}`;
   }
   renderer.render(ctx, viewW, viewH, view, displayX, nowMs / 1000, dt);
 }
