@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { loadRoom, onRoomEvent } from "@/game/engine";
-import { createViewerCursor, nextFrame, slowDueIn } from "@/game/viewers";
+import { FRAME_MS, createViewerCursor, nextFrame, slowDueIn } from "@/game/viewers";
 import { admit } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -20,11 +20,12 @@ export async function GET(req: NextRequest) {
   let holds: string | null = null;
   let controller: ReadableStreamDefaultController<Uint8Array>;
   let slowTimer: ReturnType<typeof setTimeout> | undefined;
+  let frameTimer: ReturnType<typeof setTimeout> | undefined;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let unsubscribe = () => {};
   const cleanup = () => {
     if (closed) return;
-    closed = true; clearTimeout(slowTimer); clearInterval(heartbeat); unsubscribe();
+    closed = true; clearTimeout(slowTimer); clearTimeout(frameTimer); clearInterval(heartbeat); unsubscribe();
     req.signal.removeEventListener("abort", cleanup);
     try { controller?.close(); } catch { /* consumer already cancelled */ }
   };
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
     if ((controller.desiredSize ?? 0) <= 0) { dirty = true; return; }
     dirty = false;
     const now = Date.now();
-    const result = nextFrame(room, playerId, holds, now, false, cursor);
+    const result = nextFrame(room, playerId, holds, now, false, cursor, FRAME_MS);
     if (!result) { cleanup(); return; }
     const frame = result.frame ?? (now - clockAt >= 1000 ? { now: result.snapNow } : null);
     if (frame) {
@@ -45,6 +46,8 @@ export async function GET(req: NextRequest) {
     }
     const due = slowDueIn(room, playerId, now, cursor);
     if (!slowTimer && due > 0) slowTimer = setTimeout(() => { slowTimer = undefined; push(); }, due);
+    // A frame held back by the refresh gate must still go out on the next slot.
+    if (result.deferred && !frameTimer) frameTimer = setTimeout(() => { frameTimer = undefined; push(); }, FRAME_MS);
   };
   const requestPush = () => {
     dirty = true;

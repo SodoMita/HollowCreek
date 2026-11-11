@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import Module from "node:module";
 import { build } from "esbuild";
 import "dotenv/config";
-const bundle=await build({stdin:{contents:'export * from "./src/game/engine"; export { GET as streamGET } from "./src/app/api/game/state/stream/route"; export { POST as inputPOST } from "./src/app/api/game/input/route"; export { allow } from "./src/server/rate-limit";',resolveDir:process.cwd(),loader:"ts"},bundle:true,write:false,format:"cjs",platform:"node",packages:"external",logLevel:"silent"});
+const bundle=await build({stdin:{contents:'export * from "./src/game/engine"; export { GET as streamGET } from "./src/app/api/game/state/stream/route"; export * from "./src/game/viewers"; export { POST as inputPOST } from "./src/app/api/game/input/route"; export { allow } from "./src/server/rate-limit";',resolveDir:process.cwd(),loader:"ts"},bundle:true,write:false,format:"cjs",platform:"node",packages:"external",logLevel:"silent"});
 const file=`${process.cwd()}/scripts/.server-cadence.cjs`;
 const mod=new Module(file);mod.filename=file;mod.paths=Module._nodeModulePaths(process.cwd());mod._compile(bundle.outputFiles[0].text,file);
 const g=mod.exports;
@@ -70,6 +70,30 @@ try{
   g.handleInput(room,{playerId:visitor.id,seq:1002,dir:1});
   assert.equal((await g.inputPOST(inputReq({seq:1003,dir:0,cartHeld:false,interactHeld:false}))).status,200);
   assert.equal(visitor.dir,0,"release stays deliverable after ordinary input budget is spent");
+  // Tick health is reported, bounded, and always has a p50 even under load.
+  // Real spacing, not a synchronous burst, so the interval is meaningful.
+  for (let i = 0; i < 3; i++) { g.tick(); await new Promise((r) => setTimeout(r, 12)); }
+  const health = g.tickStats();
+  assert.ok(health.samples > 0, "tick health samples recorded");
+  assert.ok(health.interval && health.interval.p50 > 0, "tick interval p50 reported");
+  assert.ok(health.work && health.work.max >= 0, "tick work time reported");
+  assert.equal(typeof health.late, "number", "late tick counter reported");
+  // Frame numbers: a new connection always starts from its own baseline.
+  const c1 = g.createViewerCursor(), c2 = g.createViewerCursor();
+  const f1 = g.nextFrame(room, visitor.id, null, now, true, c1).frame;
+  const f2 = g.nextFrame(room, visitor.id, null, now, true, c2).frame;
+  assert.equal(f1.n, 1); assert.equal(f2.n, 1, "each connection numbers its own frames independently");
+  // The refresh gate defers a second frame inside one display interval and keeps
+  // the delta baseline intact instead of emitting stale intermediate positions.
+  const gated = g.nextFrame(room, visitor.id, f1.etag, now + 4, false, c1, 16);
+  assert.equal(gated.frame, null, "no frame inside the refresh interval");
+  assert.equal(gated.deferred, true, "deferred work is signalled so the route reschedules");
+  // Genuinely new authoritative state, then one display interval later.
+  visitor.x += 7; visitor.dir = 0;
+  for (const q of room.players.values()) q.lastSeen = now;
+  const nextSlot = g.nextFrame(room, visitor.id, f1.etag, now + 20, false, c1, 16);
+  assert.ok(nextSlot.frame, "a frame is produced at the next display slot");
+  visitor.dir = 0;
   console.log("SERVER_CADENCE_OK: cached replay oracle, live sequence in past, stream cancellation, idle sleep/wake, late-Leave input");
   Date.now=realNow;process.exit(0);
 }catch(e){Date.now=realNow;console.error(e);process.exit(1);}

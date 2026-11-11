@@ -191,8 +191,40 @@ export function tickRooms() {
   }
 }
 
+// Bounded tick-health ring buffer: interval and work time, so a stutter can be
+// attributed to the server instead of guessed at. ~10 s at 120 Hz.
+const TICK_SAMPLES = 1200;
+const tickIntervals = new Float32Array(TICK_SAMPLES);
+const tickWork = new Float32Array(TICK_SAMPLES);
+let tickSampleCount = 0, tickSampleAt = 0, tickLate = 0, tickLastAt = 0;
+
+export function tickStats() {
+  const n = Math.min(tickSampleCount, TICK_SAMPLES);
+  if (!n) return { samples: 0, interval: null, work: null, late: 0 };
+  const iv = Array.from(tickIntervals.slice(0, n)).sort((a, b) => a - b);
+  const wk = Array.from(tickWork.slice(0, n)).sort((a, b) => a - b);
+  const at = (q: number) => Number(iv[Math.min(n - 1, Math.floor(n * q))].toFixed(2));
+  return {
+    samples: n,
+    interval: { p50: at(0.5), p99: at(0.99), max: Number(iv[n - 1].toFixed(2)) },
+    work: { p50: Number(wk[Math.floor(n * 0.5)].toFixed(3)), max: Number(wk[n - 1].toFixed(3)) },
+    late: tickLate,
+    expectedMs: TICK_MS,
+  };
+}
+
 export function tick() {
+  const at = typeof performance !== "undefined" ? performance.now() : Date.now();
   tickRooms();
+  const end = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const slot = tickSampleCount % TICK_SAMPLES;
+  if (tickLastAt) {
+    const gap = at - tickLastAt;
+    tickIntervals[slot] = gap;
+    if (gap > TICK_MS * 1.75) tickLate++;
+  }
+  tickWork[slot] = end - at;
+  tickSampleCount++; tickLastAt = at; tickSampleAt = end;
 }
 
 let tickGrid = (typeof performance !== "undefined" ? performance.now() : Date.now()) + TICK_MS;

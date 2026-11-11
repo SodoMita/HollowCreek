@@ -6,7 +6,7 @@ import { onRoomEvent } from "./chronicle";
 import { snapshot } from "./snapshot";
 import { applyFrame, compactMotion, diffView, encodeView, type EncodedView, type WireFrame } from "./wire";
 
-export const FRAME_MS = 4;
+export const FRAME_MS = 16; // push cadence: one position frame per display refresh
 export const SLOW_MS = 1000;
 export interface ViewerCursor {
   view: EncodedView | null;
@@ -31,7 +31,14 @@ export function pollCursor(room: Room, playerId: string, compact = false, client
 }
 export function viewerEtag(room: Room, playerId: string): string | null { return pollCursor(room, playerId).view?.etag ?? null; }
 
-export function nextFrame(room: Room, playerId: string, holdsEtag: string | null, now: number, flush = false, cursor = pollCursor(room, playerId)): { frame: WireFrame | null; snapNow: number } | null {
+export function nextFrame(room: Room, playerId: string, holdsEtag: string | null, now: number, flush = false, cursor = pollCursor(room, playerId), minFrameMs = 0): { frame: WireFrame | null; snapNow: number; deferred?: boolean } | null {
+  // Push streams pace themselves to the display: at 120 ticks/s a 60 Hz stream
+  // carries the same visible positions with half the snapshot/encode work, fewer
+  // socket writes and less GC on the thread that paces the tick grid. The client
+  // never receives an older sample, only one per refresh interval.
+  if (minFrameMs > 0 && !flush && cursor.view && cursor.sentAt && now - cursor.sentAt < minFrameMs && holdsEtag === cursor.view.etag) {
+    return { frame: null, snapNow: now, deferred: true };
+  }
   const snap = snapshot(room, playerId); // presence + time-dependent notices remain authoritative
   if (!snap) return null;
   const prev = cursor.view;

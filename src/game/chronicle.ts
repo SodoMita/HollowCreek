@@ -4,7 +4,20 @@ import { db } from "@/db";
 import { gameEvents } from "@/db/schema";
 import { BELL_X, NIGHT_LENGTH_MS, TICK_MS, type InputBody } from "./types";
 import { canonicalInput } from "./input";
-import { randomInt, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+
+// Cheap per-room seed stream for journal entries. crypto.randomInt() on every
+// tick (120/s/room) allocated and ran on the thread that paces the tick grid;
+// this xorshift is deterministic, allocation-free and still recorded per entry
+// so replays stay byte-identical.
+const seedState = new WeakMap<object, number>();
+function nextSeed(room: object): number {
+  let x = seedState.get(room) ?? 0x9e3779b9;
+  x ^= x << 13; x ^= x >>> 17; x ^= x << 5;
+  const v = (x >>> 0) % 0x7ffffffe + 1;
+  seedState.set(room, x);
+  return v;
+}
 import type { JournalEntry, P, Room } from "./engine";
 
 export const roomNow = (room: Room) => room.replaying ? (room.replayNow ?? 0) : Math.max(Date.now(), room.journal.at(-1)?.at ?? 0);
@@ -12,7 +25,7 @@ const observedTypes = ["pickup_key", "supply_taken", "supply_recovered", "supply
 export function journal(room: Room, kind: JournalEntry["kind"], at: number, playerId?: string, body?: InputBody): JournalEntry {
   // Wall clocks can move backwards; journal order must not.
   at = Math.max(at, room.journal.at(-1)?.at ?? at);
-  const entry: JournalEntry = { seq: ++room.journalSeq, at, kind, seed: randomInt(1, 0x7fffffff), playerId, body: body ? canonicalInput(body) : undefined };
+  const entry: JournalEntry = { seq: ++room.journalSeq, at, kind, seed: nextSeed(room), playerId, body: body ? canonicalInput(body) : undefined };
   room.journal.push(entry); room.activeSeed = entry.seed; room.activeEventId = String(entry.seq);
   // Retain a whole night plus headroom at the configured authoritative tick rate.
   const journalCapacity = Math.ceil(NIGHT_LENGTH_MS / TICK_MS * 1.25);
