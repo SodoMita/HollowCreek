@@ -100,7 +100,7 @@ const netStats = {
   rttMs: 40, droppedInputs: 0, lastPosAt: 0, gaps: [] as number[], renderFrames: 0, mode: "connecting",
   // Raw-motion diagnostics: freshness of the newest position sample and how often a
   // moving soul was drawn at an unchanged x. Both expose jitter instead of hiding it.
-  lastStateAt: 0, drawnStill: 0, drawnMoved: 0,
+  lastStateAt: 0, drawnStill: 0, drawnMoved: 0, lastFrameNo: 0, lostFrames: 0,
 };
 let lastSelfDrawX: number | null = null;
 const showNet = params.get("net") === "1";
@@ -404,6 +404,10 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
   inputTransport.resume(s.self.steerSeq ?? 0);
   const now = performance.now();
   lastPollAt = now;
+  if (typeof frame.n === "number") {
+    if (netStats.lastFrameNo && frame.n > netStats.lastFrameNo + 1) netStats.lostFrames += frame.n - netStats.lastFrameNo - 1;
+    netStats.lastFrameNo = Math.max(netStats.lastFrameNo, frame.n);
+  }
   if (frame.snap || frame.motion || frame.patch?.players || frame.delta?.players !== undefined) netStats.lastStateAt = now;
   held = s;
   heldRev = frame.etag ?? heldRev;
@@ -872,7 +876,7 @@ function loop(nowMs: number) {
     const p50 = sorted.length ? Math.round(sorted[Math.floor(sorted.length * 0.5)]) : 0;
     const age = netStats.lastStateAt ? Math.round(nowMs - netStats.lastStateAt) : -1;
     const totalDrawn = netStats.drawnStill + netStats.drawnMoved;
-    netEl.textContent = `${netStats.mode} · ${fps} fps · rtt ${Math.round(netStats.rttMs)} ms · gap p50 ${p50} ms · sample age ${age} ms · still ${netStats.drawnStill}/${totalDrawn} · drop ${netStats.droppedInputs} · souls ${view.players.length}`;
+    netEl.textContent = `${netStats.mode} · ${fps} fps · rtt ${Math.round(netStats.rttMs)} ms · gap p50 ${p50} ms · sample age ${age} ms · still ${netStats.drawnStill}/${totalDrawn} · lost ${netStats.lostFrames} · drop ${netStats.droppedInputs} · souls ${view.players.length}`;
   }
   renderer.render(ctx, viewW, viewH, view, displayX, nowMs / 1000, dt);
 }

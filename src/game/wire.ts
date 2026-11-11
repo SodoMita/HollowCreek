@@ -18,6 +18,8 @@ export interface WireItem extends Record<string, unknown> { i: number }
 
 export interface WireFrame {
   etag?: string;
+  /** Per-connection monotonic frame number: a gap means frames were lost in transit. */
+  n?: number;
   /** Deltas are valid only on this exact baseline. */
   base?: string;
   now: number;

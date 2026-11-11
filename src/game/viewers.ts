@@ -11,11 +11,12 @@ export const SLOW_MS = 1000;
 export interface ViewerCursor {
   view: EncodedView | null;
   compact: boolean;
+  seq: number;
   slowAt: number;
   sentAt: number;
   rev: number;
 }
-export function createViewerCursor(compact = false): ViewerCursor { return { view: null, compact, slowAt: 0, sentAt: 0, rev: -1 }; }
+export function createViewerCursor(compact = false): ViewerCursor { return { view: null, compact, slowAt: 0, sentAt: 0, rev: -1, seq: 0 }; }
 const polls = new WeakMap<Room, Map<string, ViewerCursor>>();
 export function pollCursor(room: Room, playerId: string, compact = false, clientId = "") {
   const key = `${playerId}:${compact ? "v2" : "v1"}:${clientId.slice(0, 64)}`;
@@ -38,13 +39,13 @@ export function nextFrame(room: Room, playerId: string, holdsEtag: string | null
   const etag = next.etag;
   if (!prev || holdsEtag !== prev.etag) {
     Object.assign(cursor, { view: next, slowAt: now, sentAt: now, rev: room.rev });
-    return { frame: { etag, now: snap.now, snap }, snapNow: snap.now };
+    return { frame: { n: ++cursor.seq, etag, now: snap.now, snap }, snapNow: snap.now };
   }
   if (etag === prev.etag) return { frame: null, snapNow: snap.now };
   const d = diffView(prev, next);
   if (!d.any) return { frame: null, snapNow: snap.now };
   if (!d.fast && !flush && now - cursor.slowAt < SLOW_MS) return { frame: null, snapNow: snap.now };
-  const frame: WireFrame = { base: prev.etag, etag, now: snap.now };
+  const frame: WireFrame = { n: ++cursor.seq, base: prev.etag, etag, now: snap.now };
   if (Object.keys(d.delta).length) frame.delta = d.delta;
   if (Object.keys(d.patch).length) frame.patch = d.patch;
   const carriedSlow = !d.fast || ["nightT", "time", "danger", "hint"].some(k => k in d.delta) || !!d.patch.self || !!d.patch.tasks;

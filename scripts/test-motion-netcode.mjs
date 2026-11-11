@@ -51,12 +51,13 @@ try {
   let cr=g.nextFrame(room,p.id,null,now,false,c).frame;
   let ah=g.applyFrame(null,ar),ch=g.applyFrame(null,cr),ae=ar.etag,ce=cr.etag;
   let legacyBytes=0, compactBytes=0;
+  let lastAn=ar.n,lastCn=cr.n;
   for(let i=0;i<25;i++){
     step();
     ar=g.nextFrame(room,p.id,ae,now,false,a).frame;
     cr=g.nextFrame(room,p.id,ce,now,false,c).frame;
     assert.ok(ar && cr);assert.ok(!ar.snap && !cr.snap,"independent streams continue as deltas");
-    assert.equal(ar.base,ae);assert.equal(cr.base,ce);assert.ok(ar.motion?.length,"v2 compacts actual motion");assert.ok(!cr.motion,"legacy clients retain field patches");
+    assert.equal(ar.base,ae);assert.equal(cr.base,ce);assert.equal(ar.n,lastAn+1,"frame numbers advance on the SSE cursor");assert.equal(cr.n,lastCn+1,"frame numbers advance independently per connection");lastAn=ar.n;lastCn=cr.n;assert.ok(ar.motion?.length,"v2 compacts actual motion");assert.ok(!cr.motion,"legacy clients retain field patches");
     ah=g.applyFrame(ah,ar,ae);ch=g.applyFrame(ch,cr,ce);
     assert.deepEqual(ah,ch);legacyBytes+=JSON.stringify(cr).length;compactBytes+=JSON.stringify(ar).length;ae=ar.etag;ce=cr.etag;
     assert.equal(g.viewFingerprint(g.encodeView(ah)),ae);
