@@ -113,11 +113,25 @@ export function visitCursor(visit: TimeVisit, now: number) {
 
 type ReplayTimelineItem = { at: number; rank: number; order: number; original?: JournalEntry; arrival?: { id: string; initial: P }; action?: { id: string; entry: ReplayAction }; consume?: { id: string; entry: ReplayAction }; suspend?: string };
 
+/** Index of the first journal entry whose seq is greater than `seq` (journal is sorted by seq). */
+function firstAfterSeq(entries: JournalEntry[], seq: number): number {
+  let lo = 0, hi = entries.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (entries[mid].seq <= seq) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
 export function timelineItems(room: Room, visit: TimeVisit, until: number): ReplayTimelineItem[] {
-  // Sequence numbers are contiguous, so skip the unchanged prefix instead of
-  // scanning the entire night on every past frame.
+  // Skip the unchanged prefix instead of scanning the whole night on every past
+  // frame. Sequence numbers are NOT array indices: journal() evicts old tick and
+  // presence entries from the front, so after ~90 s of play `journal[seq]` points
+  // past the end and replay silently found no entries at all (the past had nobody
+  // in it). The journal is sorted by seq, so binary-search the first entry after
+  // the checkpoint.
   const items: ReplayTimelineItem[] = [];
-  for (let i = visit.base.seq; i < room.journal.length; i++) {
+  for (let i = firstAfterSeq(room.journal, visit.base.seq); i < room.journal.length; i++) {
     const entry = room.journal[i];
     if (entry.at > until) break;
     items.push({ at: entry.at, rank: 0, order: entry.seq, original: entry });

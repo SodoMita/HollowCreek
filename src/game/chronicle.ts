@@ -2,7 +2,8 @@
 // the persisted event log. record() writes to the DB (fire-and-forget).
 import { db } from "@/db";
 import { gameEvents } from "@/db/schema";
-import { BELL_X, JOURNAL_CAP, type InputBody } from "./types";
+import { BELL_X, JOURNAL_CAP, TICK_RATE, type InputBody } from "./types";
+const JOURNAL_SLACK = TICK_RATE * 5; // ≈5 s of ticks between compactions
 import { canonicalInput } from "./input";
 import { randomUUID } from "node:crypto";
 import type { JournalEntry, P, Room } from "./engine";
@@ -26,13 +27,20 @@ export function journal(room: Room, kind: JournalEntry["kind"], at: number, play
   at = Math.max(at, room.journal.at(-1)?.at ?? at);
   const entry: JournalEntry = { seq: ++room.journalSeq, at, kind, seed: nextJournalSeed(), playerId, body: body ? canonicalInput(body) : undefined };
   room.journal.push(entry); room.activeSeed = entry.seed; room.activeEventId = String(entry.seq);
-  // Ticks (TICK_RATE/s) and presence heartbeats flood the chronicle; evict only those.
-  if (room.journal.length > JOURNAL_CAP) {
-    let i = 0;
-    while (room.journal.length > JOURNAL_CAP && i < room.journal.length) {
-      if (room.journal[i].kind === "tick" || room.journal[i].kind === "presence") room.journal.splice(i, 1);
-      else i++;
+  // Ticks (TICK_RATE/s) and presence heartbeats flood the chronicle; evict only
+  // those, oldest first. Evicting one entry per tick meant a splice() — a memmove
+  // of the whole ~10k-entry array — on every tick; compact in place once the
+  // journal is JOURNAL_SLACK past the cap instead (same entries go, in the same
+  // order, just a few seconds later). Replay finds entries by seq, never by index.
+  if (room.journal.length > JOURNAL_CAP + JOURNAL_SLACK) {
+    const list = room.journal;
+    let drop = list.length - JOURNAL_CAP, w = 0;
+    for (let r = 0; r < list.length; r++) {
+      const e = list[r];
+      if (drop > 0 && (e.kind === "tick" || e.kind === "presence")) { drop--; continue; }
+      list[w++] = e;
     }
+    list.length = w;
   }
   return entry;
 }

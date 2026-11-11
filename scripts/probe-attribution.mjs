@@ -33,5 +33,5 @@ const q = (a, f) => (a.length ? a[Math.min(a.length - 1, Math.floor(f * a.length
 console.log(`client (${SECONDS}s walking, 4 souls): stalls server-side ${out.stallServer} · in transit ${out.stallNet} · lost frames ${out.lost}`);
 console.log(`        worst server-generation gap ${out.worstGen} ms · worst arrival gap ${out.worstArrival} ms · delay jitter p50 ${q(out.jit, 0.5)} p99 ${q(out.jit, 0.99)} max ${q(out.jit, 1)} ms`);
 console.log(`server  tick p50 ${stats.tick.p50} p99 ${stats.tick.p99} max ${stats.tick.max} ms (late ${stats.tick.late}/${stats.tick.samples}) · work p99 ${stats.work.p99} max ${stats.work.max} ms`);
-console.log(`        loop block p99 ${stats.loop.p99} max ${stats.loop.max} ms · gc max ${stats.gc.max} ms ×${stats.gc.count} (${stats.gc.totalMs} ms total) · heap ${stats.heapMB} MB`);
+console.log(`        loop block p99 ${stats.loop.p99} max ${stats.loop.max} ms · gc max ${stats.gc.max} ms ×${stats.gc.count} (${stats.gc.totalMs} ms total; scavenge max ${stats.gc.minorMax} · major max ${stats.gc.majorMax} ×${stats.gc.majorCount} · incremental max ${stats.gc.incrementalMax} · weak-callback max ${stats.gc.weakCallbackMax}) · heap ${stats.heapMB} MB`);
 process.exit(0);

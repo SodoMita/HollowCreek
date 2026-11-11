@@ -881,7 +881,7 @@ let netEl: HTMLElement | null = null;
 interface ServerNetStats {
   tickMs: number; tick: { samples: number; p50: number; p99: number; max: number; late: number };
   work: { p50: number; p99: number; max: number }; loop: { p99: number; max: number };
-  gc: { max: number; count: number; totalMs: number }; heapMB: number; rooms: number;
+  gc: { max: number; count: number; totalMs: number; minorMax?: number; majorMax?: number; majorCount?: number }; heapMB: number; rooms: number;
 }
 let serverStats: ServerNetStats | null = null;
 let serverStatsAt = 0;
@@ -914,7 +914,7 @@ function updateNetReadout(nowMs: number) {
     `why    stalls: server-side ${net.stallServer} · network/browser ${net.stallNet} · worst server gap ${net.worstGenGapMs} ms · arrival jitter ${jitterLine()}\n` +
     (serverStats
       ? `server tick p50 ${serverStats.tick.p50} · p99 ${serverStats.tick.p99} · max ${serverStats.tick.max} ms (late ${serverStats.tick.late}/${serverStats.tick.samples}) · work max ${serverStats.work.max} ms\n` +
-        `       loop block max ${serverStats.loop.max} ms · gc max ${serverStats.gc.max} ms (${serverStats.gc.count}) · heap ${serverStats.heapMB} MB · ${serverStats.rooms} rooms\n`
+        `       loop block max ${serverStats.loop.max} ms · gc max ${serverStats.gc.max} ms ×${serverStats.gc.count} (scavenge max ${serverStats.gc.minorMax ?? "?"} · major max ${serverStats.gc.majorMax ?? "?"} ×${serverStats.gc.majorCount ?? "?"}) · heap ${serverStats.heapMB} MB · ${serverStats.rooms} rooms\n`
       : `server (stats unavailable)\n`) +
     `draw   ${net.fps.toFixed(0)} fps · ${snap?.players.length ?? 0} souls visible · no prediction, no interpolation`;
 }
