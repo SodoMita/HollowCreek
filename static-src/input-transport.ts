@@ -64,7 +64,7 @@ export class InputTransport {
       try {
         const res = await (this.options.fetcher ?? fetch)(identity.base + "/api/game/input", {
           method: "POST", headers: { "content-type": "application/json" }, body,
-          signal: ctl.signal, keepalive: true, cache: "no-store",
+          signal: ctl.signal, cache: "no-store",
         });
         // Consume every body: ignoring successful bodies can strand a connection.
         const text = await res.text();

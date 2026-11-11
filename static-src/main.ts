@@ -96,7 +96,13 @@ const transportClientId = crypto.randomUUID();
 let lastStreamFrameAt = 0;
 let nextSseProbeAt = 0;
 let sseRetryDelay = 250;
-const netStats = { rttMs: 40, droppedInputs: 0, lastPosAt: 0, gaps: [] as number[], renderFrames: 0, mode: "connecting" };
+const netStats = {
+  rttMs: 40, droppedInputs: 0, lastPosAt: 0, gaps: [] as number[], renderFrames: 0, mode: "connecting",
+  // Raw-motion diagnostics: freshness of the newest position sample and how often a
+  // moving soul was drawn at an unchanged x. Both expose jitter instead of hiding it.
+  lastStateAt: 0, drawnStill: 0, drawnMoved: 0,
+};
+let lastSelfDrawX: number | null = null;
 const showNet = params.get("net") === "1";
 let netEl: HTMLElement | null = null;
 let lastAudioAt = 0;
@@ -398,6 +404,7 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
   inputTransport.resume(s.self.steerSeq ?? 0);
   const now = performance.now();
   lastPollAt = now;
+  if (frame.snap || frame.motion || frame.patch?.players || frame.delta?.players !== undefined) netStats.lastStateAt = now;
   held = s;
   heldRev = frame.etag ?? heldRev;
 
@@ -837,26 +844,37 @@ function loop(nowMs: number) {
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, (nowMs - last) / 1000);
   last = nowMs;
-  if (!snap || !gameVisible) return;
-  for (const p of snap.players) {
-    displayX.set(p.id, p.drawX ?? p.x);
-  }
+  const view = snap;
+  if (!view || !gameVisible) return;
+  // Displayed positions are exactly the server's values. No smoothing, no
+  // interpolation, no prediction: transport jitter stays visible by design.
+  for (const p of view.players) displayX.set(p.id, p.drawX ?? p.x);
   if (hudDirty && nowMs - lastHudAt >= 80) {
     hudDirty = false;
     lastHudAt = nowMs;
-    renderHud(snap);
+    renderHud(view);
   }
   netStats.renderFrames++;
   netSampleFrames++;
+  const selfPlayer = view.players.find((p) => p.id === view.self.id);
+  if (selfPlayer) {
+    const drawn = selfPlayer.drawX ?? selfPlayer.x;
+    if (selfPlayer.moving && lastSelfDrawX !== null) {
+      if (drawn === lastSelfDrawX) netStats.drawnStill++; else netStats.drawnMoved++;
+    }
+    lastSelfDrawX = drawn;
+  }
   if (netEl && nowMs - netSampleAt >= 250) {
     const fps = Math.round((netSampleFrames * 1000) / Math.max(1, nowMs - netSampleAt));
     netSampleAt = nowMs;
     netSampleFrames = 0;
     const sorted = netStats.gaps.slice().sort((a, b) => a - b);
     const p50 = sorted.length ? Math.round(sorted[Math.floor(sorted.length * 0.5)]) : 0;
-    netEl.textContent = `${netStats.mode} · ${fps} fps · rtt ${Math.round(netStats.rttMs)} ms · gap p50 ${p50} ms · drop ${netStats.droppedInputs} · souls ${snap.players.length}`;
+    const age = netStats.lastStateAt ? Math.round(nowMs - netStats.lastStateAt) : -1;
+    const totalDrawn = netStats.drawnStill + netStats.drawnMoved;
+    netEl.textContent = `${netStats.mode} · ${fps} fps · rtt ${Math.round(netStats.rttMs)} ms · gap p50 ${p50} ms · sample age ${age} ms · still ${netStats.drawnStill}/${totalDrawn} · drop ${netStats.droppedInputs} · souls ${view.players.length}`;
   }
-  renderer.render(ctx, viewW, viewH, snap, displayX, nowMs / 1000, dt);
+  renderer.render(ctx, viewW, viewH, view, displayX, nowMs / 1000, dt);
 }
 requestAnimationFrame(loop);
 

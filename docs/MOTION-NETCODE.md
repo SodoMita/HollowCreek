@@ -1,6 +1,9 @@
 # Raw authoritative movement: measuring unevenness
 
-This client **does not predict, extrapolate, interpolate, or play a delayed position queue**.
+This client **does not predict, extrapolate, interpolate, smooth, or play a delayed position queue**.
+The camera snaps to the authoritative target every frame, and player/bystander sprites are drawn at the exact
+server `drawX` value; there is no display easing at all. Reintroducing any of it is treated as a regression
+(`scripts/test-raw-view.mjs`). The goal at this stage is that transport problems are *visible* during play.
 Every displayed multiplayer coordinate is a value integrated and transmitted by the server.
 The renderer may convert world coordinates to screen coordinates; it never advances a player's position.
 
@@ -73,6 +76,15 @@ Different camera positions, visible rosters, OS scheduling and browser rasteriza
 These are runs, not guarantees or a claim that the injected jitter is identical to every real network.
 Wire compaction is compared on identical snapshots in the deterministic regression, not across random visible rosters.
 The higher integration cadence has a bandwidth/CPU cost; `wireKBps` is part of the benchmark output.
+
+## Diagnostics for visible jitter
+
+`/play/?net=1` reports transport mode, fps, smoothed RTT, wire gap p50, **sample age** (ms since the newest
+position-bearing frame) and **still** (`drawnStill/drawnMoved`: how often a moving soul was drawn at an unchanged x).
+A rising sample age or still count means the transport is late or the stream has stalled — that is the signal.
+Steering POSTs deliberately do not use the browser's beacon/`keepalive` pool, so a single request cannot queue
+behind a long-lived beacon request. The server tick loop now runs every slot missed by a late OS timer inside the
+same callback (bounded), keeping the simulation on the absolute grid instead of a train of 1 ms retries.
 
 ## Honest remaining limit
 

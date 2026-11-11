@@ -195,15 +195,19 @@ export function tick() {
   tickRooms();
 }
 
-let tickGrid = typeof performance !== "undefined" ? performance.now() : Date.now();
+let tickGrid = (typeof performance !== "undefined" ? performance.now() : Date.now()) + TICK_MS;
 
 function scheduleTick() {
   const now = typeof performance !== "undefined" ? performance.now() : Date.now();
   if (tickGrid < now - TICK_MS * 10) tickGrid = now;
-  tickGrid += TICK_MS;
   const delay = Math.max(1, Math.round(tickGrid - now));
   g.__hollowLoop = setTimeout(() => {
-    tick();
+    const late = typeof performance !== "undefined" ? performance.now() : Date.now();
+    let ran = 0;
+    // Run every slot the OS timer missed in this callback, so the simulation
+    // stays on the absolute grid instead of drifting behind in 1 ms retries.
+    while (late >= tickGrid - 0.5 && ran < 8) { tickGrid += TICK_MS; tick(); ran++; }
+    if (late >= tickGrid) tickGrid = late; // a long stall resets the grid
     scheduleTick();
   }, delay);
 }

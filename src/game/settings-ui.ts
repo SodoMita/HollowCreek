@@ -142,7 +142,6 @@ export class SettingsDialog {
             <label class="hc-setting hc-select"><span>Detail preset</span><select data-setting="graphics.quality"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
             ${slider("graphics.resolution", "Render resolution", 50, 100, 5)}
             ${slider("graphics.worldZoom", "World zoom", 100, 150, 5)}
-            ${toggle("graphics.cameraSmoothing", "Smooth camera")}
             ${toggle("graphics.reducedMotion", "Reduced motion", "Freezes decorative animation and disables horror flashes.")}
             <div class="hc-settings-section">Atmosphere</div>
             ${toggle("graphics.particles", "Falling leaves")}

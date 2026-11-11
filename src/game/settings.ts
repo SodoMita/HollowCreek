@@ -23,7 +23,6 @@ export interface GameSettings {
     glow: boolean;
     vignette: boolean;
     flicker: boolean;
-    cameraSmoothing: boolean;
     reducedMotion: boolean;
   };
   interface: {
@@ -61,7 +60,6 @@ const DEFAULTS: GameSettings = {
     glow: true,
     vignette: true,
     flicker: true,
-    cameraSmoothing: false,
     reducedMotion: false,
   },
   interface: {
@@ -127,7 +125,6 @@ export function normalizeSettings(input: unknown): GameSettings {
     glow: bool(g.glow, d.graphics.glow),
     vignette: bool(g.vignette, d.graphics.vignette),
     flicker: bool(g.flicker, d.graphics.flicker),
-    cameraSmoothing: bool(g.cameraSmoothing, d.graphics.cameraSmoothing),
     reducedMotion: bool(g.reducedMotion, d.graphics.reducedMotion),
   };
   d.interface = {
