@@ -14,8 +14,7 @@ const load = async (file) => {
   const out = await build({ entryPoints: [resolve(repo, file)], bundle: true, write: false, format: "esm", platform: "neutral", target: "es2022", logLevel: "silent" });
   return import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString("base64")}`);
 };
-const { applyFrame } = await load("src/game/wire.ts");
-const { snapshotEtag } = await load("src/game/fingerprint.ts");
+const { applyFrame, snapshotFingerprint: snapshotEtag } = await load("src/game/wire.ts");
 
 const post = (path, body) => fetch(`${BASE}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
 const ids = ["w-a", "w-b", "w-c", "w-d"];

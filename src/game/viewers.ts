@@ -4,8 +4,8 @@
 // persistence and history checkpoints never see it.
 import type { Room } from "./engine";
 import { onRoomEvent } from "./chronicle";
-import { roomEtag, snapshot } from "./snapshot";
-import { applyFrame, diffView, encodeView, type EncodedView, type WireFrame } from "./wire";
+import { snapshot } from "./snapshot";
+import { applyFrame, diffView, encodeView, viewFingerprint, type EncodedView, type WireFrame } from "./wire";
 
 export const FRAME_MS = 8; // long-poll fallback: coalesce to the tick grid, one answer per tick (SSE pushes the same frames)
 export const SLOW_MS = 1000; // slow-class values ride at most once a second
@@ -40,11 +40,13 @@ export function viewerEtag(room: Room, playerId: string): string | null {
 export function nextFrame(room: Room, playerId: string, holdsEtag: string | null, now: number, flush = false): { frame: WireFrame | null; snapNow: number } | null {
   const snap = snapshot(room, playerId); // also the presence heartbeat
   if (!snap) return null;
-  const etag = roomEtag(room, playerId, snap);
+  // Encode once; the etag is a hash over these field strings (no second stringify).
+  const next = encodeView(snap, "");
+  const etag = (next.etag = viewFingerprint(next));
   const m = states(room);
   const prev = m.get(playerId);
   if (!prev || holdsEtag !== prev.view.etag) {
-    const state: ViewerState = { view: encodeView(snap, etag), slowAt: now, sentAt: now, slowPending: false, frames: 1 };
+    const state: ViewerState = { view: next, slowAt: now, sentAt: now, slowPending: false, frames: 1 };
     m.set(playerId, state);
     return { frame: { etag, now: snap.now, n: 1, snap }, snapNow: snap.now };
   }
@@ -52,7 +54,6 @@ export function nextFrame(room: Room, playerId: string, holdsEtag: string | null
     prev.slowPending = false;
     return { frame: null, snapNow: snap.now };
   }
-  const next = encodeView(snap, etag);
   const d = diffView(prev.view, next);
   if (!d.any) {
     prev.view = next;

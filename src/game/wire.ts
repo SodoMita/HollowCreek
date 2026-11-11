@@ -71,6 +71,40 @@ export function encodeView(snap: Snapshot, etag: string): EncodedView {
   return { etag, snap, top, self, items, objs, order };
 }
 
+// Streaming FNV-1a over strings that already exist: the etag is computed from
+// encodeView()'s per-field JSON instead of a second JSON.stringify of the whole
+// snapshot. That second stringify (plus a spread copy) ran for every viewer on
+// every tick purely to make a hash, and was the largest per-tick allocation on
+// the server — measured GC pauses of up to 12 ms delayed the tick grid.
+function fnvAdd(h: number, str: string): number {
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h;
+}
+
+/** Order-independent fingerprint of an encoded view (keys sorted; array order kept, it is state). */
+export function viewFingerprint(view: EncodedView): string {
+  // null and absent are the same state (JSON drops undefined on the wire, and
+  // every consumer reads them alike), so both are left out of the hash.
+  let h = 0x811c9dc5;
+  for (const k of Object.keys(view.top).sort()) { const v = view.top[k]; if (v === "null") continue; h = fnvAdd(h, k); h = fnvAdd(h, "\u001f"); h = fnvAdd(h, v); h = fnvAdd(h, "\u001e"); }
+  h = fnvAdd(h, "\u001dself");
+  for (const k of Object.keys(view.self).sort()) { const v = view.self[k]; if (v === "null") continue; h = fnvAdd(h, k); h = fnvAdd(h, "\u001f"); h = fnvAdd(h, v); h = fnvAdd(h, "\u001e"); }
+  for (const key of ID_ARRAYS) {
+    h = fnvAdd(h, "\u001d");
+    h = fnvAdd(h, key);
+    for (const it of (view.snap[key] ?? []) as { id: string }[]) { h = fnvAdd(h, view.items[key].get(it.id) ?? ""); h = fnvAdd(h, "\u001e"); }
+  }
+  return `"${h.toString(36)}"`;
+}
+
+/** The etag a full snapshot has: the same scheme the stream, the long-poll and the plain route use. */
+export function snapshotFingerprint(snap: Snapshot): string {
+  return viewFingerprint(encodeView(snap, ""));
+}
+
 export interface ViewDiff {
   any: boolean;
   fast: boolean;

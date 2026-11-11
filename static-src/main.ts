@@ -99,6 +99,13 @@ const net = {
   windowAt: 0, framesPerSec: 0, posPerSec: 0, bytesPerSec: 0, renderFrames: 0, fps: 0, inputAt: 0, inputToMoveMs: 0, selfX: NaN,
   wireSeq: 0, wireGaps: 0, wireLost: 0, // frames the network actually dropped (server `n` vs received)
   lastPosFrameAt: 0, worstPosGapMs: 0,
+  // Attribution. `frame.now` is when the server generated the frame, so for
+  // consecutive position frames: a large gap in `now` means the server did not
+  // produce frames (late tick, GC, backlog); a large arrival gap with a normal
+  // `now` gap means the network/proxy held them. One-way-delay jitter is the
+  // spread of (arrival - now); the clock offset cancels out against its minimum.
+  lastGenAt: 0, worstGenGapMs: 0, owdMin: Infinity, owdJitter: [] as number[],
+  stallServer: 0, stallNet: 0, prevMoving: false,
 };
 const showNet = params.get("net") === "1";
 let held: Snapshot | null = null; // what the server thinks we hold (deltas merge into it)
@@ -322,6 +329,7 @@ function enterRoom(code: string) {
   displayX.clear();
   net.frames = 0; net.posFrames = 0; net.bytes = 0; net.lastPosAt = 0; net.gaps.length = 0; net.dropped = 0; net.retried = 0;
   net.wireSeq = 0; net.wireGaps = 0; net.wireLost = 0; net.worstPosGapMs = 0;
+  net.lastGenAt = 0; net.worstGenGapMs = 0; net.owdMin = Infinity; net.owdJitter.length = 0; net.stallServer = 0; net.stallNet = 0;
   lastHudAt = 0; lastAudioAt = 0;
   snap = null;
   wardPanel.update(null, 1, false);
@@ -420,10 +428,24 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
   // Measure the wire: every frame, and the gaps between frames that carried a position.
   net.frames++;
   if (frameTouchesPlayers(frame)) {
+    const wallNow = Date.now();
+    const genGap = net.lastGenAt ? frame.now - net.lastGenAt : 0;
+    // Silence while nobody moves is correct, not a stall: only score gaps that
+    // follow a frame in which something visible was moving.
+    if (net.prevMoving && genGap > net.worstGenGapMs) net.worstGenGapMs = genGap;
+    net.lastGenAt = frame.now;
+    const owd = wallNow - frame.now;
+    if (owd < net.owdMin) net.owdMin = owd;
+    net.owdJitter.push(owd - net.owdMin); if (net.owdJitter.length > 480) net.owdJitter.shift();
     if (net.lastPosAt) {
       const gap = now - net.lastPosAt;
       net.gaps.push(gap); if (net.gaps.length > 240) net.gaps.shift();
-      if (gap > net.worstPosGapMs) net.worstPosGapMs = gap;
+      if (net.prevMoving && gap > net.worstPosGapMs) net.worstPosGapMs = gap;
+      // Only a stall if someone was moving: a neighbour standing still produces
+      // no frames at all, and that silence is correct.
+      if (gap > 40 && net.prevMoving) {
+        if (genGap > 30) net.stallServer++; else net.stallNet++;
+      }
     }
     net.lastPosAt = now;
     net.posFrames++;
@@ -432,6 +454,7 @@ function ingestFrame(frame: WireFrame & { error?: string }) {
     net.selfX = meNow;
   }
 
+  net.prevMoving = s.players.some((p) => p.moving);
   pollFailures = 0;
   roomError = "";
   snap = s;
@@ -845,11 +868,33 @@ function loop(nowMs: number) {
   if (showNet && nowMs - net.windowAt >= 500) updateNetReadout(nowMs);
 }
 
+function jitterLine() {
+  const j = net.owdJitter.slice().sort((a, b) => a - b);
+  if (!j.length) return "–";
+  const q = (f: number) => j[Math.min(j.length - 1, Math.floor(f * j.length))].toFixed(0);
+  return `p50 ${q(0.5)} · p99 ${q(0.99)} · max ${q(1)} ms`;
+}
 // ?net=1 — the numbers behind the feel: server frames/s, position frames/s and
 // their gaps, bytes/s, the request round trip, time from keypress to our own
 // soul moving on screen, render fps, and steers that had to be retried.
 let netEl: HTMLElement | null = null;
+interface ServerNetStats {
+  tickMs: number; tick: { samples: number; p50: number; p99: number; max: number; late: number };
+  work: { p50: number; p99: number; max: number }; loop: { p99: number; max: number };
+  gc: { max: number; count: number; totalMs: number }; heapMB: number; rooms: number;
+}
+let serverStats: ServerNetStats | null = null;
+let serverStatsAt = 0;
+function pollServerStats(nowMs: number) {
+  if (nowMs - serverStatsAt < 2000 || !server) return;
+  serverStatsAt = nowMs;
+  fetch(`${server}/api/game/netstats`, { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => { if (d && d.tick) serverStats = d as ServerNetStats; })
+    .catch(() => { /* diagnostics only */ });
+}
 function updateNetReadout(nowMs: number) {
+  pollServerStats(nowMs);
   const span = Math.max(1, nowMs - net.windowAt) / 1000;
   net.framesPerSec = net.frames / span; net.posPerSec = net.posFrames / span; net.bytesPerSec = net.bytes / span; net.fps = net.renderFrames / span;
   net.frames = 0; net.posFrames = 0; net.bytes = 0; net.renderFrames = 0; net.windowAt = nowMs;
@@ -866,6 +911,11 @@ function updateNetReadout(nowMs: number) {
     `gap    p50 ${q(0.5)} · p90 ${q(0.9)} · max ${q(1)} ms between position frames\n` +
     `input  rtt ${net.rttMs.toFixed(0)} ms · key→move ${net.inputToMoveMs ? net.inputToMoveMs.toFixed(0) : "–"} ms · retried ${net.retried}\n` +
     `lost   ${net.wireLost} state frames in ${net.wireGaps} gaps · worst position gap ${net.worstPosGapMs.toFixed(0)} ms\n` +
+    `why    stalls: server-side ${net.stallServer} · network/browser ${net.stallNet} · worst server gap ${net.worstGenGapMs} ms · arrival jitter ${jitterLine()}\n` +
+    (serverStats
+      ? `server tick p50 ${serverStats.tick.p50} · p99 ${serverStats.tick.p99} · max ${serverStats.tick.max} ms (late ${serverStats.tick.late}/${serverStats.tick.samples}) · work max ${serverStats.work.max} ms\n` +
+        `       loop block max ${serverStats.loop.max} ms · gc max ${serverStats.gc.max} ms (${serverStats.gc.count}) · heap ${serverStats.heapMB} MB · ${serverStats.rooms} rooms\n`
+      : `server (stats unavailable)\n`) +
     `draw   ${net.fps.toFixed(0)} fps · ${snap?.players.length ?? 0} souls visible · no prediction, no interpolation`;
 }
 requestAnimationFrame(loop);
@@ -876,6 +926,7 @@ requestAnimationFrame(loop);
 if (typeof window !== "undefined") {
   (window as unknown as Record<string, unknown>).__hc = {
     snap: () => snap,
+    net: () => ({ ...net, owdJitter: net.owdJitter.slice(), gaps: net.gaps.slice(), serverStats }),
     positions: () => (snap ? [...displayX.entries()] : []),
     renderer: () => renderer,
   };

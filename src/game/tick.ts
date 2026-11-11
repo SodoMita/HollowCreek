@@ -8,6 +8,7 @@ import { rooms } from "./registry";
 import { captureHistory } from "./history";
 import { clampWorld, dropBuildingKeys, walkThroughBuildings } from "./buildings";
 import { stationNear } from "./proximity";
+import { recordTick } from "./netstats";
 import { CARRY_SPEED, CARRY_VIGOR_DRAIN, CART_HELPER_BONUS, CART_MAX_SPEED, CART_PUSH_RANGE, CART_SOLO_SPEED, CELL_HALF, GHOST_SPEED, INTERACT_RANGE, SPEED, STAMINA_IDLE_REGEN, STAMINA_SLOW_THRESHOLD, STATIONS, TICK_MS } from "./types";
 import type { Room } from "./engine";
 
@@ -221,7 +222,12 @@ function scheduleTick() {
   if (g.__hollowGrid === undefined || g.__hollowGrid < now - TICK_MS * 10) g.__hollowGrid = now;
   g.__hollowGrid += TICK_MS;
   const delay = Math.max(1, Math.round(g.__hollowGrid - now));
-  g.__hollowTimer = setTimeout(() => { tick(); scheduleTick(); }, delay);
+  g.__hollowTimer = setTimeout(() => {
+    const start = performance.now();
+    tick();
+    recordTick(start, performance.now() - start); // diagnostics only (?net=1)
+    scheduleTick();
+  }, delay);
 }
 
 /** Deterministic test harness: advances one room by a recorded server tick. */

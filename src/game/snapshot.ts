@@ -7,7 +7,7 @@ import { heldPiece, loosePieces, nearTimepiece } from "./timepieces";
 import { BUILDINGS, buildingHint, doorX } from "./buildings";
 import { canRepair } from "./rules";
 import { wardView } from "./wards";
-import { snapshotEtag } from "./fingerprint";
+import { snapshotFingerprint } from "./wire";
 import {
   BELL_X, CART_PUSH_RANGE, INTERACT_RANGE, NIGHT_LENGTH_MS, STATIONS, VISION_BLACKOUT, VISION_CREW, VISION_HOLLOW,
   VISION_MARGIN, ix, type Snapshot,
@@ -58,7 +58,7 @@ function sticky(host: object, key: string, d: number, on: number, slack: number)
 export function roomEtag(room: Room, playerId: string, snap: Snapshot): string {
   const cached = room.etags.get(playerId);
   if (cached && cached.rev === room.rev) return cached.etag;
-  const etag = snapshotEtag(snap);
+  const etag = snapshotFingerprint(snap); // same scheme as the stream and the long-poll
   if (room.etags.size > 32) room.etags.clear();
   room.etags.set(playerId, { rev: room.rev, etag });
   return etag;
